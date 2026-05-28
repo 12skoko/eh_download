@@ -202,7 +202,7 @@ def download_torrent():
                 video_extensions_flag = 0
 
                 skip_video_check = False
-                if "no video" in manga.remark.lower():
+                if "skip video" in manga.remark.lower():
                     skip_video_check = True
 
                 for torrent in torrentList:
