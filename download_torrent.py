@@ -201,8 +201,12 @@ def download_torrent():
                 video_mark = ["mp4", "video"]
                 video_extensions_flag = 0
 
+                skip_video_check = False
+                if "no video" in manga.remark.lower():
+                    skip_video_check = True
+
                 for torrent in torrentList:
-                    if any(ext in torrent[7].lower() for ext in video_mark):
+                    if not skip_video_check and any(ext in torrent[7].lower() for ext in video_mark):
                         video_extensions_flag = 1
                         break
                     if any(res in torrent[7] for res in exclude_resolutions):
