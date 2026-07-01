@@ -444,10 +444,12 @@ def api_upload(manga, directorypath):
         print('Upload success')
     else:
         errorlog = str(response.status_code) + ' ' + response.text.replace('"', "'")
-        sql_manager.apiupload_error(errorlog, file_path, manga.manga_id)
         print("上传失败，", manga.manga_id)
         print("状态码:", response.status_code, "错误信息:", response.text)
-
+        if size > 6442450944:
+            print("文件过大，上传失败，跳过记录")
+        else:
+            sql_manager.apiupload_error(errorlog, file_path, manga.manga_id)
 
 def delete_log():
     print('-------------------delete_log-------------------')
