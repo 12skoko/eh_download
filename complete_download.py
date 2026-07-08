@@ -436,20 +436,27 @@ def api_upload(manga, directorypath):
 
     with open(file_path, 'rb') as f:
         files = {'file': (file_path, f, "application/zip")}
-        response = requests.put(config.raragi_url + '/api/archives/upload', data=data, files=files, headers=config.raragi_auth)
+        try:
+            response = requests.put(config.raragi_url + '/api/archives/upload', data=data, files=files, headers=config.raragi_auth)
+            if response.status_code == 200:
+                arcid = response.json()['id']
+                sql_manager.apiupload_success(arcid, manga.manga_id)
+                print('Upload success')
 
-    if response.status_code == 200:
-        arcid = response.json()['id']
-        sql_manager.apiupload_success(arcid, manga.manga_id)
-        print('Upload success')
-    else:
-        errorlog = str(response.status_code) + ' ' + response.text.replace('"', "'")
-        print("上传失败，", manga.manga_id)
-        print("状态码:", response.status_code, "错误信息:", response.text)
-        if size > 6442450944:
-            print("文件过大，上传失败，跳过记录")
-        else:
-            sql_manager.apiupload_error(errorlog, file_path, manga.manga_id)
+            else:
+                errorlog = str(response.status_code) + ' ' + response.text.replace('"', "'")
+                print("上传失败，", manga.manga_id)
+                print("状态码:", response.status_code, "错误信息:", response.text)
+                sql_manager.apiupload_error(errorlog, file_path, manga.manga_id)
+
+        except Exception as e:
+            print("上传失败，", manga.manga_id)
+            print("错误信息:", e)
+            if size > 6442450944:
+                print("文件过大，上传失败，跳过记录")
+            else:
+                sql_manager.apiupload_error(errorlog, file_path, manga.manga_id)
+
 
 def delete_log():
     print('-------------------delete_log-------------------')
@@ -785,7 +792,7 @@ def delete():
     i = 1
     length = str(len(contents) - 1)
     for item in contents:
-        req=re.search(r'^\[(\d+)]', item)
+        req = re.search(r'^\[(\d+)]', item)
         if req:
             idnum = req[1]
             if sql_manager.is_need_to_delete_file(idnum):
