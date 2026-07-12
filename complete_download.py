@@ -452,7 +452,7 @@ def api_upload(manga, directorypath):
         except Exception as e:
             print("上传失败，", manga.manga_id)
             print("错误信息:", e)
-            if size > 6442450944:
+            if size > 2147483648:
                 print("文件过大，上传失败，跳过记录")
             else:
                 sql_manager.apiupload_error(errorlog, file_path, manga.manga_id)
