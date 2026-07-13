@@ -455,7 +455,7 @@ def api_upload(manga, directorypath):
             if size > 2147483648:
                 print("文件过大，上传失败，跳过记录")
             else:
-                sql_manager.apiupload_error(errorlog, file_path, manga.manga_id)
+                sql_manager.apiupload_error(e, file_path, manga.manga_id)
 
 
 def delete_log():
