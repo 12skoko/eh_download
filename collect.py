@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, select, update, insert, MetaData, Table, d
 from sqlalchemy.orm import sessionmaker
 from model import Manga
 import config
-import ehentai_utils
+import eh_utils
 import requests
 from bs4 import BeautifulSoup
 import datetime
@@ -70,7 +70,7 @@ def screenall():
                         else:
                             similarFlagList.append(11 + score)
 
-                res = ehentai_utils.screen(similarFlagList)
+                res = eh_utils.screen(similarFlagList)
                 random_num = getRandom()
                 for i in range(len(res)):
                     if not (similarList[i].autostate != 1 or similarList[i].state is not None):
@@ -133,8 +133,8 @@ def collect(base_url, start, end, mark):
             raise 'find metadata error'
 
         for tr_soup in list_tr_soup:
-            manga_metadata = ehentai_utils.parse_metadata(tr_soup)
-            screen_flag = ehentai_utils.judge_screen_flag(manga_metadata, config.name_keywords, config.tag_keywords)
+            manga_metadata = eh_utils.parse_metadata(tr_soup)
+            screen_flag = eh_utils.judge_screen_flag(manga_metadata, config.name_keywords, config.tag_keywords)
 
             with SqlSession() as sql_session:
                 existing_record = sql_session.get(Manga, manga_metadata.manga_id)
@@ -206,7 +206,7 @@ if __name__ == "__main__":
     screenall()
 
     try:
-        ehentai_utils.updateTagTranslation()
+        eh_utils.updateTagTranslation()
     except Exception as e:
         print(e)
         print('更新标签数据库失败')

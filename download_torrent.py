@@ -21,11 +21,11 @@ class SqlManager():
 
     def torrent_category(self):
         if self.run_mode == "main":
-            torrent_category = 'autoehentai'
+            torrent_category = 'autoeh'
         elif self.run_mode == "old":
-            torrent_category = 'ehentai'
+            torrent_category = 'eh'
         elif self.run_mode == "special":
-            torrent_category = 'specialehentai'
+            torrent_category = 'speh'
         else:
             raise ValueError(f"Unknown run_mode: {self.run_mode}")
         return torrent_category

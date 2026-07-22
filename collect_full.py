@@ -2,7 +2,7 @@ from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import sessionmaker
 from model import Manga
 import config
-import ehentai_utils
+import eh_utils
 import requests
 from bs4 import BeautifulSoup
 import datetime
@@ -64,7 +64,7 @@ def collect(base_url, start, end, mark):
             raise 'find metadata error'
 
         for tr_soup in list_tr_soup:
-            manga_metadata = ehentai_utils.parse_metadata(tr_soup)
+            manga_metadata = eh_utils.parse_metadata(tr_soup)
 
             with SqlSession() as sql_session:
                 existing_record = sql_session.get(Manga, manga_metadata.manga_id)

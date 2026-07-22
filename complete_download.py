@@ -19,7 +19,7 @@ import aria2p
 from sqlalchemy import create_engine, select, update, desc, and_, or_
 from sqlalchemy.orm import sessionmaker
 from model import Manga, MangaInfo, EhTagTranslation
-import ehentai_utils
+import eh_utils
 
 
 class SqlManager():
@@ -30,11 +30,11 @@ class SqlManager():
 
     def torrent_category(self):
         if self.run_mode == "main":
-            torrent_category = 'autoehentai'
+            torrent_category = 'autoeh'
         elif self.run_mode == "old":
-            torrent_category = 'ehentai'
+            torrent_category = 'eh'
         elif self.run_mode == "special":
-            torrent_category = 'specialehentai'
+            torrent_category = 'speh'
         else:
             raise "unkown run_mode"
         return torrent_category
@@ -422,7 +422,7 @@ def api_upload(manga, directorypath):
         sql_manager.apiupload_error("文件过大", file_path, manga.manga_id)
         print("上传失败，文件过大，", manga.manga_id)
         return
-    file_checksum = ehentai_utils.calculate_sha1(file_path)
+    file_checksum = eh_utils.calculate_sha1(file_path)
 
     date_added = int(time.time())
     tagstr = f'romaname:{mangainfo.romaname},source:{mangainfo.link},category:{mangainfo.category},uploader:{mangainfo.uploader},postedtime:{mangainfo.postedtime},language:{mangainfo.language},pages:{mangainfo.pages},favorited:{mangainfo.favorited},ratingcount:{mangainfo.ratingcount},rating:{mangainfo.rating},updatetime:{mangainfo.fetchtime},date_added:{date_added}'
@@ -541,7 +541,7 @@ def complete_hah():
     for manga in mangalist:
         print(manga.manga_id)
         partial_name = '[' + manga.manga_id.split('/')[0] + ']'
-        flag = ehentai_utils.check_complete(config.hah_download_path, partial_name)
+        flag = eh_utils.check_complete(config.hah_download_path, partial_name)
         if flag[0]:
             sql_manager.complete_hah_update(flag[1], manga.manga_id)
 
@@ -557,7 +557,7 @@ def compress_torrent():
         zip_file_name = '[' + manga.manga_id.split('/')[0] + ']' + re.sub(r'[\\/*?:"<>|]', '_', manga.filename) + '.zip'
         zip_file_path = os.path.join(config.torrent_zip_path, zip_file_name)
         try:
-            ehentai_utils.create_zip_file(path, zip_file_path)
+            eh_utils.create_zip_file(path, zip_file_path)
         except Exception as e:
             print('compress error:', manga.manga_id)
             sql_manager.compress_error(e, manga.manga_id, "torrent")
@@ -574,7 +574,7 @@ def compress_hah():
     lense = str(len(manga_list))
     for manga in manga_list:
         partial_name = '[' + manga.manga_id.split('/')[0] + ']'
-        folder_name = ehentai_utils.get_folder_name(config.hah_download_path, partial_name)
+        folder_name = eh_utils.get_folder_name(config.hah_download_path, partial_name)
         print(str(i) + '/' + lense + ':', manga.manga_id)
         idname = '[' + manga.manga_id.split('/')[0] + ']'
         if idname in config.too_long_name_list:
@@ -583,7 +583,7 @@ def compress_hah():
             zip_file_name = idname + re.sub(r'[\\/*?:"<>|]', '_', manga.name) + '.zip'
         zip_file_path = os.path.join(config.hah_zip_path, zip_file_name)
         try:
-            ehentai_utils.create_zip_file(folder_name, zip_file_path)
+            eh_utils.create_zip_file(folder_name, zip_file_path)
         except Exception as e:
             print(zip_file_name)
             print('compress error:', manga.manga_id, '\n', e)
@@ -611,7 +611,7 @@ def collect_torrent():
         try:
             data = se.get(url, headers=config.header, cookies=config.cookies_non_donation, proxies=proxy).text
             soup = BeautifulSoup(data, 'lxml')
-            manga_info, downloadlink, parent = ehentai_utils.parse_info(soup, tagTrans)
+            manga_info, downloadlink, parent = eh_utils.parse_info(soup, tagTrans)
         except:
             print('requests error ', url, proxy)
             # print(data)
@@ -689,7 +689,7 @@ def delete():
     torrents = qbt_client.torrents_info()
     length = str(len(torrents))
     for torrent in torrents:
-        if torrent.category == 'autoehentai' or torrent.category == 'specialehentai' or torrent.category == 'ehentai':
+        if torrent.category == 'autoeh' or torrent.category == 'speh' or torrent.category == 'eh':
             if 'fatel' in torrent.tags:
                 qbt_client.torrents_delete(delete_files=True, torrent_hashes=torrent.hash)
                 time.sleep(0.2)

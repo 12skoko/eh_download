@@ -13,7 +13,7 @@ import shutil
 from sqlalchemy import create_engine, select, update, desc, Nullable, MetaData, Table, insert
 from sqlalchemy.orm import sessionmaker
 from model import Manga, MangaInfo, EhTagTranslation
-import ehentai_utils
+import eh_utils
 import aria2p
 
 
@@ -170,7 +170,7 @@ class SqlManager():
 
             else:
                 file_sizes = [req.quota, size]
-                total_size = sum(ehentai_utils.parse_file_size(size) for size in file_sizes)
+                total_size = sum(eh_utils.parse_file_size(size) for size in file_sizes)
                 total_size_mb = str(int(total_size / (1024 ** 2))) + ' MiB'
 
                 update_stmt = (update(gp_table)
@@ -323,7 +323,7 @@ def download_hah(run_mode, download_mode):
                 continue
 
             soup = BeautifulSoup(data, 'lxml')
-            manga_info, downloadlink, parent = ehentai_utils.parse_info(soup, tagTrans)
+            manga_info, downloadlink, parent = eh_utils.parse_info(soup, tagTrans)
         except:
             print('requests error ', url, proxy)
             # print(data)
@@ -377,7 +377,7 @@ def download_hah(run_mode, download_mode):
                 zipname = config.too_long_name_list[idname]
             else:
                 zipname = '[' + manga.manga_id.split('/')[0] + ']' + re.sub(r'[\\/*?:"<>|]', '_', manga.name) + '.zip'
-            if ehentai_utils.is_filename_too_long(zipname):
+            if eh_utils.is_filename_too_long(zipname):
                 print('File name too long: ' + zipname)
                 sql_manager.filename_too_long(zipname, manga.manga_id)
             else:
@@ -415,7 +415,7 @@ def download_hah(run_mode, download_mode):
                 partial_name = '[' + manga.manga_id.split('/')[0] + ']'
                 while i_time < 80:
                     time.sleep(20)
-                    flag = ehentai_utils.check_complete(config.hah_download_path, partial_name)
+                    flag = eh_utils.check_complete(config.hah_download_path, partial_name)
                     if flag[0] == True:
                         sql_manager.complete_hah_download(flag[1], manga.manga_id)
                         print('completeHah', manga.manga_id)
