@@ -21,7 +21,12 @@ from ..services.collector.parser import EhTagTranslation, parse_info
 from ..services.downloader.archive import request_direct_download_url
 from ..services.downloader.direct import DirectDownloader
 from ..services.downloader.torrent import TorrentService
-from ..services.paths import ArtifactPathService, safe_filename
+from ..services.paths import (
+    ArtifactPathService,
+    UnsafePathError,
+    map_external_path,
+    safe_filename,
+)
 from ..services.preparer.zipper import prepare_directory
 from ..services.uploader.lanraragi import LANraragiClient
 from ..services.validator.artifact import ValidationError, quarantine_artifact, validate_artifact
@@ -193,20 +198,25 @@ class TaskExecutor:
                     return
                 repository.finish(claim, owner=self.owner)
                 return
-            raw_content = Path(str(getattr(info, "content_path", "")))
+            raw_external = str(getattr(info, "content_path", "") or "")
             root = self.app.root("torrent_download").resolve()
+            qbit_root = self.app.qbit_torrent_path or str(root)
+            try:
+                raw_content = map_external_path(raw_external, qbit_root, root)
+            except UnsafePathError as exc:
+                raise ArchiveError("torrent_path_escape", str(exc), ErrorClass.SYSTEM) from exc
             gallery_root = root / safe_filename(record.manga_id.split("/", 1)[0])
             if not raw_content.exists():
                 raise ArchiveError(
                     "torrent_content_missing",
-                    f"qBittorrent content path does not exist: {raw_content}",
+                    f"mapped torrent content path does not exist: {raw_content}",
                     ErrorClass.ITEM,
                 )
             try:
                 relative = raw_content.resolve().relative_to(gallery_root)
             except ValueError as exc:
                 raise ArchiveError(
-                    "torrent_path_escape", str(raw_content), ErrorClass.SYSTEM
+                    "torrent_path_escape", str(raw_external), ErrorClass.SYSTEM
                 ) from exc
             if not relative.parts:
                 children = list(raw_content.iterdir()) if raw_content.is_dir() else []
@@ -253,7 +263,8 @@ class TaskExecutor:
         service = TorrentService(
             http=http,
             qbit=qbit,
-            torrent_root=self.app.root("torrent_download"),
+            torrent_root=self.app.qbit_torrent_path
+            or str(self.app.root("torrent_download").resolve()),
             cookies=self.secrets.cookies(self.app.browse_session),
             proxies=browse_network.get("proxies"),
             category="eharchive",

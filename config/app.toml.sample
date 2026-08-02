@@ -1,0 +1,33 @@
+database_url = "postgresql+psycopg://localhost/eh_archive"
+timezone = "Asia/Shanghai"
+log_level = "INFO"
+log_dir = "D:/eharchive-data/log"
+max_file_size = 21474836480
+web_host = "127.0.0.1"
+web_port = 8787
+qbittorrent_url = "http://127.0.0.1:8080"
+# Absolute path as seen by the qBittorrent host. It may differ from the local
+# roots.torrent_download path when qBittorrent runs on another machine.
+qbit_torrent_path = "D:/eharchive-data/torrent_download"
+lanraragi_url = "http://127.0.0.1:3000"
+aria2_enabled = false
+hah_enabled = false
+fallback_method = "direct"
+
+[sessions.browse]
+account = "default"
+network = "direct"
+
+[sessions.archive]
+account = "default"
+network = "direct"
+
+[roots]
+# Every value must be an absolute directory on the machine that runs EH Archive.
+torrent_download = "D:/eharchive-data/torrent_download"
+hah_download = "D:/eharchive-data/hah_download"
+direct_download = "D:/eharchive-data/direct_download"
+aria2_download = "D:/eharchive-data/aria2_download"
+prepared = "D:/eharchive-data/prepared"
+quarantine = "D:/eharchive-data/quarantine"
+trash = "D:/eharchive-data/trash"

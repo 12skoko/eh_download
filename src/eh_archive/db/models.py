@@ -73,7 +73,7 @@ class MangaRecord(Base):
             name="ck_manga_artifact_kind",
         ),
         CheckConstraint(
-            "artifact_location IS NULL OR artifact_location IN ('torrent_download', 'torrent_prepared', 'hah_download', 'hah_prepared', 'direct_download', 'aria2_download', 'prepared', 'quarantine', 'trash')",
+            "artifact_location IS NULL OR artifact_location IN ('torrent_download', 'hah_download', 'direct_download', 'aria2_download', 'prepared', 'quarantine', 'trash')",
             name="ck_manga_artifact_location",
         ),
         CheckConstraint(

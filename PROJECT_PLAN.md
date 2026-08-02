@@ -528,13 +528,14 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 
 #### app 配置
 
-建议文件：`config/app.toml`。
+建议模板：`config/app.toml.sample`；部署时复制为被 Git 忽略的 `config/app.toml`。
 
 保存所有进程共享的非敏感运行设置：
 
 - 应用时区、日志级别和日志目录。
 - 临时目录、torrent 下载根目录、direct 下载根目录、待上传目录、隔离目录和删除目录。
-- 各受控产物位置使用独立配置键，至少包括 `torrent_download`、`torrent_prepared`、`hah_download`、`hah_prepared`、`direct_download`、`aria2_download`、`prepared`、`quarantine` 和 `trash`；不同机器可以为每个键配置不同盘符、UNC 路径或 Linux 挂载点。
+- 各受控产物位置使用独立配置键，包括 `torrent_download`、`hah_download`、`direct_download`、`aria2_download`、`prepared`、`quarantine` 和 `trash`；每个值都必须是运行机器上的绝对目录，不同机器可以使用不同盘符、UNC 路径或 Linux 挂载点。
+- `qbit_torrent_path` 单独记录 qBittorrent 主机看到的种子保存根目录；它可以与本机读取完成文件的 `roots.torrent_download` 不同，完成路径只按两者根目录后的相对部分映射。
 - qBittorrent、LANraragi、可选 aria2/H@H 的非敏感地址和功能开关。
 - 文件大小上限、文件名规则、允许的归档和内容类型。
 - Web 监听地址、端口、基础路径和非敏感展示选项。
@@ -546,7 +547,7 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 
 #### supervisor 配置
 
-建议文件：`config/supervisor.toml`。
+建议模板：`config/supervisor.toml.sample`；部署时复制为被 Git 忽略的 `config/supervisor.toml`。
 
 保存流程调度和可靠性参数：
 
@@ -562,7 +563,7 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 
 #### crawl 配置
 
-建议文件：`config/crawl.toml`。
+建议模板：`config/crawl.toml.sample`；部署时复制为被 Git 忽略的 `config/crawl.toml`。
 
 保存“采集什么”和“如何筛选”的业务规则：
 
@@ -577,7 +578,7 @@ crawl 配置变化不改变程序运行架构，也不保存 Cookie 或代理凭
 
 #### secrets 配置
 
-建议使用环境变量或不进入版本控制的 `config/secrets.toml`；项目只提供 `config/secrets.example.toml`。
+建议使用环境变量或不进入版本控制的 `config/secrets.toml`；项目提供 `config/secrets.toml.sample`，其他运行配置也统一使用 `*.toml.sample` 模板。
 
 保存：
 
@@ -999,10 +1000,15 @@ src/
       hah/
     logging/
 config/
+  app.toml.sample
+  supervisor.toml.sample
+  crawl.toml.sample
+  secrets.toml.sample
+  # local ignored files copied from the samples
   app.toml
   supervisor.toml
   crawl.toml
-  secrets.example.toml
+  secrets.toml
 migrations/
 tests/
 scripts/

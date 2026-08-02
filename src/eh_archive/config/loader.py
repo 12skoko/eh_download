@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -8,9 +9,7 @@ from typing import Any
 
 DEFAULT_LOCATIONS = (
     "torrent_download",
-    "torrent_prepared",
     "hah_download",
-    "hah_prepared",
     "direct_download",
     "aria2_download",
     "prepared",
@@ -39,6 +38,9 @@ class AppConfig:
     browse_session: SessionRole = field(default_factory=SessionRole)
     archive_session: SessionRole = field(default_factory=SessionRole)
     qbittorrent_url: str = "http://127.0.0.1:8080"
+    # Path as seen by the qBittorrent host; it may differ from the local
+    # roots.torrent_download path when qBittorrent runs remotely.
+    qbit_torrent_path: str | None = None
     lanraragi_url: str = "http://127.0.0.1:3000"
     aria2_enabled: bool = False
     hah_enabled: bool = False
@@ -135,15 +137,33 @@ def _parse_cookie_string(value: str, *, account: str = "default") -> dict[str, s
     return result
 
 
-def _path_map(raw: dict[str, Any], base: Path) -> dict[str, Path]:
-    roots = dict(raw.get("roots", {}))
-    result: dict[str, Path] = {}
-    for key in DEFAULT_LOCATIONS:
-        value = roots.get(key)
-        result[key] = Path(value) if value else base / key
-    for key, value in roots.items():
-        result[str(key)] = Path(value)
-    return result
+def _absolute_directory(value: Any, key: str) -> Path:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{key} must be a non-empty absolute directory")
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"{key} must be an absolute directory: {value!r}")
+    return path
+
+
+def _is_absolute_external_path(value: str) -> bool:
+    """Recognize Windows and POSIX absolute paths without using local Path rules."""
+
+    return value.startswith(("/", "\\\\")) or bool(re.match(r"^[A-Za-z]:[\\/]", value))
+
+
+def _path_map(raw: dict[str, Any]) -> dict[str, Path]:
+    configured = raw.get("roots")
+    if not isinstance(configured, dict):
+        raise TypeError("app.toml must define a [roots] table with absolute directories")
+    roots = dict(configured)
+    missing = [key for key in DEFAULT_LOCATIONS if key not in roots]
+    if missing:
+        raise ValueError("app.toml is missing required [roots] entries: " + ", ".join(missing))
+    unknown = sorted(set(roots) - set(DEFAULT_LOCATIONS))
+    if unknown:
+        raise ValueError("unsupported [roots] entries: " + ", ".join(unknown))
+    return {str(key): _absolute_directory(value, f"roots.{key}") for key, value in roots.items()}
 
 
 def _role(raw: dict[str, Any], key: str) -> SessionRole:
@@ -170,12 +190,25 @@ def load_config(
         or secrets_raw.get("database_url")
         or app_raw.get("database_url")
     )
-    roots = _path_map(app_raw, Path.cwd())
+    roots = _path_map(app_raw)
+    log_dir_value = app_raw.get("log_dir")
+    log_dir = (
+        _absolute_directory(log_dir_value, "log_dir")
+        if log_dir_value is not None
+        else (Path.cwd() / "log").resolve()
+    )
+    qbit_torrent_path: str | None = None
+    if app_raw.get("qbit_torrent_path") is not None:
+        qbit_torrent_path = str(app_raw["qbit_torrent_path"]).strip()
+        if not _is_absolute_external_path(qbit_torrent_path):
+            raise ValueError(
+                "qbit_torrent_path must be an absolute path as seen by the qBittorrent host"
+            )
     app = AppConfig(
         database_url=database_url or AppConfig.database_url,
         timezone=str(app_raw.get("timezone", "UTC")),
         log_level=str(app_raw.get("log_level", "INFO")),
-        log_dir=Path(app_raw.get("log_dir", "log")),
+        log_dir=log_dir,
         roots=roots,
         max_file_size=int(app_raw.get("max_file_size", AppConfig.max_file_size)),
         allowed_archive_extensions=tuple(app_raw.get("allowed_archive_extensions", [".zip"])),
@@ -184,6 +217,7 @@ def load_config(
         browse_session=_role(app_raw.get("sessions", {}), "browse"),
         archive_session=_role(app_raw.get("sessions", {}), "archive"),
         qbittorrent_url=str(app_raw.get("qbittorrent_url", "http://127.0.0.1:8080")),
+        qbit_torrent_path=qbit_torrent_path,
         lanraragi_url=str(app_raw.get("lanraragi_url", "http://127.0.0.1:3000")),
         aria2_enabled=bool(app_raw.get("aria2_enabled", False)),
         hah_enabled=bool(app_raw.get("hah_enabled", False)),

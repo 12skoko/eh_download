@@ -17,6 +17,9 @@ tests/
 
 config/runtime.toml
 config/private.toml
+config/app.toml
+config/supervisor.toml
+config/crawl.toml
 config/secrets.toml
 *.db
 .pytest_cache/

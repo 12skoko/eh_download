@@ -12,6 +12,48 @@ class UnsafePathError(ValueError):
     pass
 
 
+def _normalise_external_path(value: str | Path) -> str:
+    text = str(value).strip().replace("\\", "/")
+    if text != "/" and not re.fullmatch(r"[A-Za-z]:/", text):
+        text = text.rstrip("/")
+    return text
+
+
+def map_external_path(
+    external_path: str | Path,
+    external_root: str | Path,
+    local_root: str | Path,
+) -> Path:
+    """Map a qBittorrent-visible path into the local artifact root.
+
+    qBittorrent may run on another host, so its absolute path cannot be
+    resolved with the local filesystem. Only the relative suffix below the
+    configured external root is transferred to the local root.
+    """
+
+    external = _normalise_external_path(external_path)
+    root = _normalise_external_path(external_root)
+    if not root:
+        raise UnsafePathError("external artifact root is empty")
+    if external == root:
+        relative = ""
+    else:
+        prefix = root if root.endswith("/") else root + "/"
+        if not external.startswith(prefix):
+            raise UnsafePathError(
+                f"external path {external_path!r} is outside configured root {external_root!r}"
+            )
+        relative = external[len(prefix) :]
+    parts = tuple(part for part in relative.split("/") if part)
+    if any(part in {".", ".."} or "\x00" in part for part in parts):
+        raise UnsafePathError("external artifact path contains an unsafe component")
+    local = Path(local_root).expanduser().resolve()
+    result = local.joinpath(*parts)
+    if not ArtifactPathService._inside(local, result):
+        raise UnsafePathError("mapped artifact path escapes local root")
+    return result
+
+
 def safe_manga_id(manga_id: str) -> str:
     value = re.sub(r"[^A-Za-z0-9._-]+", "_", manga_id.replace("/", "_"))
     value = value.strip("._-") or "manga"

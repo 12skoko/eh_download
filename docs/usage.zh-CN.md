@@ -1,6 +1,6 @@
 # EH Archive 使用与运行说明
 
-本文档对应当前重构版 EH Archive 6.0，覆盖安装、配置、首次启动、采集、下载、校验、压缩、上传、清理、Web 控制和旧 MySQL 迁移。项目根目录是本文中所有相对路径的基准；在 PowerShell 中请先进入项目根目录再执行命令。
+本文档对应当前重构版 EH Archive 6.0，覆盖安装、配置、首次启动、采集、下载、校验、压缩、上传、清理、Web 控制和旧 MySQL 迁移。配置中的文件和目录路径都必须填写绝对路径；在 PowerShell 中仍建议先进入项目根目录执行命令。
 
 ## 1. 运行结构
 
@@ -124,15 +124,18 @@ python3.11 -m venv .venv
 
 ## 4. 配置
 
-### 4.1 创建密钥文件
+### 4.1 创建本地配置文件
 
-`config/secrets.toml` 已被 `.gitignore` 忽略，不能直接把凭据提交到 Git：
+仓库只保存 `*.toml.sample` 模板，实际运行配置使用同名 `.toml` 文件并由 `.gitignore` 忽略。首次配置时先复制四个模板：
 
 ```powershell
-Copy-Item 'config\secrets.example.toml' 'config\secrets.toml'
+Copy-Item 'config\app.toml.sample' 'config\app.toml'
+Copy-Item 'config\supervisor.toml.sample' 'config\supervisor.toml'
+Copy-Item 'config\crawl.toml.sample' 'config\crawl.toml'
+Copy-Item 'config\secrets.toml.sample' 'config\secrets.toml'
 ```
 
-然后编辑 `config/secrets.toml`：
+然后编辑四个本地 `.toml` 文件。`config/secrets.toml` 包含 Cookie、密码和 token，不能提交到 Git；`app.toml` 中的存储目录必须替换为实际绝对路径：
 
 ```toml
 database_url = "postgresql+psycopg://user:password@127.0.0.1:5432/eh_archive"
@@ -175,13 +178,43 @@ $env:EHARCHIVE_WEB_SECRET = 'change-this-long-random-secret'
 | `database_url` | PostgreSQL URL；通常放在 `secrets.toml` 更安全 |
 | `web_host`、`web_port` | Web 监听地址，默认 `127.0.0.1:8787` |
 | `qbittorrent_url` | qBittorrent Web API 地址 |
+| `qbit_torrent_path` | qBittorrent 主机看到的种子保存路径，可与本地 `roots.torrent_download` 不同 |
 | `lanraragi_url` | LANraragi 地址 |
 | `max_file_size` | 单个产物允许的最大字节数 |
 | `fallback_method` | 无种子或种子停滞时的 `direct`、`hah` 或 `aria2` |
 | `aria2_enabled`、`hah_enabled` | 启用对应可选下载器 |
-| `[roots]` | 受控文件根目录，包含下载、准备、隔离和回收目录 |
+| `[roots]` | 受控文件根目录；每个值都必须是运行机器上的绝对目录 |
 
-`roots` 中的相对路径相对于启动命令的当前目录。建议始终从项目根目录启动；更换存储盘时只需修改这些根目录，不要在数据库中写绝对路径。默认目录包括 `data/torrent_download`、`data/direct_download`、`data/prepared`、`data/quarantine` 和 `data/trash`。
+`roots` 不接受相对路径，也不会根据启动目录补全。目录不存在时，程序会在需要时创建；更换存储盘时只需修改这些绝对根目录。数据库仍只保存受控位置键和文件名，不保存这些绝对路径。
+
+各位置键的含义如下。
+
+| 配置键 | 用途 | 当前运行时 |
+| --- | --- | --- |
+| `torrent_download` | EH Archive 本机读取种子完成文件的目录；不是 qBittorrent API 的保存路径 | 使用 |
+| `hah_download` | H@H 客户端完成下载的目录；程序扫描其中带 `galleryinfo.txt` 的画廊目录 | 使用 H@H 时使用 |
+| `direct_download` | EH direct 下载得到的 ZIP；包含临时下载文件和验证后的代次文件 | 使用 direct 时使用 |
+| `aria2_download` | aria2 提交的临时文件和完成后的 ZIP | 启用 aria2 时使用 |
+| `prepared` | 把下载目录压缩成 ZIP 后、上传 LANraragi 前的标准产物目录 | 使用 |
+| `quarantine` | 校验失败、LANraragi 不支持或需要人工复核的隔离产物 | 使用 |
+| `trash` | 为可回收删除预留的受控目录 | 当前清理代码不自动移入这里 |
+
+示例（Windows 本机读取、Linux 主机运行 qBittorrent；`D:/eharchive-data` 请替换成你的实际目录）：
+
+```toml
+qbit_torrent_path = "/home/ubuntu/ptcache/ehentai"
+
+[roots]
+torrent_download = "D:/eharchive-data/torrent_download"
+hah_download = "D:/eharchive-data/hah_download"
+direct_download = "D:/eharchive-data/direct_download"
+aria2_download = "D:/eharchive-data/aria2_download"
+prepared = "D:/eharchive-data/prepared"
+quarantine = "D:/eharchive-data/quarantine"
+trash = "D:/eharchive-data/trash"
+```
+
+qBittorrent 返回 `/home/ubuntu/ptcache/ehentai/1234567/archive.zip` 后，EH Archive 会按根目录后的相对部分读取 `D:/eharchive-data/torrent_download/1234567/archive.zip`。两边必须保持根目录下的相对目录结构一致；如果 qBittorrent 与 EH Archive 在同一台机器，就把两个配置设成同一个绝对目录。
 
 ### 4.3 `config/crawl.toml`
 
@@ -475,7 +508,7 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/all" `
 
 ## 11. 运维、停止和故障排查
 
-- 日志目录由 `app.toml` 的 `log_dir` 指定，默认是项目根目录下的 `log`；不要把 Cookie、Authorization 或代理密码写入事件备注。
+- 日志目录由 `app.toml` 的 `log_dir` 指定，也必须是绝对目录；不要把 Cookie、Authorization 或代理密码写入事件备注。
 - 先看 `/health`，再看 `/api/manga/{manga_id}` 的 `attempts` 和 `events`。失败会有 `error_code`、下次重试时间和最后一次操作。
 - 维护前先暂停 `all`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；Supervisor 会终止子进程并在下次启动时恢复过期租约。
 - `manual_review` 不是自动重试状态：检查 EH 页面、文件、LANraragi metadata 或重复上传后，用 Web action 或人工 archive confirmation 明确恢复。

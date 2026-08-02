@@ -126,6 +126,19 @@ def valid_sha1(value: Any) -> str | None:
     return text if re.fullmatch(r"[0-9a-fA-F]{40}", text) else None
 
 
+def legacy_artifact_location(method: str | None, filename: str) -> str:
+    """Map a legacy filename to one of the current controlled roots."""
+
+    if filename.lower().endswith(".zip"):
+        return "prepared"
+    return {
+        "direct": "direct_download",
+        "aria2": "aria2_download",
+        "hah": "hah_download",
+        "torrent": "torrent_download",
+    }.get(method or "torrent", "torrent_download")
+
+
 def migrate(
     mysql_rows: list[dict[str, Any]],
     info_rows: list[dict[str, Any]],
@@ -204,12 +217,7 @@ def migrate(
             record.status = status
             if record.artifact_filename:
                 is_zip = record.artifact_filename.lower().endswith(".zip")
-                location = {
-                    "direct": "direct_download",
-                    "aria2": "aria2_download",
-                    "hah": "hah_prepared" if is_zip else "hah_download",
-                    "torrent": "torrent_prepared" if is_zip else "torrent_download",
-                }.get(method or "torrent", "prepared" if is_zip else "torrent_download")
+                location = legacy_artifact_location(method, record.artifact_filename)
                 record.artifact_location = location
                 record.artifact_kind = "zip" if is_zip else "directory"
                 record.artifact_generation = 1

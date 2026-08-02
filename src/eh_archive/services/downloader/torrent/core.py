@@ -66,7 +66,9 @@ class TorrentService:
     ) -> None:
         self.http = http
         self.qbit = qbit
-        self.torrent_root = Path(torrent_root)
+        # This is the path as seen by qBittorrent, not necessarily a local
+        # filesystem path. The caller maps completed content separately.
+        self.torrent_root = str(torrent_root)
         self.headers, self.cookies, self.proxies = headers or {}, cookies or {}, proxies
         self.category = category
 
@@ -110,7 +112,13 @@ class TorrentService:
             raise ArchiveError(
                 "invalid_torrent", "torrent response is not a bencode dictionary", ErrorClass.ITEM
             )
-        save_path = self.torrent_root / safe_filename(manga_id.split("/", 1)[0])
-        save_path.mkdir(parents=True, exist_ok=True)
+        save_path = _join_external_path(self.torrent_root, safe_filename(manga_id.split("/", 1)[0]))
         torrent_hash = self.qbit.add(content, save_path=save_path, category=self.category)
         return torrent_hash, choice
+
+
+def _join_external_path(root: str | Path, child: str) -> str:
+    value = str(root)
+    separator = "\\" if "\\" in value and "/" not in value else "/"
+    value = value.rstrip("\\/")
+    return f"{value}{separator}{child}" if value else child

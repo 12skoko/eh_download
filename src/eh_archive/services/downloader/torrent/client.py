@@ -23,7 +23,7 @@ class QBittorrentClient:
         # bounded and does not hold a database lease.
         for _ in range(10):
             for torrent in self.client.torrents_info():
-                if str(torrent.save_path).rstrip("\\/") == str(save_path).rstrip("\\/"):
+                if _path_key(torrent.save_path) == _path_key(save_path):
                     return str(torrent.hash)
             import time
 
@@ -36,3 +36,7 @@ class QBittorrentClient:
 
     def delete(self, torrent_hash: str, *, delete_files: bool = False) -> None:
         self.client.torrents_delete(torrent_hashes=torrent_hash, delete_files=delete_files)
+
+
+def _path_key(value: str | Path) -> str:
+    return str(value).replace("\\", "/").rstrip("/").casefold()
