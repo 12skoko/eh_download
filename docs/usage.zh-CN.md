@@ -222,6 +222,8 @@ qBittorrent 返回 `/home/ubuntu/ptcache/ehentai/1234567/archive.zip` 后，EH A
 
 ```toml
 observation_days = 1
+collect_end_days = 6
+collect_end_offset = 3000
 name_keywords = ["关键词"]
 tag_keywords = ["artist:某作者"]
 exclude_categories = ["Western"]
@@ -230,7 +232,7 @@ exclude_categories = ["Western"]
 latest = "https://e-hentai.org/?f_search=..."
 ```
 
-采集会跟随列表的下一页，最多 100 页。名称、标签、分类过滤和观察期会决定档案进入 `download_pending`、`deferred` 或 `skipped`。修改后 Supervisor 下一个采集周期会使用新配置；需要立即采集可按第 6 节执行 CLI。
+自动采集会跟随列表的下一页，并从最近 `collect_end_days` 天内最早的 `deferred` 记录计算终点：画廊 ID 减去 `collect_end_offset`。默认值与旧程序一致，分别是 6 天和 3000；找不到符合条件的记录时会抓到网站最后一页。名称、标签、分类过滤和观察期会决定档案进入 `download_pending`、`deferred` 或 `skipped`。观察期从画廊的 `posted_at` 开始计算，重复抓取不会重新计时。
 
 ### 4.4 `config/supervisor.toml`
 
@@ -327,13 +329,28 @@ eharchive-supervisor --config-dir config
 
 ### 7.1 自动采集
 
-把列表 URL 写入 `crawl.toml` 后，Supervisor 按 `collect_interval_seconds` 自动运行。也可以立即执行一次：
+把列表 URL 写入 `crawl.toml` 后，Supervisor 按 `collect_interval_seconds` 自动运行，并使用动态终点。也可以立即执行一次同样的自动抓取任务：
 
 ```powershell
-.\.venv\Scripts\eharchive.exe --config-dir config collect 'https://e-hentai.org/?f_search=...'
+python -m eh_archive.tasks.collect --config-dir config
 ```
 
-该命令会保存列表中的基础信息并跟随下一页。它使用 browse 会话；Cookie、代理或 EH 返回登录页时，错误会记录在日志和档案事件中。
+手动抓取一个列表 URL 时，默认一直抓到网站最后一页：
+
+```powershell
+eharchive --config-dir config collect 'https://e-hentai.org/?f_search=...' --stop-mode full
+```
+
+也可以让手动抓取使用自动任务的动态终点，或者直接指定终点画廊 ID：
+
+```powershell
+eharchive --config-dir config collect 'https://e-hentai.org/?f_search=...' --stop-mode automatic
+eharchive --config-dir config collect 'https://e-hentai.org/?f_search=...' --end 3000000
+```
+
+`--stop-mode` 与 `--end` 互斥。不写 `--stop-mode` 时，手动 `collect` 仍默认抓到最后一页。采集使用 browse 会话；Cookie、代理或 EH 返回登录页时，错误会记录在日志和档案事件中。
+
+再次抓到数据库中已有的 `manga_id` 时，程序只刷新名称、链接、发布时间、分类、标签、页数、评分和上传者等网页元数据，不会重置正在下载、已上传、已完成或已删除等工作流状态。`deferred` 是唯一会重新筛选的已有状态：仍在观察期就保持 `deferred`，观察期结束后进入正常筛选和下载流程，不符合条件则变为 `skipped`。
 
 ### 7.2 手工加入单个画廊
 

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from ...config.loader import AppConfig, CrawlConfig, SecretsConfig
 from ...db.repository import ArchiveRepository
@@ -11,7 +11,7 @@ from ...domain.models import Manga
 from ...domain.states import QueueSource, Status
 from ...integrations.http import RoleSession
 from ...logging import get_logger
-from .parser import judge_screen_flag, parse_metadata
+from .parser import judge_screen_flag, observation_deadline, parse_metadata
 
 log = get_logger(__name__)
 
@@ -84,10 +84,16 @@ class Collector:
                     else "screen_rejected"
                 )
                 result.skipped += 1
+            elif flag == -1 and manga.posted_at is None:
+                manga.status = Status.MANUAL_REVIEW
+                manga.remark = "missing_posted_at"
+                result.errors += 1
             elif flag == -1:
                 manga.status = Status.DEFERRED
                 manga.remark = "observation_period"
-                manga.defer_until = datetime.now(UTC) + timedelta(days=self.crawl.observation_days)
+                manga.defer_until = observation_deadline(
+                    manga.posted_at, self.crawl.observation_days
+                )
                 result.deferred += 1
             else:
                 manga.status = Status.DOWNLOAD_PENDING
@@ -103,16 +109,14 @@ class Collector:
         actor: str = "collector",
         timeout: float = 30.0,
         follow_next: bool = True,
-        max_pages: int = 100,
+        end: int | None = None,
     ) -> CollectionResult:
-        if max_pages < 1:
-            raise ValueError("max_pages must be positive")
         result = CollectionResult()
         current_url = url
         seen: set[str] = set()
-        for _ in range(max_pages):
+        while True:
             if current_url in seen:
-                break
+                raise RuntimeError(f"collection pagination loop detected: {current_url}")
             seen.add(current_url)
             html = self._get_page(current_url, timeout=timeout)
             result.add(self.collect_html(html, source=source, actor=actor))
@@ -120,6 +124,8 @@ class Collector:
                 break
             next_url = self._next_url(html, current_url)
             if not next_url:
+                break
+            if end is not None and self._next_number(next_url) <= end:
                 break
             current_url = next_url
         return result
@@ -139,6 +145,16 @@ class Collector:
         next_link = soup.find("a", id="unext")
         href = next_link.get("href") if next_link else None
         return urljoin(current_url, str(href)) if href else None
+
+    @staticmethod
+    def _next_number(next_url: str) -> int:
+        values = parse_qs(urlsplit(next_url).query).get("next")
+        if not values:
+            raise ValueError(f"next page URL has no next parameter: {next_url}")
+        try:
+            return int(values[0])
+        except ValueError as exc:
+            raise ValueError(f"next page URL has an invalid next parameter: {next_url}") from exc
 
 
 def _record(manga: Manga):

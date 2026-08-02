@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 import json
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -79,6 +79,12 @@ def _parse_datetime(value: str | None) -> datetime | None:
         except ValueError:
             pass
     return None
+
+
+def observation_deadline(posted_at: datetime | None, observation_days: int) -> datetime | None:
+    if posted_at is None:
+        return None
+    return posted_at + timedelta(days=observation_days)
 
 
 def _int_text(value: str, default: int | None = None) -> int | None:
@@ -290,5 +296,5 @@ def judge_screen_flag(
     ):
         current = now or datetime.now(UTC)
         age = (current - manga.posted_at).total_seconds() if manga.posted_at else 0
-        return 1 if age > observation_days * 86400 else -1
+        return 1 if age >= observation_days * 86400 else -1
     return 0

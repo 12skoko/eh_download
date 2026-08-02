@@ -37,7 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
     db.add_argument("action", choices=("upgrade", "ping"))
     collect = sub.add_parser("collect")
     collect.add_argument("url", nargs="?")
-    collect.add_argument("--manual", action="store_true")
+    collect_mode = collect.add_mutually_exclusive_group()
+    collect_mode.add_argument("--manual", action="store_true")
+    collect_mode.add_argument("--stop-mode", choices=("full", "automatic"))
+    collect_mode.add_argument("--end", type=int)
     collect.add_argument("--priority", type=int, default=0)
     task = sub.add_parser("task")
     task.add_argument(
@@ -124,7 +127,13 @@ def main(argv: list[str] | None = None) -> int:
             from .services.collector import Collector
 
             with database.session() as session:
-                Collector(ArchiveRepository(session), app, crawl, secrets).collect_url(url)
+                repository = ArchiveRepository(session)
+                end = args.end
+                if args.stop_mode == "automatic":
+                    end = repository.automatic_collect_end(
+                        days=crawl.collect_end_days, offset=crawl.collect_end_offset
+                    )
+                Collector(repository, app, crawl, secrets).collect_url(url, end=end)
             return 0
         manga_id = _gallery_id(url)
         if manga_id is None:

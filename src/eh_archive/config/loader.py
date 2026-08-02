@@ -85,6 +85,8 @@ class CrawlConfig:
     name_keywords: tuple[str, ...] = ()
     tag_keywords: tuple[str, ...] = ()
     observation_days: int = 1
+    collect_end_days: int = 6
+    collect_end_offset: int = 3000
     exclude_categories: tuple[str, ...] = ()
     video_markers: tuple[str, ...] = ("mp4", "video")
     excluded_resolutions: tuple[str, ...] = ("1280x", "800x", "1920x", "2560x")
@@ -249,6 +251,8 @@ def load_config(
         name_keywords=tuple(crawl_raw.get("name_keywords", [])),
         tag_keywords=tuple(crawl_raw.get("tag_keywords", [])),
         observation_days=int(crawl_raw.get("observation_days", 1)),
+        collect_end_days=int(crawl_raw.get("collect_end_days", 6)),
+        collect_end_offset=int(crawl_raw.get("collect_end_offset", 3000)),
         exclude_categories=tuple(crawl_raw.get("exclude_categories", [])),
         video_markers=tuple(crawl_raw.get("video_markers", ["mp4", "video"])),
         excluded_resolutions=tuple(

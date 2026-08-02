@@ -99,6 +99,35 @@ class ArchiveRepository:
     def get(self, manga_id: str) -> MangaRecord | None:
         return self.session.get(MangaRecord, manga_id)
 
+    def automatic_collect_end(
+        self,
+        *,
+        days: int = 6,
+        offset: int = 3000,
+        now: datetime | None = None,
+    ) -> int:
+        if days < 0:
+            raise ValueError("collect end days must not be negative")
+        if offset < 0:
+            raise ValueError("collect end offset must not be negative")
+        cutoff = (now or utcnow()) - timedelta(days=days)
+        query = (
+            select(MangaRecord.manga_id)
+            .where(
+                MangaRecord.status == Status.DEFERRED.value,
+                MangaRecord.queue_source == "automatic",
+                MangaRecord.posted_at.is_not(None),
+                MangaRecord.posted_at > cutoff,
+                ~MangaRecord.manga_id.like("picacg/%"),
+            )
+            .order_by(MangaRecord.posted_at.asc())
+        )
+        for manga_id in self.session.scalars(query):
+            gallery_id, separator, _token = manga_id.partition("/")
+            if separator and gallery_id.isdecimal():
+                return int(gallery_id) - offset
+        return 0
+
     def upsert_manga(self, record: MangaRecord, *, actor: str = "collector") -> MangaRecord:
         current = self.session.get(MangaRecord, record.manga_id)
         if current is None:
@@ -127,6 +156,23 @@ class ArchiveRepository:
             "source_fetched_at",
         ):
             setattr(current, field, getattr(record, field))
+        if current.status == Status.DEFERRED.value:
+            previous = current.status
+            current.status = record.status
+            current.remark = record.remark
+            current.defer_until = record.defer_until
+            current.updated_at = utcnow()
+            current.row_version += 1
+            if current.status != previous:
+                current.status_updated_at = current.updated_at
+                self._event(
+                    current.manga_id,
+                    "status_changed",
+                    actor=actor,
+                    from_status=previous,
+                    to_status=current.status,
+                    detail={"reason": "deferred_reclassified"},
+                )
         if current.status in (Status.DISCOVERED.value, Status.DEFERRED.value, Status.SKIPPED.value):
             current.updated_at = utcnow()
         self.session.flush()
@@ -252,7 +298,7 @@ class ArchiveRepository:
         limit: int = 100,
     ) -> int:
         """Re-evaluate automatic discovered rows after an observation period."""
-        from ..services.collector.parser import judge_screen_flag
+        from ..services.collector.parser import judge_screen_flag, observation_deadline
 
         now = utcnow()
         rows = list(
@@ -295,9 +341,15 @@ class ArchiveRepository:
                     "excluded_category" if row.category in exclude_categories else "screen_rejected"
                 )
             elif flag == -1:
-                row.status = Status.DEFERRED.value
-                row.defer_until = now + timedelta(days=observation_days)
-                row.remark = "observation_period"
+                deadline = observation_deadline(row.posted_at, observation_days)
+                if deadline is None:
+                    row.status = Status.MANUAL_REVIEW.value
+                    row.defer_until = None
+                    row.remark = "missing_posted_at"
+                else:
+                    row.status = Status.DEFERRED.value
+                    row.defer_until = deadline
+                    row.remark = "observation_period"
             else:
                 row.status = Status.DOWNLOAD_PENDING.value
                 row.defer_until = None
