@@ -1,0 +1,16 @@
+# Copy this file to config/migration.toml for a one-time legacy migration.
+# Passwords are ordinary TOML strings; do not put them into a database URL.
+
+[mysql]
+host = "127.0.0.1"
+port = 3306
+username = "readonly"
+password = "replace-with-old-mysql-password"
+database = "ehai"
+
+[postgres]
+host = "127.0.0.1"
+port = 5432
+username = "eharchive"
+password = "replace-with-postgresql-password"
+database = "eh_archive"

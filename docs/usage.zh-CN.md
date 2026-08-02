@@ -477,30 +477,36 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/all" `
 
 迁移脚本在 `scripts/`，不属于运行时服务。建议使用旧库只读账号，并保留旧 MySQL 直到新系统完成一个完整周期。
 
-先安装迁移依赖，再执行 dry-run：
+先创建迁移专用配置。它不是运行时配置，不会被主程序读取；复制后只在本机保留 `config/migration.toml`：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -e ".[migration]"
-.\.venv\Scripts\python.exe scripts\migrate_mysql_to_postgresql.py `
-  --mysql 'mysql+pymysql://user:password@127.0.0.1:3306/old_db' `
-  --postgres 'postgresql+psycopg://user:password@127.0.0.1:5432/eh_archive' `
+Copy-Item 'config\\migration.sample.toml' 'config\\migration.toml'
+```
+
+编辑 `config/migration.toml` 中的 `[mysql]` 和 `[postgres]`。用户名、密码、主机、端口和数据库名都是独立字段，不需要拼接 URL，也不需要编码密码。
+
+在 Conda 环境中安装迁移依赖，再执行 dry-run：
+
+```powershell
+conda activate eh
+python -m pip install -e ".[migration]"
+python scripts\migrate_mysql_to_postgresql.py `
+  --config 'config\migration.toml' `
   --dry-run --report migration-report.json
 ```
 
 确认状态映射后再写入新库：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\migrate_mysql_to_postgresql.py `
-  --mysql 'mysql+pymysql://user:password@127.0.0.1:3306/old_db' `
-  --postgres 'postgresql+psycopg://user:password@127.0.0.1:5432/eh_archive' `
+python scripts\migrate_mysql_to_postgresql.py `
+  --config 'config\migration.toml' `
   --apply --report migration-report.json
 
-.\.venv\Scripts\python.exe scripts\verify_migration.py `
-  --postgres 'postgresql+psycopg://user:password@127.0.0.1:5432/eh_archive' `
-  --mysql 'mysql+pymysql://user:password@127.0.0.1:3306/old_db'
+python scripts\verify_migration.py `
+  --config 'config\migration.toml'
 
-.\.venv\Scripts\python.exe scripts\reconcile_migration.py `
-  --postgres 'postgresql+psycopg://user:password@127.0.0.1:5432/eh_archive' `
+python scripts\reconcile_migration.py `
+  --config 'config\migration.toml' `
   --config-dir config
 ```
 

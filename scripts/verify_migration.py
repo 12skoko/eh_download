@@ -8,6 +8,12 @@ from sqlalchemy import func, select
 
 from eh_archive.db import Database
 from eh_archive.db.models import EventLog, MangaInfoRecord, MangaRecord
+try:
+    from scripts.migration_config import load_migration_config
+except ModuleNotFoundError as exc:
+    if exc.name != "scripts":
+        raise
+    from migration_config import load_migration_config
 
 
 def _duplicates(session, column):
@@ -83,16 +89,28 @@ def verify(database: Database) -> dict:
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--postgres", required=True)
+    parser.add_argument("--config", help="migration TOML file for both database connections")
+    parser.add_argument("--postgres", help="target PostgreSQL URL (alternative to --config)")
     parser.add_argument(
         "--mysql", help="optional read-only MySQL URL for source row-count comparison"
     )
     args = parser.parse_args(argv)
-    result = verify(Database(args.postgres))
-    if args.mysql:
+    if args.config:
+        if args.mysql or args.postgres:
+            parser.error("--config cannot be combined with --mysql or --postgres")
+        try:
+            mysql_url, postgres_url = load_migration_config(args.config)
+        except ValueError as exc:
+            parser.error(str(exc))
+    elif not args.postgres:
+        parser.error("provide --config or --postgres")
+    else:
+        mysql_url, postgres_url = args.mysql, args.postgres
+    result = verify(Database(postgres_url))
+    if mysql_url:
         from scripts.migrate_mysql_to_postgresql import _mysql_rows
 
-        manga, info = _mysql_rows(args.mysql)
+        manga, info = _mysql_rows(mysql_url)
         result["source_mysql"] = {"manga": len(manga), "mangainfo": len(info)}
         result["count_match"] = {
             "manga": result["manga"] == len(manga),

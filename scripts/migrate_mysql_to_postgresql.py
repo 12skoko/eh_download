@@ -4,13 +4,21 @@ import argparse
 import json
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+
+from sqlalchemy.engine import URL, make_url
 
 from eh_archive.db import Database
 from eh_archive.db.models import EventLog, MangaInfoRecord, MangaRecord
 from eh_archive.db.schema import upgrade
 from eh_archive.services.paths import safe_filename
+try:
+    from scripts.migration_config import load_migration_config
+except ModuleNotFoundError as exc:
+    if exc.name != "scripts":
+        raise
+    from migration_config import load_migration_config
 
 
 def parse_datetime(value: Any) -> datetime | None:
@@ -320,18 +328,18 @@ def migrate(
     return report
 
 
-def _mysql_rows(url: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _mysql_rows(url: str | URL) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     try:
         import pymysql
     except ImportError as exc:
         raise SystemExit("install the migration extra for PyMySQL") from exc
-    parsed = urlparse(url.replace("mysql+pymysql://", "mysql://", 1))
+    parsed = make_url(url) if isinstance(url, str) else url
     connection = pymysql.connect(
-        host=parsed.hostname or "localhost",
+        host=parsed.host or "localhost",
         port=parsed.port or 3306,
-        user=unquote(parsed.username or ""),
-        password=unquote(parsed.password or ""),
-        database=parsed.path.lstrip("/"),
+        user=parsed.username or "",
+        password=parsed.password or "",
+        database=parsed.database or "",
         cursorclass=pymysql.cursors.DictCursor,
         read_timeout=60,
         write_timeout=60,
@@ -349,8 +357,12 @@ def _mysql_rows(url: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mysql", required=True)
-    parser.add_argument("--postgres", required=True)
+    parser.add_argument(
+        "--config",
+        help="TOML file containing structured [mysql] and [postgres] connection settings",
+    )
+    parser.add_argument("--mysql", help="legacy MySQL URL (alternative to --config)")
+    parser.add_argument("--postgres", help="target PostgreSQL URL (alternative to --config)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true", help="write the migration to PostgreSQL")
     mode.add_argument(
@@ -360,8 +372,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--report", default="migration-report.json")
     args = parser.parse_args(argv)
-    manga, info = _mysql_rows(args.mysql)
-    result = migrate(manga, info, Database(args.postgres), apply=bool(args.apply))
+    if args.config:
+        if args.mysql or args.postgres:
+            parser.error("--config cannot be combined with --mysql or --postgres")
+        try:
+            mysql_url, postgres_url = load_migration_config(Path(args.config))
+        except ValueError as exc:
+            parser.error(str(exc))
+    elif not args.mysql or not args.postgres:
+        parser.error("provide --config, or provide both --mysql and --postgres")
+    else:
+        mysql_url, postgres_url = args.mysql, args.postgres
+    manga, info = _mysql_rows(mysql_url)
+    result = migrate(manga, info, Database(postgres_url), apply=bool(args.apply))
     with open(args.report, "w", encoding="utf-8") as handle:
         json.dump(result, handle, ensure_ascii=False, indent=2, default=str)
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))

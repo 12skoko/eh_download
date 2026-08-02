@@ -6,6 +6,12 @@ import json
 from eh_archive.db import Database
 from eh_archive.db.models import MangaRecord
 from eh_archive.services.paths import ArtifactPathService
+try:
+    from scripts.migration_config import load_migration_config
+except ModuleNotFoundError as exc:
+    if exc.name != "scripts":
+        raise
+    from migration_config import load_migration_config
 
 
 def reconcile(database: Database, config_dir: str = "config") -> dict:
@@ -41,12 +47,24 @@ def reconcile(database: Database, config_dir: str = "config") -> dict:
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--postgres", required=True)
+    parser.add_argument("--config", help="migration TOML file containing PostgreSQL settings")
+    parser.add_argument("--postgres", help="target PostgreSQL URL (alternative to --config)")
     parser.add_argument("--config-dir", default="config")
     args = parser.parse_args(argv)
+    if args.config:
+        if args.postgres:
+            parser.error("--config cannot be combined with --postgres")
+        try:
+            _mysql_url, postgres_url = load_migration_config(args.config)
+        except ValueError as exc:
+            parser.error(str(exc))
+    elif args.postgres:
+        postgres_url = args.postgres
+    else:
+        parser.error("provide --config or --postgres")
     print(
         json.dumps(
-            reconcile(Database(args.postgres), args.config_dir), ensure_ascii=False, indent=2
+            reconcile(Database(postgres_url), args.config_dir), ensure_ascii=False, indent=2
         )
     )
     return 0
