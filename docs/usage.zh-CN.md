@@ -139,7 +139,8 @@ database_url = "postgresql+psycopg://user:password@127.0.0.1:5432/eh_archive"
 web_secret = "change-this-long-random-secret"
 
 [accounts.default]
-cookies = { ipb_member_id = "填写值", ipb_pass_hash = "填写值" }
+# 可直接粘贴浏览器复制的 Cookie 字符串
+cookies_str = "igneous=填写值;ipb_member_id=填写值;sl=dm_2;sk=填写值;ipb_pass_hash=填写值"
 
 [networks.direct]
 # proxies = { http = "http://user:pass@host:port", https = "http://user:pass@host:port" }

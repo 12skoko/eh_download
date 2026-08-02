@@ -103,8 +103,10 @@ class SecretsConfig:
 
     def cookies(self, role: SessionRole) -> dict[str, str]:
         value = self.accounts.get(role.account, {})
-        cookies = value.get("cookies", {})
-        return {str(k): str(v) for k, v in cookies.items()}
+        cookies_str = value.get("cookies_str", "")
+        if not isinstance(cookies_str, str):
+            raise TypeError(f"accounts.{role.account}.cookies_str must be a string")
+        return _parse_cookie_string(cookies_str, account=role.account)
 
     def network(self, role: SessionRole) -> dict[str, Any]:
         return dict(self.networks.get(role.network, {}))
@@ -115,6 +117,22 @@ def _read_toml(path: Path) -> dict[str, Any]:
         return {}
     with path.open("rb") as handle:
         return tomllib.load(handle)
+
+
+def _parse_cookie_string(value: str, *, account: str = "default") -> dict[str, str]:
+    """Parse a browser-style ``name=value;name2=value2`` cookie string."""
+
+    result: dict[str, str] = {}
+    for part in value.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        name, separator, cookie_value = part.partition("=")
+        name = name.strip()
+        if not separator or not name:
+            raise ValueError(f"accounts.{account}.cookies_str contains an invalid item: {part!r}")
+        result[name] = cookie_value.strip()
+    return result
 
 
 def _path_map(raw: dict[str, Any], base: Path) -> dict[str, Path]:
