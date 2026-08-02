@@ -528,7 +528,7 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 
 #### app 配置
 
-建议模板：`config/app.toml.sample`；部署时复制为被 Git 忽略的 `config/app.toml`。
+建议模板：`config/app.sample.toml`；部署时复制为被 Git 忽略的 `config/app.toml`。
 
 保存所有进程共享的非敏感运行设置：
 
@@ -547,7 +547,7 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 
 #### supervisor 配置
 
-建议模板：`config/supervisor.toml.sample`；部署时复制为被 Git 忽略的 `config/supervisor.toml`。
+建议模板：`config/supervisor.sample.toml`；部署时复制为被 Git 忽略的 `config/supervisor.toml`。
 
 保存流程调度和可靠性参数：
 
@@ -563,7 +563,7 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 
 #### crawl 配置
 
-建议模板：`config/crawl.toml.sample`；部署时复制为被 Git 忽略的 `config/crawl.toml`。
+建议模板：`config/crawl.sample.toml`；部署时复制为被 Git 忽略的 `config/crawl.toml`。
 
 保存“采集什么”和“如何筛选”的业务规则：
 
@@ -578,7 +578,7 @@ crawl 配置变化不改变程序运行架构，也不保存 Cookie 或代理凭
 
 #### secrets 配置
 
-建议使用环境变量或不进入版本控制的 `config/secrets.toml`；项目提供 `config/secrets.toml.sample`，其他运行配置也统一使用 `*.toml.sample` 模板。
+建议使用环境变量或不进入版本控制的 `config/secrets.toml`；项目提供 `config/secrets.sample.toml`，其他运行配置也统一使用 `*.sample.toml` 模板。
 
 保存：
 
@@ -1000,10 +1000,10 @@ src/
       hah/
     logging/
 config/
-  app.toml.sample
-  supervisor.toml.sample
-  crawl.toml.sample
-  secrets.toml.sample
+  app.sample.toml
+  supervisor.sample.toml
+  crawl.sample.toml
+  secrets.sample.toml
   # local ignored files copied from the samples
   app.toml
   supervisor.toml

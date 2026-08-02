@@ -126,13 +126,13 @@ python3.11 -m venv .venv
 
 ### 4.1 创建本地配置文件
 
-仓库只保存 `*.toml.sample` 模板，实际运行配置使用同名 `.toml` 文件并由 `.gitignore` 忽略。首次配置时先复制四个模板：
+仓库只保存 `*.sample.toml` 模板，实际运行配置使用同名 `.toml` 文件并由 `.gitignore` 忽略。首次配置时先复制四个模板：
 
 ```powershell
-Copy-Item 'config\app.toml.sample' 'config\app.toml'
-Copy-Item 'config\supervisor.toml.sample' 'config\supervisor.toml'
-Copy-Item 'config\crawl.toml.sample' 'config\crawl.toml'
-Copy-Item 'config\secrets.toml.sample' 'config\secrets.toml'
+Copy-Item 'config\app.sample.toml' 'config\app.toml'
+Copy-Item 'config\supervisor.sample.toml' 'config\supervisor.toml'
+Copy-Item 'config\crawl.sample.toml' 'config\crawl.toml'
+Copy-Item 'config\secrets.sample.toml' 'config\secrets.toml'
 ```
 
 然后编辑四个本地 `.toml` 文件。`config/secrets.toml` 包含 Cookie、密码和 token，不能提交到 Git；`app.toml` 中的存储目录必须替换为实际绝对路径：
