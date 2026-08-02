@@ -3,7 +3,8 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0002_remove_legacy_prepared_locations"
+# Alembic's default alembic_version.version_num is VARCHAR(32).
+revision = "0002_prepared_locations"
 down_revision = "0001_initial"
 branch_labels = None
 depends_on = None
