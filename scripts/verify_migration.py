@@ -8,11 +8,10 @@ from sqlalchemy import func, select
 
 from eh_archive.db import Database
 from eh_archive.db.models import EventLog, MangaInfoRecord, MangaRecord
-try:
-    from scripts.migration_config import load_migration_config
-except ModuleNotFoundError as exc:
-    if exc.name != "scripts":
-        raise
+
+if __package__:
+    from .migration_config import load_migration_config
+else:
     from migration_config import load_migration_config
 
 
@@ -108,7 +107,10 @@ def main(argv=None):
         mysql_url, postgres_url = args.mysql, args.postgres
     result = verify(Database(postgres_url))
     if mysql_url:
-        from scripts.migrate_mysql_to_postgresql import _mysql_rows
+        if __package__:
+            from .migrate_mysql_to_postgresql import _mysql_rows
+        else:
+            from migrate_mysql_to_postgresql import _mysql_rows
 
         manga, info = _mysql_rows(mysql_url)
         result["source_mysql"] = {"manga": len(manga), "mangainfo": len(info)}

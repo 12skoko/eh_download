@@ -6,11 +6,10 @@ import json
 from eh_archive.db import Database
 from eh_archive.db.models import MangaRecord
 from eh_archive.services.paths import ArtifactPathService
-try:
-    from scripts.migration_config import load_migration_config
-except ModuleNotFoundError as exc:
-    if exc.name != "scripts":
-        raise
+
+if __package__:
+    from .migration_config import load_migration_config
+else:
     from migration_config import load_migration_config
 
 

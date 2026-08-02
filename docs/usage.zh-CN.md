@@ -480,7 +480,7 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/all" `
 先创建迁移专用配置。它不是运行时配置，不会被主程序读取；复制后只在本机保留 `config/migration.toml`：
 
 ```powershell
-Copy-Item 'config\\migration.sample.toml' 'config\\migration.toml'
+Copy-Item 'config\migration.sample.toml' 'config\migration.toml'
 ```
 
 编辑 `config/migration.toml` 中的 `[mysql]` 和 `[postgres]`。用户名、密码、主机、端口和数据库名都是独立字段，不需要拼接 URL，也不需要编码密码。
@@ -507,6 +507,32 @@ python scripts\verify_migration.py `
 
 python scripts\reconcile_migration.py `
   --config 'config\migration.toml' `
+  --config-dir config
+```
+
+如果部署在 Linux 服务器上，使用 Bash 命令，不要复制上面的 PowerShell 反引号：
+
+```bash
+cd /home/ubuntu/ehentai_download_v6
+conda activate eh
+cp config/migration.sample.toml config/migration.toml
+chmod 600 config/migration.toml
+
+python scripts/migrate_mysql_to_postgresql.py \
+  --config config/migration.toml \
+  --dry-run \
+  --report ./migration-dry-run.json
+
+python scripts/migrate_mysql_to_postgresql.py \
+  --config config/migration.toml \
+  --apply \
+  --report ./migration-apply.json
+
+python scripts/verify_migration.py \
+  --config config/migration.toml
+
+python scripts/reconcile_migration.py \
+  --config config/migration.toml \
   --config-dir config
 ```
 

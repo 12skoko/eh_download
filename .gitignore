@@ -10,7 +10,6 @@ test3/
 old/
 old2/
 data/
-migrations/
 tests/
 
 .agents/

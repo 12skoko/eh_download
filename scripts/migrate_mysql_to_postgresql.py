@@ -13,11 +13,10 @@ from eh_archive.db import Database
 from eh_archive.db.models import EventLog, MangaInfoRecord, MangaRecord
 from eh_archive.db.schema import upgrade
 from eh_archive.services.paths import safe_filename
-try:
-    from scripts.migration_config import load_migration_config
-except ModuleNotFoundError as exc:
-    if exc.name != "scripts":
-        raise
+
+if __package__:
+    from .migration_config import load_migration_config
+else:
     from migration_config import load_migration_config
 
 
