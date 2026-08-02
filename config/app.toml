@@ -1,0 +1,31 @@
+database_url = "postgresql+psycopg://localhost/eh_archive"
+timezone = "Asia/Shanghai"
+log_level = "INFO"
+log_dir = "log"
+max_file_size = 21474836480
+web_host = "127.0.0.1"
+web_port = 8787
+qbittorrent_url = "http://127.0.0.1:8080"
+lanraragi_url = "http://127.0.0.1:3000"
+aria2_enabled = false
+hah_enabled = false
+fallback_method = "direct"
+
+[sessions.browse]
+account = "default"
+network = "direct"
+
+[sessions.archive]
+account = "default"
+network = "direct"
+
+[roots]
+torrent_download = "data/torrent_download"
+torrent_prepared = "data/torrent_prepared"
+hah_download = "data/hah_download"
+hah_prepared = "data/hah_prepared"
+direct_download = "data/direct_download"
+aria2_download = "data/aria2_download"
+prepared = "data/prepared"
+quarantine = "data/quarantine"
+trash = "data/trash"

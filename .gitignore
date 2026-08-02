@@ -9,6 +9,23 @@ test2/
 test3/
 old/
 old2/
+data/
+migrations/
+tests/
+
+.agents/
+
+config/runtime.toml
+config/private.toml
+config/secrets.toml
+*.db
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+.venv/
+.web-smoke/
+.ruff_cache/
 
 db.text.json
 config.py

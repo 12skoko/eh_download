@@ -1,0 +1,9 @@
+observation_days = 1
+name_keywords = []
+tag_keywords = []
+exclude_categories = []
+video_markers = ["mp4", "video"]
+excluded_resolutions = ["1280x", "800x", "1920x", "2560x"]
+
+[urls]
+# latest = "https://e-hentai.org/?f_search=..."

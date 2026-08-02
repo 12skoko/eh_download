@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import argparse
+import re
+from urllib.parse import urlparse
+
+from .config import load_config
+from .db import ArchiveRepository, Database
+from .db.models import EventLog, MangaRecord
+from .db.schema import upgrade
+from .domain.states import Status
+from .logging import configure_logging
+
+
+def _gallery_id(value: str) -> str | None:
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or hostname not in {
+        "e-hentai.org",
+        "www.e-hentai.org",
+        "exhentai.org",
+        "www.exhentai.org",
+    }:
+        return None
+    match = re.fullmatch(r"/g/(\d+/[\w-]+)/?", parsed.path)
+    return match.group(1) if match else None
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="eharchive")
+    parser.add_argument("--config-dir", default="config")
+    sub = parser.add_subparsers(dest="command", required=True)
+    db = sub.add_parser("db")
+    db.add_argument("action", choices=("upgrade", "ping"))
+    collect = sub.add_parser("collect")
+    collect.add_argument("url", nargs="?")
+    collect.add_argument("--manual", action="store_true")
+    collect.add_argument("--priority", type=int, default=0)
+    task = sub.add_parser("task")
+    task.add_argument(
+        "operation",
+        choices=(
+            "details",
+            "torrent_download",
+            "direct_download",
+            "validate",
+            "prepare",
+            "upload",
+            "cleanup",
+            "delete",
+        ),
+    )
+    task.add_argument("--limit", type=int, default=None)
+    thumbnails = sub.add_parser("thumbnails")
+    thumbnails.add_argument("--limit", type=int, default=100)
+    sub.add_parser("supervisor")
+    sub.add_parser("web")
+    picacg = sub.add_parser("picacg")
+    picacg_sub = picacg.add_subparsers(dest="picacg_action", required=True)
+    picacg_import = picacg_sub.add_parser("import")
+    picacg_import.add_argument("root")
+    picacg_import.add_argument("--base-url", required=True)
+    picacg_sub.add_parser("screen")
+    add = sub.add_parser("add")
+    add.add_argument("url")
+    add.add_argument("--priority", type=int, default=100)
+    add.add_argument("--remark")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    app, _, crawl, secrets = load_config(args.config_dir)
+    configure_logging(app.log_level, app.log_dir)
+    database = Database(app.database_url)
+    if args.command == "db":
+        if args.action == "upgrade":
+            upgrade(database)
+            return 0
+        return 0 if database.ping() else 1
+    if args.command == "task":
+        from .tasks.runner import TaskExecutor
+
+        TaskExecutor(database, config_dir=args.config_dir).run_batch(args.operation, args.limit)
+        return 0
+    if args.command == "thumbnails":
+        from .tasks.thumbnails import run
+
+        return run(args.config_dir, limit=args.limit)
+    if args.command == "supervisor":
+        from .supervisor.app import Supervisor
+
+        Supervisor(database, config_dir=args.config_dir).run_forever()
+        return 0
+    if args.command == "web":
+        import uvicorn
+
+        from .web.app import create_app
+
+        uvicorn.run(
+            create_app(database, config_dir=args.config_dir), host=app.web_host, port=app.web_port
+        )
+        return 0
+    if args.command == "picacg":
+        from .services.picacg import PicacgService, read_export_directory
+
+        with database.session() as session:
+            service = PicacgService(
+                ArchiveRepository(session), base_url=getattr(args, "base_url", "")
+            )
+            if args.picacg_action == "import":
+                service.import_entries(read_export_directory(args.root, base_url=args.base_url))
+            else:
+                service.screen_entries()
+        return 0
+    if args.command in {"add", "collect"}:
+        url = args.url
+        if not url:
+            raise SystemExit("a gallery URL is required")
+        if args.command == "collect" and not args.manual:
+            from .services.collector import Collector
+
+            with database.session() as session:
+                Collector(ArchiveRepository(session), app, crawl, secrets).collect_url(url)
+            return 0
+        manga_id = _gallery_id(url)
+        if manga_id is None:
+            raise SystemExit("URL does not contain a gallery id")
+        with database.session() as session:
+            row = session.get(MangaRecord, manga_id)
+            if row is None:
+                row = MangaRecord(
+                    manga_id=manga_id,
+                    name=manga_id,
+                    link=url,
+                    queue_source="manual",
+                    priority=getattr(args, "priority", 0),
+                    status=Status.DOWNLOAD_PENDING.value,
+                    remark=getattr(args, "remark", None),
+                )
+                session.add(row)
+                session.flush()
+                session.add(
+                    EventLog(
+                        manga_id=manga_id,
+                        component="cli",
+                        event_type="manual",
+                        operation="add",
+                        to_status=row.status,
+                        actor="cli",
+                        detail={},
+                    )
+                )
+            return 0
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

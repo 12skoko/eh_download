@@ -1,0 +1,20 @@
+poll_seconds = 5
+collect_interval_seconds = 10800
+batch_size = 10
+lease_seconds = 900
+lease_recovery_seconds = 60
+retry_limit = 5
+torrent_stall_seconds = 604800
+request_timeout_seconds = 30
+shutdown_grace_seconds = 30
+thumbnail_interval_seconds = 900
+
+[max_concurrency]
+collect = 1
+torrent_download = 1
+direct_download = 1
+validate = 1
+prepare = 1
+upload = 1
+cleanup = 1
+delete = 1

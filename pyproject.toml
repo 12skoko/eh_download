@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eh-archive"
+version = "6.0.0"
+description = "Reliable EH Archive collector, downloader, validator and uploader"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "SQLAlchemy>=2.0,<3",
+  "alembic>=1.13,<2",
+  "psycopg[binary]>=3.1,<4",
+  "requests>=2.31,<3",
+  "requests-toolbelt>=1.0,<2",
+  "beautifulsoup4>=4.12,<5",
+  "lxml>=5,<7",
+  "fastapi>=0.110,<1",
+  "anyio>=4,<5",
+  "h11>=0.14,<1",
+  "uvicorn[standard]>=0.29,<1",
+  "APScheduler>=3.10,<4",
+  "qbittorrent-api>=2024.1",
+]
+
+[project.optional-dependencies]
+migration = ["PyMySQL>=1.1,<2"]
+aria2 = ["aria2p>=0.12,<1"]
+dev = ["pytest>=8,<9", "httpx>=0.27,<1", "ruff>=0.5,<1"]
+
+[project.scripts]
+eharchive = "eh_archive.cli:main"
+eharchive-web = "eh_archive.web.app:main"
+eharchive-supervisor = "eh_archive.supervisor.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

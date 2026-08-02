@@ -1,0 +1,13 @@
+SQLAlchemy==2.0.51
+alembic==1.18.5
+psycopg[binary]==3.3.4
+requests==2.34.2
+requests-toolbelt==1.0.0
+beautifulsoup4==4.15.0
+lxml==6.1.1
+fastapi==0.141.1
+anyio==4.14.1
+h11==0.16.0
+uvicorn==0.52.0
+APScheduler==3.11.3
+qbittorrent-api==2026.7.0
