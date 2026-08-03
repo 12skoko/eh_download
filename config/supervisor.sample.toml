@@ -9,6 +9,18 @@ request_timeout_seconds = 30
 shutdown_grace_seconds = 30
 thumbnail_interval_seconds = 900
 
+[modules]
+collect = true
+thumbnail = true
+details = true
+torrent_download = true
+direct_download = true
+validate = true
+prepare = true
+upload = true
+cleanup = true
+delete = true
+
 [max_concurrency]
 collect = 1
 torrent_download = 1

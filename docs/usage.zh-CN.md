@@ -243,10 +243,20 @@ latest = "https://e-hentai.org/?f_search=..."
 - `batch_size`：每个任务子进程处理的最大条数；
 - `lease_seconds`、`lease_recovery_seconds`：任务租约和过期恢复；
 - `retry_limit`：网络或临时失败的重试次数；
+- `[modules]`：控制 Supervisor 是否自动调度各业务模块；
 - `max_concurrency`：各任务槽的并发数，默认每类为 1；
 - `thumbnail_interval_seconds`：缩略图批处理周期。
 
 不要把 `torrent_download` 的并发数理解为 qBittorrent 的传输数。它只限制 EH Archive 同时查找、提交和轮询种子的控制任务；已经提交的种子由 qBittorrent 自己管理。
+
+所有模块默认启用。只关闭直接下载、保留其他自动任务的配置如下：
+
+```toml
+[modules]
+direct_download = false
+```
+
+未写出的模块仍然默认启用。修改 `[modules]` 后需要重启 Supervisor；开关只影响 Supervisor 自动调度，显式执行 `eharchive task direct_download` 等手动命令仍然可用。关闭模块不会把等待中的条目标记成失败，例如关闭 `direct_download` 后，回退到直接下载、H@H 或 aria2 的条目会保留在 `download_pending`，重新启用后继续处理。
 
 ## 5. 初始化数据库并检查连接
 

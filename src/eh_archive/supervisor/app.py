@@ -49,6 +49,9 @@ class Supervisor:
         self.stopping = False
         self.last_collect = 0.0
         self.last_thumbnails = 0.0
+        disabled = [name for name, enabled in self.config.modules.items() if not enabled]
+        if disabled:
+            log.info("supervisor modules disabled by config: %s", ", ".join(disabled))
 
     def stop(self, *_args) -> None:
         self.stopping = True
@@ -62,7 +65,7 @@ class Supervisor:
         self._maybe_collect()
         self._maybe_thumbnails()
         for operation in TASK_OPERATIONS:
-            if self._paused(operation):
+            if not self.config.modules[operation] or self._paused(operation):
                 continue
             child = self.children.get(operation)
             if child is not None and child.poll() is None:
@@ -160,7 +163,7 @@ class Supervisor:
                 self.children.pop(operation, None)
 
     def _maybe_collect(self) -> None:
-        if self._paused("collect"):
+        if not self.config.modules["collect"] or self._paused("collect"):
             return
         now = time.monotonic()
         child = self.children.get("collect")
@@ -176,7 +179,7 @@ class Supervisor:
         self.last_collect = now
 
     def _maybe_thumbnails(self) -> None:
-        if self._paused("thumbnail"):
+        if not self.config.modules["thumbnail"] or self._paused("thumbnail"):
             return
         now = time.monotonic()
         child = self.children.get("thumbnail")

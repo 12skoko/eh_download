@@ -17,6 +17,19 @@ DEFAULT_LOCATIONS = (
     "trash",
 )
 
+SUPERVISOR_MODULES = (
+    "collect",
+    "thumbnail",
+    "details",
+    "torrent_download",
+    "direct_download",
+    "validate",
+    "prepare",
+    "upload",
+    "cleanup",
+    "delete",
+)
+
 
 @dataclass(frozen=True)
 class SessionRole:
@@ -64,6 +77,9 @@ class SupervisorConfig:
     request_timeout_seconds: float = 30.0
     shutdown_grace_seconds: float = 30.0
     thumbnail_interval_seconds: float = 900.0
+    modules: dict[str, bool] = field(
+        default_factory=lambda: {name: True for name in SUPERVISOR_MODULES}
+    )
     max_concurrency: dict[str, int] = field(
         default_factory=lambda: {
             "collect": 1,
@@ -168,6 +184,20 @@ def _path_map(raw: dict[str, Any]) -> dict[str, Path]:
     return {str(key): _absolute_directory(value, f"roots.{key}") for key, value in roots.items()}
 
 
+def _module_map(value: Any) -> dict[str, bool]:
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise TypeError("supervisor.toml [modules] must be a table")
+    unknown = sorted(set(value) - set(SUPERVISOR_MODULES))
+    if unknown:
+        raise ValueError("unsupported [modules] entries: " + ", ".join(unknown))
+    invalid = sorted(str(key) for key, enabled in value.items() if type(enabled) is not bool)
+    if invalid:
+        raise TypeError("[modules] entries must be true or false: " + ", ".join(invalid))
+    return {name: bool(value.get(name, True)) for name in SUPERVISOR_MODULES}
+
+
 def _role(raw: dict[str, Any], key: str) -> SessionRole:
     value = raw.get(key, {}) or {}
     return SessionRole(str(value.get("account", "default")), str(value.get("network", "direct")))
@@ -241,6 +271,7 @@ def load_config(
         request_timeout_seconds=float(supervisor_raw.get("request_timeout_seconds", 30)),
         shutdown_grace_seconds=float(supervisor_raw.get("shutdown_grace_seconds", 30)),
         thumbnail_interval_seconds=float(supervisor_raw.get("thumbnail_interval_seconds", 900)),
+        modules=_module_map(supervisor_raw.get("modules", {})),
         max_concurrency={
             **SupervisorConfig().max_concurrency,
             **{str(k): int(v) for k, v in limits.items()},
