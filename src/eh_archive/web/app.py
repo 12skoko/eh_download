@@ -494,6 +494,8 @@ def _serialize(row):
                 "remark",
                 "queue_source",
                 "status",
+                "screen_pending",
+                "screen_group_id",
                 "priority",
                 "download_method",
                 "defer_until",

@@ -464,8 +464,10 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 |---|---|---|---|---|
 | 不存在 | 发现新档案 | manga_id、标题和链接解析成功 | `discovered` | 设置 queue_source、priority 和采集时间 |
 | `discovered` | 命中观察期 | defer_until 可计算 | `deferred` | 保存重新评估时间 |
-| `discovered` | 筛选通过 | 下载规则允许 | `download_pending` | 尽早获取 MangaInfo；失败不阻塞 torrent |
-| `discovered` | 筛选拒绝 | 规则结果明确 | `skipped` | 保存稳定原因码 |
+| `discovered` | judge 结果为 0 | 仅记录，不进入 screenall | `discovered` | `screen_pending=false` |
+| `discovered` | judge 结果为 1 | 等待同名版本筛选 | `discovered` | `screen_pending=true` |
+| `discovered` | screenall 未选中 | 同名版本比较后淘汰 | `skipped` | 保存稳定原因码和 screen_group_id |
+| `discovered` | judge 命中直接队列 | 下载规则允许 | `download_pending` | 尽早获取 MangaInfo；失败不阻塞 torrent |
 | `discovered` | 远端明确不可用 | 404/410/版权移除等明确证据 | `unavailable` | 保存永久原因码 |
 | `discovered` | 无法安全判断 | 元数据矛盾或解析不完整 | `manual_review` | 不自动下载 |
 | `deferred` | 观察期结束 | 当前时间达到 defer_until | `discovered` | 重新筛选 |
@@ -663,6 +665,8 @@ Alembic 会另外创建技术表 `alembic_version`，不属于业务表。
 | 字段 | PostgreSQL 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `status` | `varchar(32)` + CHECK | `discovered` | 统一流程状态 |
+| `screen_pending` | `boolean` | `false` | 旧 `autostate=1` 的显式替代；仅此类 `discovered` 记录进入 screenall |
+| `screen_group_id` | `varchar(64)` | NULL | screenall 为同一 `real_name` 版本组生成的稳定关系标识 |
 | `priority` | `integer` | `0` | 数值越大越优先 |
 | `download_method` | `varchar(16)` + CHECK | NULL | torrent/direct/hah/aria2 |
 | `defer_until` | `timestamptz` | NULL | 观察期结束时间 |

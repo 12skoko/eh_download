@@ -29,6 +29,7 @@ build/
 .venv/
 .web-smoke/
 .ruff_cache/
+.pytest-tmp/
 
 db.text.json
 config.py

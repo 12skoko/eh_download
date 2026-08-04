@@ -38,6 +38,7 @@ class DirectDownloader:
         backoff: float = 2.0,
         jitter: float = 0.25,
         chunk_size: int = 1024 * 1024,
+        role: str | None = None,
     ) -> None:
         self.session = session
         self.timeout = timeout
@@ -45,6 +46,7 @@ class DirectDownloader:
         self.backoff = backoff
         self.jitter = jitter
         self.chunk_size = chunk_size
+        self.role = role
 
     def download(
         self,
@@ -80,13 +82,18 @@ class DirectDownloader:
             if existing:
                 request_headers["Range"] = f"bytes={existing}-"
             try:
+                request_kwargs = {
+                    "headers": request_headers,
+                    "cookies": cookies,
+                    "proxies": proxies,
+                    "stream": True,
+                    "timeout": self.timeout,
+                }
+                if self.role is not None:
+                    request_kwargs["role"] = self.role
                 response = session.get(
                     url,
-                    headers=request_headers,
-                    cookies=cookies,
-                    proxies=proxies,
-                    stream=True,
-                    timeout=self.timeout,
+                    **request_kwargs,
                 )
                 status = int(response.status_code)
                 if status in {404, 410}:

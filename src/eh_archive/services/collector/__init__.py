@@ -5,6 +5,9 @@ from .parser import (
     parse_info,
     parse_metadata,
     parse_tag_table,
+    screen,
+    screen_group_id,
+    screen_priority,
 )
 from .service import CollectionResult, Collector
 
@@ -17,4 +20,7 @@ __all__ = [
     "parse_info",
     "parse_metadata",
     "parse_tag_table",
+    "screen",
+    "screen_group_id",
+    "screen_priority",
 ]

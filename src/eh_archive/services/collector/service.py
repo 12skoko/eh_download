@@ -49,6 +49,7 @@ class Collector:
         self.crawl = crawl
         self.secrets = secrets
         self.http = http_client
+        self._role_session: RoleSession | None = None
 
     def collect_html(
         self, html: str, *, source: str = QueueSource.AUTOMATIC.value, actor: str = "collector"
@@ -77,26 +78,39 @@ class Collector:
                 observation_days=self.crawl.observation_days,
             )
             if manga.category in self.crawl.exclude_categories or flag == 0:
-                manga.status = Status.SKIPPED
+                # Legacy state=1/autostate=NULL is a plain discovered row. It
+                # must not be called skipped: skipped is reserved for a row
+                # that screenall actually compared and rejected.
+                manga.status = Status.DISCOVERED
+                manga.screen_pending = False
                 manga.remark = (
                     "excluded_category"
                     if manga.category in self.crawl.exclude_categories
-                    else "screen_rejected"
+                    else "screen_not_eligible"
                 )
-                result.skipped += 1
             elif flag == -1 and manga.posted_at is None:
                 manga.status = Status.MANUAL_REVIEW
+                manga.screen_pending = False
                 manga.remark = "missing_posted_at"
                 result.errors += 1
             elif flag == -1:
                 manga.status = Status.DEFERRED
+                manga.screen_pending = False
                 manga.remark = "observation_period"
                 manga.defer_until = observation_deadline(
                     manga.posted_at, self.crawl.observation_days
                 )
                 result.deferred += 1
+            elif flag == 1:
+                # This is the direct replacement for legacy autostate=1. The
+                # row remains discovered until screenall compares its group.
+                manga.status = Status.DISCOVERED
+                manga.screen_pending = True
+                manga.remark = "screen_pending"
             else:
                 manga.status = Status.DOWNLOAD_PENDING
+                manga.screen_pending = False
+                manga.defer_until = None
                 result.queued += 1
             self.repository.upsert_manga(_record(manga), actor=actor)
         return result
@@ -132,9 +146,9 @@ class Collector:
 
     def _get_page(self, url: str, *, timeout: float) -> str:
         if self.http is None:
-            return RoleSession(self.config, self.secrets).get_text(
-                url, role="browse", timeout=timeout
-            )
+            if self._role_session is None:
+                self._role_session = RoleSession(self.config, self.secrets)
+            return self._role_session.get_text(url, role="browse", timeout=timeout)
         return self.http.get_text(url, role="browse", timeout=timeout)
 
     @staticmethod
@@ -175,6 +189,8 @@ def _record(manga: Manga):
         remark=manga.remark,
         queue_source=manga.queue_source.value,
         status=manga.status.value,
+        screen_pending=manga.screen_pending,
+        screen_group_id=manga.screen_group_id,
         priority=manga.priority,
         defer_until=manga.defer_until,
         source_fetched_at=datetime.now(UTC),

@@ -13,6 +13,9 @@ lanraragi_url = "http://127.0.0.1:3000"
 aria2_enabled = false
 hah_enabled = false
 fallback_method = "direct"
+# Minimum seconds between completed external web requests in one worker.
+# This applies to EH web/archive requests, not LANraragi or qBittorrent.
+external_request_delay_seconds = 5.0
 
 [sessions.browse]
 account = "default"

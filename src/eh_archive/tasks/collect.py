@@ -24,10 +24,27 @@ def run(config_dir: str | Path = "config", *, end: int | None = None) -> int:
                 days=crawl.collect_end_days, offset=crawl.collect_end_offset
             )
         )
-        log.info("automatic collection boundary: end=%s", collect_end)
+        run_id = repository.start_collect_run(
+            trigger_source="supervisor",
+            detail={
+                "config_dir": str(config_dir),
+                "end": collect_end,
+                "urls": list(crawl.collection_urls()),
+                "observation_days": crawl.observation_days,
+                "collect_end_days": crawl.collect_end_days,
+                "collect_end_offset": crawl.collect_end_offset,
+                "name_keywords": list(crawl.name_keywords),
+                "tag_keywords": list(crawl.tag_keywords),
+                "exclude_categories": list(crawl.exclude_categories),
+            },
+        )
+        log.info("automatic collection boundary: end=%s run_id=%s", collect_end, run_id)
         collector = Collector(repository, app, crawl, secrets)
-        for url in crawl.urls.values():
+        for url in crawl.collection_urls():
             collector.collect_url(url, source="automatic", actor="collector", end=collect_end)
+        screened = repository.screenall()
+        log.info("screenall completed: %s rows resolved run_id=%s", screened, run_id)
+        repository.finish_collect_run("succeeded", detail={"end": collect_end})
     return 0
 
 

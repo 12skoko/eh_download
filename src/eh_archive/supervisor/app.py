@@ -232,14 +232,17 @@ class Supervisor:
     def _resume_deferred(self) -> None:
         with self.database.session() as session:
             repository = ArchiveRepository(session)
-            repository.resume_deferred(limit=self.config.batch_size)
-            repository.rescreen_discovered(
+            repository.resume_deferred(
                 name_keywords=self.crawl.name_keywords,
                 tag_keywords=self.crawl.tag_keywords,
                 observation_days=self.crawl.observation_days,
                 exclude_categories=self.crawl.exclude_categories,
                 limit=self.config.batch_size,
             )
+            # A flag=1 row is discovered until this legacy same-title pass
+            # decides which versions survive. Deferred rows that just became
+            # eligible are therefore screened in the same supervisor tick.
+            repository.screenall(limit=self.config.batch_size)
 
     def _complete_cancellations(self) -> None:
         with self.database.session() as session:

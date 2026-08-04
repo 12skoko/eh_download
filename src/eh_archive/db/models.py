@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -92,6 +93,7 @@ class MangaRecord(Base):
         Index("ix_manga_lease_until", "lease_until"),
         Index("ix_manga_external_download_id", "external_download_id"),
         Index("ix_manga_lrr_archive_id", "lrr_archive_id"),
+        Index("ix_manga_screen_pending", "screen_pending", "status"),
     )
 
     manga_id: Mapped[str] = mapped_column(String(100), primary_key=True)
@@ -110,6 +112,13 @@ class MangaRecord(Base):
     queue_source: Mapped[str] = mapped_column(String(16), default="automatic")
 
     status: Mapped[str] = mapped_column(String(32), default="discovered", nullable=False)
+    # ``screen_pending`` is the explicit replacement for legacy autostate=1.
+    # A discovered row with this flag set participates in screenall; a plain
+    # discovered row was legacy state=1/autostate=NULL and is only recorded.
+    screen_pending: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    screen_group_id: Mapped[str | None] = mapped_column(String(64))
     priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     download_method: Mapped[str | None] = mapped_column(String(16))
     defer_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -228,6 +237,7 @@ class EventLog(Base):
     __table_args__ = (
         Index("ix_event_manga_created", "manga_id", "created_at"),
         Index("ix_event_component_created", "component", "created_at"),
+        Index("ix_event_run_created", "run_id", "created_at"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     manga_id: Mapped[str | None] = mapped_column(
@@ -236,6 +246,7 @@ class EventLog(Base):
     attempt_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("job_attempt.id", ondelete="RESTRICT")
     )
+    run_id: Mapped[str | None] = mapped_column(String(36))
     component: Mapped[str] = mapped_column(String(32), nullable=False)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
     operation: Mapped[str | None] = mapped_column(String(24))

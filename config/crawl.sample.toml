@@ -1,6 +1,7 @@
 observation_days = 1
 collect_end_days = 6
 collect_end_offset = 3000
+collect_tags = []
 name_keywords = []
 tag_keywords = []
 exclude_categories = []

@@ -133,7 +133,23 @@ def main(argv: list[str] | None = None) -> int:
                     end = repository.automatic_collect_end(
                         days=crawl.collect_end_days, offset=crawl.collect_end_offset
                     )
+                run_id = repository.start_collect_run(
+                    trigger_source="cli",
+                    detail={
+                        "config_dir": str(args.config_dir),
+                        "url": url,
+                        "stop_mode": args.stop_mode or "full",
+                        "end": end,
+                        "observation_days": crawl.observation_days,
+                        "name_keywords": list(crawl.name_keywords),
+                        "tag_keywords": list(crawl.tag_keywords),
+                        "exclude_categories": list(crawl.exclude_categories),
+                    },
+                )
                 Collector(repository, app, crawl, secrets).collect_url(url, end=end)
+                repository.screenall()
+                repository.finish_collect_run("succeeded", detail={"end": end})
+            print(f"collect run_id={run_id}")
             return 0
         manga_id = _gallery_id(url)
         if manga_id is None:

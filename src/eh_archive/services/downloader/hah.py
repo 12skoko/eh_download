@@ -16,17 +16,24 @@ class HAHDownloader:
         root: str | Path,
         cookies: dict[str, str] | None = None,
         proxies: dict[str, str] | None = None,
+        role: str | None = None,
     ) -> None:
         self.session, self.root = session, Path(root)
         self.cookies, self.proxies = cookies or {}, proxies
+        self.role = role
 
     def queue(self, archive_url: str, *, resolution: str = "org") -> None:
+        request_kwargs = {
+            "data": {"hathdl_xres": resolution},
+            "cookies": self.cookies,
+            "proxies": self.proxies,
+            "timeout": 30,
+        }
+        if self.role is not None:
+            request_kwargs["role"] = self.role
         response = self.session.post(
             archive_url.replace("--", "-"),
-            data={"hathdl_xres": resolution},
-            cookies=self.cookies,
-            proxies=self.proxies,
-            timeout=30,
+            **request_kwargs,
         )
         response.raise_for_status()
         if "queued for client" not in response.text:

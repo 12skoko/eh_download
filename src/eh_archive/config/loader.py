@@ -6,6 +6,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 DEFAULT_LOCATIONS = (
     "torrent_download",
@@ -58,6 +59,10 @@ class AppConfig:
     aria2_enabled: bool = False
     hah_enabled: bool = False
     fallback_method: str = "direct"
+    # Minimum pause after one external web request before the next request
+    # made by the same worker/session. LANraragi and qBittorrent clients do
+    # not use RoleSession and are intentionally outside this throttle.
+    external_request_delay_seconds: float = 5.0
 
     def root(self, location: str) -> Path:
         try:
@@ -98,6 +103,7 @@ class SupervisorConfig:
 @dataclass(frozen=True)
 class CrawlConfig:
     urls: dict[str, str] = field(default_factory=dict)
+    collect_tags: tuple[str, ...] = ()
     name_keywords: tuple[str, ...] = ()
     tag_keywords: tuple[str, ...] = ()
     observation_days: int = 1
@@ -109,6 +115,13 @@ class CrawlConfig:
     tag_translation_url: str = (
         "https://github.com/EhTagTranslation/Database/releases/latest/download/db.text.json"
     )
+
+    def collection_urls(self) -> tuple[str, ...]:
+        values = list(self.urls.values())
+        values.extend(
+            f"https://exhentai.org/tag/{quote_plus(tag, safe=':')}" for tag in self.collect_tags
+        )
+        return tuple(dict.fromkeys(values))
 
 
 @dataclass(frozen=True)
@@ -198,6 +211,21 @@ def _module_map(value: Any) -> dict[str, bool]:
     return {name: bool(value.get(name, True)) for name in SUPERVISOR_MODULES}
 
 
+def _string_tuple(value: Any, key: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise TypeError(f"{key} must be an array of strings")
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise TypeError(f"{key} must be an array of strings")
+        item = item.strip()
+        if not item:
+            raise ValueError(f"{key} must not contain empty tags")
+        if item not in result:
+            result.append(item)
+    return tuple(result)
+
+
 def _role(raw: dict[str, Any], key: str) -> SessionRole:
     value = raw.get(key, {}) or {}
     return SessionRole(str(value.get("account", "default")), str(value.get("network", "direct")))
@@ -258,7 +286,10 @@ def load_config(
             if str(app_raw.get("fallback_method", "direct")) in {"direct", "hah", "aria2"}
             else "direct"
         ),
+        external_request_delay_seconds=float(app_raw.get("external_request_delay_seconds", 5.0)),
     )
+    if app.external_request_delay_seconds < 0:
+        raise ValueError("external_request_delay_seconds must not be negative")
     limits = dict(supervisor_raw.get("max_concurrency", {}))
     supervisor = SupervisorConfig(
         poll_seconds=float(supervisor_raw.get("poll_seconds", 5)),
@@ -279,6 +310,7 @@ def load_config(
     )
     crawl = CrawlConfig(
         urls={str(k): str(v) for k, v in dict(crawl_raw.get("urls", {})).items()},
+        collect_tags=_string_tuple(crawl_raw.get("collect_tags", []), "collect_tags"),
         name_keywords=tuple(crawl_raw.get("name_keywords", [])),
         tag_keywords=tuple(crawl_raw.get("tag_keywords", [])),
         observation_days=int(crawl_raw.get("observation_days", 1)),

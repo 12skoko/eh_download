@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
@@ -257,6 +258,66 @@ def contains_key(text: str, keyword: str) -> bool:
     return bool(re.search(r"\b" + re.escape(keyword) + r"\b", text))
 
 
+def screen(similar_flag_list: list[float]) -> list[int]:
+    """Apply the legacy ``eh_utils.screen`` selection algorithm.
+
+    The integer tens digit is the quality tier (3, then 2, then 1).  Within
+    the selected tier, each unit digit represents an independent variant and
+    the highest fractional score wins.  Consequently a group can select more
+    than one gallery when several unit variants are present.
+    """
+
+    result = [0] * len(similar_flag_list)
+    tiers: dict[int, list[tuple[float, int]]] = {1: [], 2: [], 3: []}
+    for index, value in enumerate(similar_flag_list):
+        tier = int(value // 10)
+        if tier in tiers:
+            fraction = round(value - tier * 10, 12)
+            tiers[tier].append((fraction, index))
+    selected = tiers[3] or tiers[2] or tiers[1]
+    by_variant: dict[int, list[tuple[float, int]]] = {}
+    for fraction, index in selected:
+        variant = int(fraction)
+        by_variant.setdefault(variant, []).append((round(fraction - variant, 12), index))
+    for candidates in by_variant.values():
+        # ``sorted(..., reverse=True)`` is stable in Python. The legacy helper
+        # therefore keeps the first row when fractional scores tie.
+        _score, index = max(candidates, key=lambda item: item[0])
+        result[index] = 1
+    return result
+
+
+def screen_group_id(real_name: str) -> str:
+    """Return a stable replacement for the legacy random relation id."""
+
+    # Group membership itself remains an exact ``real_name`` match, as in the
+    # legacy query. Do not case-fold here or two legacy groups could collide.
+    digest = hashlib.sha1(real_name.encode("utf-8")).hexdigest()
+    return f"screen-{digest}"
+
+
+def screen_priority(manga: Manga) -> float:
+    """Calculate the legacy screenall priority for one gallery."""
+
+    chinese = "chinese" in manga.tags_raw.lower()
+    uncensored = "無修正" in manga.name or "无修正" in manga.name
+    rating = manga.rating or 0
+    if uncensored:
+        if chinese:
+            base = 31 if rating > 30 else 22
+        else:
+            base = 21
+    elif chinese:
+        base = 23 if rating > 30 else 12
+    else:
+        base = 11
+    posted_at = manga.posted_at
+    if posted_at is not None and posted_at.tzinfo is None:
+        posted_at = posted_at.replace(tzinfo=UTC)
+    timestamp = int(posted_at.timestamp()) if posted_at else 0
+    return base + rating * 0.01 + timestamp * 0.000000000001
+
+
 def judge_screen_flag(
     manga: Manga,
     name_keywords: tuple[str, ...] | list[str] = (),
@@ -295,6 +356,11 @@ def judge_screen_flag(
         "chinese" in lowered_tags or (manga.rating or 0) >= 30
     ):
         current = now or datetime.now(UTC)
-        age = (current - manga.posted_at).total_seconds() if manga.posted_at else 0
+        posted_at = manga.posted_at
+        if posted_at is not None and posted_at.tzinfo is None:
+            posted_at = posted_at.replace(tzinfo=UTC)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=UTC)
+        age = (current - posted_at).total_seconds() if posted_at else 0
         return 1 if age >= observation_days * 86400 else -1
     return 0

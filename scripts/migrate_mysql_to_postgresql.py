@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -208,6 +208,12 @@ def migrate(
             )
             record.remark, record.queue_source = row.get("remark"), source
             record.status, record.priority = status, priority
+            # Legacy autostate=1 is the only discovered state that enters
+            # screenall. state=1 with no autostate is intentionally plain
+            # discovered and must not be screened later.
+            legacy_autostate = row.get("autostate")
+            record.screen_pending = status == "discovered" and str(legacy_autostate) == "1"
+            record.screen_group_id = None
             record.download_method = method
             record.external_download_id = row.get("torrenthash")
             legacy_filename = str(row.get("filename") or "")
@@ -222,6 +228,12 @@ def migrate(
             if row.get("arcid") and not record.lrr_archive_id:
                 status, reason = "manual_review", "invalid_legacy_archive_id"
             record.status = status
+            record.screen_pending = record.status == "discovered" and str(legacy_autostate) == "1"
+            record.defer_until = (
+                record.posted_at + timedelta(days=1)
+                if record.status == "deferred" and record.posted_at is not None
+                else None
+            )
             if record.artifact_filename:
                 is_zip = record.artifact_filename.lower().endswith(".zip")
                 location = legacy_artifact_location(method, record.artifact_filename)

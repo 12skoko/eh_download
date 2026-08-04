@@ -76,6 +76,14 @@ class TaskExecutor:
         self.paths = ArtifactPathService(self.app)
         self.system_error = False
         self._tag_translation: EhTagTranslation | None = None
+        self._http_sessions: dict[str, RoleSession] = {}
+
+    def _http_session(self, role: str) -> RoleSession:
+        session = self._http_sessions.get(role)
+        if session is None:
+            session = RoleSession(self.app, self.secrets)
+            self._http_sessions[role] = session
+        return session
 
     def run_once(self, operation: str) -> bool:
         with self.database.session() as session:
@@ -258,7 +266,7 @@ class TaskExecutor:
                 error_detail="gallery has no torrent",
             )
             return
-        http = RoleSession(self.app, self.secrets)
+        http = self._http_session("browse")
         browse_network = self.secrets.network(self.app.browse_session)
         service = TorrentService(
             http=http,
@@ -287,7 +295,7 @@ class TaskExecutor:
         repository.finish(claim, owner=self.owner)
 
     def _details(self, record: MangaRecord, *, role: str = "archive") -> Any:
-        http = RoleSession(self.app, self.secrets)
+        http = self._http_session(role)
         html = http.get_text(
             record.link, role=role, timeout=self.supervisor.request_timeout_seconds
         )
@@ -312,7 +320,7 @@ class TaskExecutor:
                 self._tag_translation = EhTagTranslation(path)
                 return self._tag_translation
         try:
-            payload = RoleSession(self.app, self.secrets).get_text(
+            payload = self._http_session("browse").get_text(
                 self.crawl.tag_translation_url,
                 role="browse",
                 timeout=self.supervisor.request_timeout_seconds,
@@ -363,7 +371,7 @@ class TaskExecutor:
         if method in {"hah", "aria2"}:
             download_url = None
             if method == "aria2":
-                archive_session = RoleSession(self.app, self.secrets)
+                archive_session = self._http_session("archive")
                 download_url = request_direct_download_url(
                     archive_session,
                     info.archive_url,
@@ -381,12 +389,14 @@ class TaskExecutor:
             attempt_id=claim.attempt_id,
             location="direct_download",
         )
+        archive_session = self._http_session("archive")
         downloader = DirectDownloader(
+            session=archive_session,
             timeout=(self.supervisor.request_timeout_seconds, 120),
             retries=self.supervisor.retry_limit,
+            role="archive",
         )
         destination = paths.temporary
-        archive_session = RoleSession(self.app, self.secrets)
         download_url = request_direct_download_url(
             archive_session,
             info.archive_url,
@@ -440,12 +450,13 @@ class TaskExecutor:
         if method == "hah":
             from ..services.downloader.hah import HAHDownloader
 
-            session = RoleSession(self.app, self.secrets)
+            session = self._http_session("archive")
             adapter = HAHDownloader(
-                session=session.session,
+                session=session,
                 root=self.app.root("hah_download"),
                 cookies=self.secrets.cookies(self.app.archive_session),
                 proxies=self.secrets.network(self.app.archive_session).get("proxies"),
+                role="archive",
             )
             if not repository.begin_external_effect(claim, owner=self.owner):
                 raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
@@ -497,7 +508,7 @@ class TaskExecutor:
         if record.download_method == "hah":
             from ..services.downloader.hah import HAHDownloader
 
-            session = RoleSession(self.app, self.secrets)
+            session = self._http_session("archive")
             source = HAHDownloader(
                 session=session.session,
                 root=self.app.root("hah_download"),

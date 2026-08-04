@@ -179,6 +179,7 @@ $env:EHARCHIVE_WEB_SECRET = 'change-this-long-random-secret'
 | `web_host`、`web_port` | Web 监听地址，默认 `127.0.0.1:8787` |
 | `qbittorrent_url` | qBittorrent Web API 地址 |
 | `qbit_torrent_path` | qBittorrent 主机看到的种子保存路径，可与本地 `roots.torrent_download` 不同 |
+| `external_request_delay_seconds` | 同一个 worker 连续访问 EH 外部网页请求完成后的最小等待秒数，默认 `5.0`；设为 `0` 可关闭。作用于列表、详情、torrent、archive/direct/H@H 网页请求，不作用于 LANraragi 和 qBittorrent |
 | `lanraragi_url` | LANraragi 地址 |
 | `max_file_size` | 单个产物允许的最大字节数 |
 | `fallback_method` | 无种子或种子停滞时的 `direct`、`hah` 或 `aria2` |
@@ -224,15 +225,18 @@ qBittorrent 返回 `/home/ubuntu/ptcache/ehentai/1234567/archive.zip` 后，EH A
 observation_days = 1
 collect_end_days = 6
 collect_end_offset = 3000
+collect_tags = ["artist:某作者"]
 name_keywords = ["关键词"]
-tag_keywords = ["artist:某作者"]
+tag_keywords = ["某作者"]
 exclude_categories = ["Western"]
 
 [urls]
 latest = "https://e-hentai.org/?f_search=..."
 ```
 
-自动采集会跟随列表的下一页，并从最近 `collect_end_days` 天内最早的 `deferred` 记录计算终点：画廊 ID 减去 `collect_end_offset`。默认值与旧程序一致，分别是 6 天和 3000；找不到符合条件的记录时会抓到网站最后一页。名称、标签、分类过滤和观察期会决定档案进入 `download_pending`、`deferred` 或 `skipped`。观察期从画廊的 `posted_at` 开始计算，重复抓取不会重新计时。
+自动采集会跟随列表的下一页，并从最近 `collect_end_days` 天内最早的 `deferred` 记录计算终点：画廊 ID 减去 `collect_end_offset`。默认值与旧程序一致，分别是 6 天和 3000；找不到符合条件的记录时会抓到网站最后一页。`judge_screen_flag=0` 的条目保留为普通 `discovered`，`judge_screen_flag=1` 的条目保存为 `discovered` 并等待旧版 `screenall` 的同名版本筛选；只有进入 `screenall` 后未被选中的候选才会变为 `skipped`。命中关键词的条目直接进入 `download_pending`，新发布条目进入 `deferred`。观察期从画廊的 `posted_at` 开始计算，重复抓取不会重新计时。
+
+`collect_tags` 会将标签转换为 ExHentai 标签页 URL，例如 `artist:tamano kedama` 转换为 `https://exhentai.org/tag/artist:tamano+kedama`，然后与 `[urls]` 合并并去重。它负责主动抓取标签页；`tag_keywords` 只负责条目抓取后的筛选，两者用途不同。
 
 ### 4.4 `config/supervisor.toml`
 
@@ -360,7 +364,7 @@ eharchive --config-dir config collect 'https://e-hentai.org/?f_search=...' --end
 
 `--stop-mode` 与 `--end` 互斥。不写 `--stop-mode` 时，手动 `collect` 仍默认抓到最后一页。采集使用 browse 会话；Cookie、代理或 EH 返回登录页时，错误会记录在日志和档案事件中。
 
-再次抓到数据库中已有的 `manga_id` 时，程序只刷新名称、链接、发布时间、分类、标签、页数、评分和上传者等网页元数据，不会重置正在下载、已上传、已完成或已删除等工作流状态。`deferred` 是唯一会重新筛选的已有状态：仍在观察期就保持 `deferred`，观察期结束后进入正常筛选和下载流程，不符合条件则变为 `skipped`。
+再次抓到数据库中已有的 `manga_id` 时，程序只刷新名称、链接、发布时间、分类、标签、页数、评分和上传者等网页元数据，不会重置正在下载、已上传、已完成或已删除等工作流状态。`deferred` 是唯一会重新判断的已有状态：到期时重新执行 `judge_screen_flag`，可能回到普通 `discovered`、进入 screenall、直接进入 `download_pending`，或再次延后。
 
 ### 7.2 手工加入单个画廊
 
@@ -376,6 +380,8 @@ eharchive --config-dir config collect 'https://e-hentai.org/?f_search=...' --end
 ### 7.3 典型处理链路
 
 ```text
+discovered (screen_pending)
+        -> screenall -> download_pending / skipped
 discovered/deferred
         -> download_pending
         -> downloading -> downloaded
