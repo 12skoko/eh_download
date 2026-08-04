@@ -122,6 +122,17 @@ def legacy_details(row: dict[str, Any]) -> tuple[str, str | None, str, int, str]
     return status, method, reason, 100 if state in {13, 14, 15} else 0, "manual"
 
 
+def legacy_migration_remark(row: dict[str, Any], status: str) -> Any:
+    """Preserve legacy remarks and expose source states that need manual review."""
+    legacy_remark = row.get("remark")
+    if status != "manual_review":
+        return legacy_remark
+    state_summary = f"state={row.get('state')!r}; autostate={row.get('autostate')!r}"
+    if legacy_remark in (None, ""):
+        return state_summary
+    return f"{state_summary}; remark={legacy_remark}"
+
+
 def map_legacy_status(row: dict[str, Any]) -> tuple[str, str, int]:
     """Compatibility helper exposing the migration status decision only."""
     status, _method, reason, priority, _source = legacy_details(row)
@@ -206,7 +217,7 @@ def migrate(
                 row.get("rating"),
                 str(row.get("uploader") or ""),
             )
-            record.remark, record.queue_source = row.get("remark"), source
+            record.queue_source = source
             record.status, record.priority = status, priority
             # Legacy autostate=1 is the only discovered state that enters
             # screenall. state=1 with no autostate is intentionally plain
@@ -228,6 +239,7 @@ def migrate(
             if row.get("arcid") and not record.lrr_archive_id:
                 status, reason = "manual_review", "invalid_legacy_archive_id"
             record.status = status
+            record.remark = legacy_migration_remark(row, record.status)
             record.screen_pending = record.status == "discovered" and str(legacy_autostate) == "1"
             record.defer_until = (
                 record.posted_at + timedelta(days=1)
@@ -272,6 +284,7 @@ def migrate(
                         link=str(row.get("link") or ""),
                         status="manual_review",
                         queue_source="manual",
+                        remark=legacy_migration_remark({}, "manual_review"),
                     )
                 )
                 session.flush()
