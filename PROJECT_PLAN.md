@@ -61,7 +61,7 @@
 - torrent 路线：先完成 qBittorrent 下载，再访问详情页并创建 `MangaInfo`。
 - H@H/direct/aria2 路线：必须先访问详情页获得归档入口，因此在下载前创建 `MangaInfo`。
 
-新程序统一详情服务和幂等写入方式，但不把 MangaInfo 设为 torrent 的前置条件：筛选或观察期结束后尽早尝试获取并保存 `MangaInfo`，获取失败时仍可进入 torrent 下载流程。torrent 失败后切换 direct/H@H 时必须重新执行 `ensure_details()` 取得有效归档入口；任何下载方式在进入上传前都必须保证 MangaInfo 完整。
+新程序统一详情服务和幂等写入方式，并把完整 MangaInfo 设为首次选择和提交 torrent 的前置条件。种子选择使用 `estimated_size_raw` 检查异常小的候选；详情缺失时由 torrent-download 现场获取并幂等写入，获取或字段校验失败时不得提交种子。已经提交到 qBittorrent 的任务只按 hash 轮询，不重复获取详情。torrent 失败后切换 direct/H@H 时仍必须取得有效的当次归档入口；任何下载方式在进入上传前都必须保证 MangaInfo 完整。
 
 ### 3.4 双账号与限额
 
@@ -206,6 +206,8 @@ outdated
 
 - 默认优先 torrent。
 - torrent-download 按 priority 和入队时间串行领取档案；对当前档案查找种子、下载并校验 `.torrent` 文件，然后推送 qBittorrent。同一时刻不并行获取或提交多个 `.torrent`。
+- 首次选择种子前必须保证 MangaInfo 完整且 `estimated_size_raw` 可以解析。torrent 页面使用 HTML 结构解析；`Outdated Torrents` 分区及红色时间的种子无条件忽略，仅剩过时种子时 fallback。非过时种子中只要存在视频标记且 remark 不含 `skip video` 就进入 `manual_review`，即使该种子同时带有重采样标记；remark 含 `skip video` 时视频种子按普通种子处理。明确的 `1280x/800x/1920x/2560x` 重采样直接忽略。
+- 小于 `estimated_size_raw` 80% 的候选视为异常；所有候选都过小时进入 `manual_review`。对其余候选使用“同时更大且更新”淘汰旧版本；唯一胜出版本没有 Seeder、或剩余不同大小版本无法比较时进入 `manual_review`。剩余候选大小全部相同时先选 Seeder 最多者，Seeder 相同时选发布时间最新者。
 - qBittorrent 返回稳定 hash 且可按 hash 查询到任务后，设置 `download_method=torrent`、保存 `external_download_id` 并进入 `downloading`，随即释放该档案的 attempt 和控制任务处理名额。
 - 已进入 qBittorrent 的后台任务不受 EH Archive 的单实例限制；允许多个档案同时保持 `downloading` 并由 qBittorrent 并行传输，具体数量、排队和限速服从 qBittorrent 自身配置。
 - qBittorrent 完成后进入 `downloaded`。
@@ -467,13 +469,13 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 | `discovered` | judge 结果为 0 | 仅记录，不进入 screenall | `discovered` | `screen_pending=false` |
 | `discovered` | judge 结果为 1 | 等待同名版本筛选 | `discovered` | `screen_pending=true` |
 | `discovered` | screenall 未选中 | 同名版本比较后淘汰 | `skipped` | 保存稳定原因码和 screen_group_id |
-| `discovered` | judge 命中直接队列 | 下载规则允许 | `download_pending` | 尽早获取 MangaInfo；失败不阻塞 torrent |
+| `discovered` | judge 命中直接队列 | 下载规则允许 | `download_pending` | torrent 首次选择前必须补齐 MangaInfo |
 | `discovered` | 远端明确不可用 | 404/410/版权移除等明确证据 | `unavailable` | 保存永久原因码 |
 | `discovered` | 无法安全判断 | 元数据矛盾或解析不完整 | `manual_review` | 不自动下载 |
 | `deferred` | 观察期结束 | 当前时间达到 defer_until | `discovered` | 重新筛选 |
 | `download_pending` | torrent 已接收 | torrent 合法且 qBittorrent 返回稳定 hash | `downloading` | method=torrent，保存 external_download_id |
 | `download_pending` | direct/H@H/aria2 已开始 | ensure_details 成功、会话固定、后端可用 | `downloading` | 设置实际 download_method；临时 URL 不入库 |
-| `download_pending` | MangaInfo 暂时失败 | 当前仍可尝试 torrent | `download_pending` | 只记录 details 错误和退避，不阻塞 torrent |
+| `download_pending` | MangaInfo 暂时失败 | 尚未提交 torrent | `download_pending` | 记录 details 错误并退避，恢复后再选择种子 |
 | `download_pending` | 所有下载方式均不可用 | 已有明确、不可恢复证据 | `unavailable` | 保存原因，不继续自动重试 |
 | `downloading` | 下载完成 | 外部状态与受控目录中的产物共同确认 | `downloaded` | 写入 location/filename/kind，递增 generation |
 | `downloading` | torrent 无种或最终失败 | 回退方式仍可用 | `download_pending` | 记录回退原因，下一次 direct 前 ensure_details |

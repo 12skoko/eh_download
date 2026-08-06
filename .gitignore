@@ -31,6 +31,7 @@ build/
 .web-smoke/
 .ruff_cache/
 .pytest-tmp/
+sample/
 
 db.text.json
 config.py

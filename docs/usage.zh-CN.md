@@ -389,7 +389,9 @@ discovered/deferred
         -> uploading -> uploaded -> completed
 ```
 
-Supervisor 会自动运行 `details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。种子优先提交 qBittorrent；EH 页面没有 torrent 或没有可用做种时，根据 `fallback_method` 切换 direct/H@H/aria2。qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的 `stalledDL` 超过 `torrent_stall_seconds` 后也会自动删除任务并切换 fallback。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小和 CRC，再为最终 ZIP 计算 LANraragi 所需的 SHA-1。
+Supervisor 会自动运行 `details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。首次选择种子前必须取得完整 MangaInfo。程序忽略 `Outdated Torrents` 和红色时间的过时种子以及明确的 `1280x/800x/1920x/2560x` 重采样；仅剩这些种子时根据 `fallback_method` 切换 direct/H@H/aria2。非过时种子中出现视频标记时进入 `manual_review`，即使它同时是重采样；只有 remark 包含 `skip video` 时才把视频种子当作普通种子。小于预计大小 80% 的种子视为异常。其余候选用“同时更大且更新”淘汰旧版本；胜出版本没有 Seeder 或不同大小版本无法比较时进入 `manual_review`；剩余候选大小相同时依次按 Seeder 数和发布时间选择。
+
+qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的 `stalledDL` 超过 `torrent_stall_seconds` 后也会自动删除任务并切换 fallback。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小和 CRC，再为最终 ZIP 计算 LANraragi 所需的 SHA-1。
 
 上传到 LANraragi 前必须有完整 MangaInfo。上传成功必须同时拿到 40 位 SHA-1 archive ID 并通过远端 metadata 确认，之后才会清理本地文件和 qBittorrent/aria2 任务。HTTP 409、结果不确定或 archive ID 无法确认时会进入 `manual_review`，不会猜测上传是否成功。
 

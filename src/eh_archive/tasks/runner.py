@@ -327,6 +327,17 @@ class TaskExecutor:
                 error_detail="gallery has no torrent",
             )
             return
+        info = _info(record)
+        if info is None or not info.is_complete():
+            info = self._details(record, role="browse")
+            self._upsert_info_fenced(repository, claim, info)
+            repository.mark_parent_outdated(info.parent_id, record.manga_id)
+        if not info.is_complete():
+            raise ArchiveError(
+                "incomplete_details",
+                "gallery details are incomplete before torrent selection",
+                ErrorClass.ITEM,
+            )
         http = self._http_session("browse")
         browse_network = self.secrets.network(self.app.browse_session)
         service = TorrentService(
@@ -343,6 +354,7 @@ class TaskExecutor:
         torrent_hash, _ = service.submit(
             record.manga_id,
             record.torrent_link,
+            estimated_size_raw=info.estimated_size_raw,
             skip_video=bool(record.remark and "skip video" in record.remark.lower()),
             excluded_resolutions=self.crawl.excluded_resolutions,
             video_markers=self.crawl.video_markers,
@@ -1033,7 +1045,12 @@ class TaskExecutor:
                 "http_unavailable",
             }:
                 event = "unavailable"
-            if info.code in {"no_torrent", "no_seeded_torrent"}:
+            if info.code in {
+                "no_torrent",
+                "no_seeded_torrent",
+                "only_outdated_torrents",
+                "only_resampled_torrents",
+            }:
                 event = "fallback"
                 if claim.operation == "torrent_download":
                     record = repository.get(claim.manga_id)
