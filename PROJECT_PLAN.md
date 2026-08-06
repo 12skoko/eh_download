@@ -233,7 +233,7 @@ outdated
 
 - 确认文件或目录真实存在。
 - 确认大小稳定，下载进程不再写入。
-- 登记文件大小和 SHA-256。
+- 登记文件大小；最终 ZIP 另外登记 LANraragi 所需的 SHA-1。
 - ZIP 使用格式识别、目录读取和 CRC 检查。
 - 拒绝 HTML、JSON、纯文本错误页面或其他不符合预期的内容。
 - 确认归档非空，并包含合理的内容文件。
@@ -259,13 +259,13 @@ outdated
 ### 5.7 LANraragi 上传
 
 - 使用 `PUT /api/archives/upload` 的 `multipart/form-data`，Authorization 使用配置中的 Bearer API key。
-- multipart 字段固定为：`file`、`file_checksum`、可选 `category_id`、`tags`、`title` 和 `summary`。`file_checksum` 必须发送当前产物的 SHA1；本地同时保留 SHA-256 作为文件变更指纹。
-- 上传前再次确认受控位置、文件类型、大小、SHA-1 和 SHA-256 与当前 artifact generation 登记值一致，并确认 MangaInfo 完整。
+- multipart 字段固定为：`file`、`file_checksum`、可选 `category_id`、`tags`、`title` 和 `summary`。`file_checksum` 必须发送最终 ZIP 首次验证时登记的 SHA-1。
+- 上传前再次确认受控位置、文件类型和大小与当前 artifact generation 登记值一致，并确认 MangaInfo 和已登记的 SHA-1 完整；可信的受控文件不会在上传前重复计算哈希。
 - 使用流式 multipart，避免大文件完整读入内存；连接、写入和响应等待分别设置超时。
 - HTTP 200 只有在 JSON 同时满足 `operation=upload`、`success=1`、`id` 为 40 位十六进制字符串时才算成功。返回的 archive ID 必须与当前文件 SHA1 一致，否则进入 `manual_review`。
 - HTTP 409 表示 LANraragi 判断档案重复。系统记录完整响应并直接进入 `manual_review`，不自动把重复判断转换为上传成功，也不自动登记 `lrr_archive_id`。人工核对现有档案后，可以经审计登记已有 archive ID 并进入 `uploaded`，或选择其他安全恢复路径。
 - 上传请求体已经开始发送但响应丢失、进程退出或返回 500 时，先按 SHA1 做有界远端核对；无法确认时进入 `manual_review`，禁止自动重传。
-- HTTP 400/415/417/422 分别按请求非法、文件类型不支持、SHA1 校验失败和业务校验失败处理：不自动重传，记录稳定错误码；417 必须回到 `validating` 重新计算指纹。
+- HTTP 400/415/417/422 分别按请求非法、文件类型不支持、SHA1 校验失败和业务校验失败处理：不自动重传，记录稳定错误码；417 必须清空已登记的 SHA-1，并回到 `validating` 重新计算。
 - HTTP 423 表示远端资源锁定，作为临时错误有限退避；401/403、磁盘不足、数据库不可用等系统性错误暂停上传组件。
 - 上传成功后再调用 `GET /api/archives/{id}/metadata` 做一次远端确认；只有确认成功才允许进入 `uploaded`。
 - 缩略图生成使用 `/api/archives/{id}/files/thumbnails` 作为独立批次收尾操作，不影响单个档案上传成功状态。
@@ -298,10 +298,10 @@ outdated
 - `deferred`：暂缓处理，例如新发布档案等待观察期
 - `download_pending`：等待选择或执行下载方式；MangaInfo 可以尚未存在，torrent 不受详情获取失败阻塞
 - `downloading`：下载器已接收或 Python 正在下载
-- `downloaded`：下载完成但尚未进行基础检查和文件指纹登记
-- `validating`：正在进行产物基础检查和文件指纹登记；状态名为兼顾流程可读性保留
+- `downloaded`：下载完成并完成首次产物检查，等待独立验证任务
+- `validating`：正在复核产物结构，并在最终 ZIP 缺少 SHA-1 时补充登记；状态名为兼顾流程可读性保留
 - `preparing`：等待或正在压缩、整理待上传文件
-- `upload_pending`：已有通过基础检查、指纹稳定的待上传档案
+- `upload_pending`：已有通过基础检查并登记 SHA-1 的待上传档案
 - `uploading`：正在上传
 - `uploaded`：LRR 已确认接收，尚未完成本地清理
 - `completed`：上传和清理全部完成
@@ -479,21 +479,21 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 | `downloading` | torrent 无种或最终失败 | 回退方式仍可用 | `download_pending` | 记录回退原因，下一次 direct 前 ensure_details |
 | `downloading` | 可恢复错误 | 可安全续传或重新获取 | `download_pending` | 保留安全临时文件并设置退避 |
 | `downloaded` | 开始验证 | 当前 generation 产物存在且大小稳定 | `validating` | 创建 validate attempt |
-| `validating` | 产物验证通过 | 结构、CRC、大小、SHA-1、SHA-256 均已登记 | `upload_pending` | 保存当前 generation 指纹和 checked_at |
+| `validating` | 产物验证通过 | 结构、CRC 和大小已验证，最终 ZIP 的 SHA-1 已登记 | `upload_pending` | 保存当前 generation 校验结果和 checked_at |
 | `validating` | 目录需要打包 | 目录位于受控根目录且内容合理 | `preparing` | 创建 prepare attempt |
 | `validating` | 明确无效 | HTML/JSON/空文件/CRC 错误/路径越界 | `quarantined` | 隔离产物并递增 generation |
 | `validating` | 无法安全判断 | 内容冲突或检查期间文件变化 | `manual_review` | 禁止上传 |
 | `validating` | 可恢复失败 | 临时文件占用或读取暂时失败，当前产物未变化 | `downloaded` | 保留产物并设置退避，稍后重新验证 |
-| `preparing` | 最终档案生成并验证 | 临时文件完成，原子重命名且新指纹已登记 | `upload_pending` | 递增 generation，保存最终产物指纹 |
+| `preparing` | 最终档案生成并验证 | 临时文件完成，原子重命名且新 SHA-1 已登记 | `upload_pending` | 递增 generation，保存最终产物校验结果 |
 | `preparing` | 可恢复失败 | 原始目录仍完整存在 | `downloaded` | 清理不完整临时文件并退避 |
-| `upload_pending` | 开始上传 | MangaInfo 完整，当前 generation 和双哈希匹配 | `uploading` | 创建 upload attempt，先写 external_effect_started_at |
-| `upload_pending` | MangaInfo 暂时失败 | 产物指纹仍有效 | `upload_pending` | 只重试 ensure_details |
-| `upload_pending` | 文件被替换 | size/SHA-1/SHA-256 与登记值不一致 | `validating` | 清空旧指纹并重新验证 |
+| `upload_pending` | 开始上传 | MangaInfo 完整，当前 generation、size 和 SHA-1 已登记 | `uploading` | 创建 upload attempt，先写 external_effect_started_at |
+| `upload_pending` | MangaInfo 暂时失败 | 产物校验结果仍有效 | `upload_pending` | 只重试 ensure_details |
+| `upload_pending` | 文件缺失或大小变化 | 当前文件不存在或 size 与登记值不一致 | `validating` | 清空旧 SHA-1 并重新验证 |
 | `uploading` | LANraragi 明确成功 | 200、success=1、合法 archive ID，metadata 核对通过 | `uploaded` | 保存 lrr_archive_id |
 | `uploading` | LANraragi 判断重复 | HTTP 409 | `manual_review` | 保存响应；必须人工判断和登记已有 archive ID |
 | `uploading` | 明确未产生成功结果 | 请求体未发送，或 423 可安全退避 | `upload_pending` | 有限重试 |
 | `uploading` | 结果未知或冲突 | 发送后断线、500、响应非法或远端核对仍不确定 | `manual_review` | 禁止盲目重传 |
-| `uploading` | checksum 或本地指纹失败 | HTTP 417 或当前文件发生变化 | `validating` | 重新计算当前 generation 指纹 |
+| `uploading` | checksum 或本地文件检查失败 | HTTP 417、文件缺失或大小变化 | `validating` | 清空并重新计算当前 generation 的 SHA-1 |
 | `uploading` | 文件类型不支持 | HTTP 415 且响应契约有效 | `quarantined` | 保留响应和产物证据 |
 | `uploading` | 请求或业务校验被拒绝 | HTTP 400/422 且没有成功证据 | `manual_review` | 记录稳定错误码，不自动重传 |
 | `uploaded` | 远端确认存在且本地清理完成 | metadata 200，所有清理目标均安全完成 | `completed` | 保留业务、attempt 和事件历史 |
@@ -693,9 +693,8 @@ Alembic 会另外创建技术表 `alembic_version`，不属于业务表。
 | `artifact_kind` | `varchar(16)` + CHECK | file/directory/zip | 新字段 |
 | `artifact_generation` | `integer` nullable | 产物代次；NULL 表示尚无产物，首个产物为 1，重新下载、打包、隔离或替换时递增 | 新字段 |
 | `artifact_size` | `bigint` | 验证时登记的字节数 | 新字段 |
-| `artifact_hash` | `varchar(64)` | SHA-256 | 新字段 |
 | `artifact_sha1` | `char(40)` | LANraragi file_checksum 和 archive ID 核对使用的 SHA1 | 新字段 |
-| `artifact_checked_at` | `timestamptz` | 当前 generation 最近一次验证和指纹登记时间 | 新字段 |
+| `artifact_checked_at` | `timestamptz` | 当前 generation 最近一次验证和 SHA-1 登记时间 | 新字段 |
 | `lrr_archive_id` | `varchar(63)` | LANraragi archive ID | `manga.arcid` |
 
 数据库不保存产物绝对路径、通用相对路径或 attempt 临时文件名。统一路径服务使用 `artifact_location` 对应的 app 配置根目录加 `artifact_filename` 定位当前文件或目录；`artifact_kind` 决定验证和准备方式，`artifact_generation` 与 generation 专属文件名共同防止过期 attempt 覆盖新产物。LANraragi 是永久存储位置。
@@ -828,7 +827,7 @@ Alembic 会另外创建技术表 `alembic_version`，不属于业务表。
 - 租约 token、owner、until 必须一致为空或一起有效。
 - 活动租约存在时 `active_attempt_id` 必须存在，并由复合外键保证它属于当前 manga；涉及文件的执行中状态必须记录当前 `artifact_generation`。
 - `artifact_filename` 不得包含路径分隔符、盘符、`.`、`..` 或 NUL；新生成的正式文件名必须包含当前 generation。最终解析路径必须仍位于配置根目录且不能穿过符号链接或 Windows reparse point。
-- `upload_pending/uploading` 必须存在 MangaInfo、artifact location、filename、kind、size、SHA-1、SHA-256 和 checked_at。
+- `upload_pending/uploading` 必须存在 MangaInfo、artifact location、filename、kind、size、SHA-1 和 checked_at。
 - 新写入的 `lrr_archive_id` 必须是 40 位十六进制 SHA1；旧迁移值不符合时进入 `manual_review`，不得用于自动删除。
 - `uploaded/completed` 应有 `lrr_archive_id`，例外只能通过迁移或人工审查事件说明。
 - `outdated/deleted` 原则上应有 `superseded_by_id`。
@@ -894,9 +893,9 @@ Alembic 会另外创建技术表 `alembic_version`，不属于业务表。
 | `5` | `downloaded` | torrent | 定位产物后重新验证；MangaInfo 缺失不重下 torrent |
 | `6` | `download_pending` | direct | 旧无种/fallback；direct 开始前执行 ensure_details |
 | `7` | `downloading` | hah | 对账 H@H 外部任务和配置目录 |
-| `8` | `validating` | torrent | 没有新指纹，强制重新验证 |
+| `8` | `validating` | torrent | 没有新校验结果，强制重新验证 |
 | `9` | `downloaded` | hah | 定位 H@H 目录或文件后重新验证 |
-| `10` | `validating` | hah | 旧压缩产物必须重新登记指纹 |
+| `10` | `validating` | hah | 旧压缩产物必须重新登记 SHA-1 |
 | `11` | `validating` | direct/aria2 | 防止文本错误页进入上传 |
 | `12` | `manual_review` | 原值 | 文件名或版本冲突 |
 | `-2` | `manual_review` | 原值 | 历史语义不唯一，不猜测 |
@@ -915,7 +914,7 @@ Alembic 会另外创建技术表 `alembic_version`，不属于业务表。
 | `5/14` | `downloading` | torrent | 14 设置 priority=100；按 torrent hash 对账 |
 | `6/15` | `download_pending` | direct | fallback；15 设置 priority=100，direct 前 ensure_details |
 | `7` | `downloaded` | torrent | 定位后重新验证 |
-| `8` | `validating` | torrent | 强制登记当前 generation 指纹 |
+| `8` | `validating` | torrent | 强制登记当前 generation 的 SHA-1 |
 | `9` | `downloading` | hah | 对账 H@H 任务和目录 |
 | `10` | `downloaded` | hah | 定位后重新验证/准备 |
 | `11/12` | `validating` | direct/hah | 旧直连或压缩产物重新验证 |
@@ -932,7 +931,7 @@ Alembic 会另外创建技术表 `alembic_version`，不属于业务表。
 #### 9.4.4 产物和外部系统对账
 
 - 根据 download_method 选择配置根目录集合，用 manga_id、旧 filename、alias、torrent hash 和文件类型扫描候选项。
-- 只有唯一候选才能回填 `artifact_location + artifact_filename + artifact_kind`，随后计算 size、SHA1、SHA-256 并设置初始 `artifact_generation=1`。
+- 只有唯一候选才能回填 `artifact_location + artifact_filename + artifact_kind`，随后验证 size、计算最终 ZIP 的 SHA-1，并设置初始 `artifact_generation=1`。
 - 没有候选时按状态决定重新下载或进入 `manual_review`；多个候选、文件名越界或候选位于未配置目录时一律人工审核。
 - 迁移脚本不移动、重命名或删除文件。需要整理到新根目录时由后续受 fencing 保护的 prepare/reconcile attempt 执行。
 - 已有 lrr_archive_id 时使用 `GET /api/archives/{id}/metadata` 查询；200 表示存在，400 表示不存在。新程序不能按标题或文件名模糊匹配远端档案。
@@ -944,7 +943,7 @@ Alembic 会另外创建技术表 `alembic_version`，不属于业务表。
 - 旧成功状态但 LANraragi 无法确认：进入 `manual_review`，不得直接删除本地文件。
 - 旧直接下载完成状态：进入 `downloaded`，强制重新验证产物，避免旧 aria2 HTML 文件进入上传。
 - 旧 torrent/H@H 下载完成状态：根据文件或目录存在情况进入 `downloaded`、`preparing` 或 `manual_review`。
-- 旧上传错误统一进入 `manual_review`；有效产物保留并登记指纹，只有人工或按已知 SHA1 查询确认 LRR 不存在后，才允许恢复到 `upload_pending`。
+- 旧上传错误统一进入 `manual_review`；有效产物保留并登记 SHA-1，只有人工或按已知 SHA1 查询确认 LRR 不存在后，才允许恢复到 `upload_pending`。
 - 旧压缩错误：有源目录则进入 `preparing`；无源数据则进入 `manual_review`。
 - 旧无种状态：进入 `download_pending`，由新下载选择逻辑处理。
 - 明确远端不可用：进入 `unavailable`。
@@ -966,7 +965,7 @@ Alembic 会另外创建技术表 `alembic_version`，不属于业务表。
 - 时间转换失败列表。
 - 各新状态数量和映射来源统计。
 - 每一种 state/autostate 值和冲突组合的映射数量；每条记录都有 queue_source、映射规则 ID 和旧值审计。
-- 每个已回填 artifact 的 location 配置键、文件名、kind、generation、size、SHA1 和 SHA-256 核对结果。
+- 每个已回填 artifact 的 location 配置键、文件名、kind、generation、size 和 SHA-1 核对结果。
 - 旧 arcid 使用 LANraragi metadata API 的存在性核对结果，以及不符合 40 位 SHA1 规则的人工清单。
 - `manual_review` 迁移清单。
 

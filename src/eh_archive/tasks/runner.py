@@ -312,11 +312,8 @@ class TaskExecutor:
                 raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
             record.artifact_location, record.artifact_filename = "torrent_download", filename
             record.artifact_kind, record.artifact_generation = fingerprint.kind, generation
-            record.artifact_size, record.artifact_hash, record.artifact_sha1 = (
-                fingerprint.size,
-                fingerprint.sha256,
-                fingerprint.sha1,
-            )
+            record.artifact_size = fingerprint.size
+            record.artifact_sha1 = fingerprint.sha1
             record.artifact_checked_at = fingerprint.checked_at
             repository.finish(claim, owner=self.owner, event="downloaded")
             return
@@ -491,11 +488,8 @@ class TaskExecutor:
         record = repository.get(record.manga_id)
         record.artifact_location, record.artifact_filename = "direct_download", paths.final.name
         record.artifact_kind, record.artifact_generation = "zip", generation
-        record.artifact_size, record.artifact_hash, record.artifact_sha1 = (
-            fingerprint.size,
-            fingerprint.sha256,
-            fingerprint.sha1,
-        )
+        record.artifact_size = fingerprint.size
+        record.artifact_sha1 = fingerprint.sha1
         record.artifact_checked_at = fingerprint.checked_at
         record.download_method = "direct"
         repository.finish(claim, owner=self.owner, event="downloaded")
@@ -622,11 +616,8 @@ class TaskExecutor:
                 "zip",
             )
         record.artifact_generation = generation
-        record.artifact_size, record.artifact_hash, record.artifact_sha1 = (
-            fingerprint.size,
-            fingerprint.sha256,
-            fingerprint.sha1,
-        )
+        record.artifact_size = fingerprint.size
+        record.artifact_sha1 = fingerprint.sha1
         record.artifact_checked_at = fingerprint.checked_at
         repository.finish(claim, owner=self.owner, event="downloaded")
 
@@ -641,13 +632,14 @@ class TaskExecutor:
             else self.paths.validate_registered(record.artifact_location, record.artifact_filename)
         )
         fingerprint = validate_artifact(
-            path, expected_kind=record.artifact_kind, max_size=self.app.max_file_size
+            path,
+            expected_kind=record.artifact_kind,
+            max_size=self.app.max_file_size,
+            calculate_sha1=not bool(record.artifact_sha1),
         )
-        record.artifact_size, record.artifact_hash, record.artifact_sha1 = (
-            fingerprint.size,
-            fingerprint.sha256,
-            fingerprint.sha1,
-        )
+        record.artifact_size = fingerprint.size
+        if fingerprint.sha1 is not None:
+            record.artifact_sha1 = fingerprint.sha1
         record.artifact_checked_at = fingerprint.checked_at
         repository.finish(
             claim,
@@ -687,11 +679,8 @@ class TaskExecutor:
             raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
         record.artifact_location, record.artifact_filename = "prepared", paths.final.name
         record.artifact_kind, record.artifact_generation = "zip", generation
-        record.artifact_size, record.artifact_hash, record.artifact_sha1 = (
-            result.fingerprint.size,
-            result.fingerprint.sha256,
-            result.fingerprint.sha1,
-        )
+        record.artifact_size = result.fingerprint.size
+        record.artifact_sha1 = result.fingerprint.sha1
         record.artifact_checked_at = result.fingerprint.checked_at
         repository.finish(claim, owner=self.owner, event="ready")
 
@@ -712,14 +701,9 @@ class TaskExecutor:
             if record.artifact_location == "torrent_download"
             else self.paths.validate_registered(record.artifact_location, record.artifact_filename)
         )
-        current = validate_artifact(
-            path, expected_kind=record.artifact_kind, max_size=self.app.max_file_size
-        )
-        if (
-            current.sha1 != record.artifact_sha1
-            or current.sha256 != record.artifact_hash
-            or current.size != record.artifact_size
-        ):
+        if not path.is_file() or path.stat().st_size != record.artifact_size:
+            record.artifact_sha1 = None
+            record.artifact_checked_at = None
             repository.finish(claim, owner=self.owner, event="revalidate")
             return
         client = LANraragiClient(
@@ -729,7 +713,9 @@ class TaskExecutor:
         )
         if not repository.begin_external_effect(claim, owner=self.owner):
             raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
-        outcome = client.upload(path, info, checksum=current.sha1, max_size=self.app.max_file_size)
+        outcome = client.upload(
+            path, info, checksum=record.artifact_sha1, max_size=self.app.max_file_size
+        )
         if outcome.kind == "success":
             record.lrr_archive_id = outcome.archive_id
             repository.finish(claim, owner=self.owner, event="uploaded")
@@ -752,6 +738,8 @@ class TaskExecutor:
                 error_detail=outcome.response,
             )
         elif outcome.kind == "revalidate":
+            record.artifact_sha1 = None
+            record.artifact_checked_at = None
             repository.finish(
                 claim,
                 owner=self.owner,
@@ -967,7 +955,7 @@ class TaskExecutor:
                             quarantine.name,
                         )
                         record.artifact_generation = generation
-                        record.artifact_size = record.artifact_hash = record.artifact_sha1 = None
+                        record.artifact_size = record.artifact_sha1 = None
                         record.artifact_checked_at = None
                         repository.finish(
                             claim,

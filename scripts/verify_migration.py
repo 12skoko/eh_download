@@ -78,7 +78,6 @@ def verify(database: Database) -> dict:
                         row.artifact_kind,
                         row.artifact_generation,
                         row.artifact_sha1,
-                        row.artifact_hash,
                     )
                 )
             ],

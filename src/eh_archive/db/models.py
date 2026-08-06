@@ -143,7 +143,6 @@ class MangaRecord(Base):
     artifact_kind: Mapped[str | None] = mapped_column(String(16))
     artifact_generation: Mapped[int | None] = mapped_column(Integer)
     artifact_size: Mapped[int | None] = mapped_column(BigInteger)
-    artifact_hash: Mapped[str | None] = mapped_column(String(64))
     artifact_sha1: Mapped[str | None] = mapped_column(String(40))
     artifact_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lrr_archive_id: Mapped[str | None] = mapped_column(String(63))

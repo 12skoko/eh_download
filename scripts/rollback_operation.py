@@ -39,7 +39,6 @@ def _business_effects(row: MangaRecord) -> list[str]:
         "artifact_kind",
         "artifact_generation",
         "artifact_size",
-        "artifact_hash",
         "artifact_sha1",
         "lrr_archive_id",
         "lease_token",

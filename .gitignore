@@ -13,6 +13,7 @@ data/
 tests/
 
 .agents/
+.vscode/
 
 config/runtime.toml
 config/private.toml

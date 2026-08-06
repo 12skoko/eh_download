@@ -507,7 +507,6 @@ def _serialize(row):
                 "artifact_kind",
                 "artifact_generation",
                 "artifact_size",
-                "artifact_hash",
                 "artifact_sha1",
                 "artifact_checked_at",
                 "lrr_archive_id",

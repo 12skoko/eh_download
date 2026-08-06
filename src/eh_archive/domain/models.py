@@ -33,7 +33,6 @@ class Manga:
     artifact_filename: str | None = None
     artifact_kind: str | None = None
     artifact_size: int | None = None
-    artifact_hash: str | None = None
     artifact_sha1: str | None = None
     lrr_archive_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

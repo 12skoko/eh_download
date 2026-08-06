@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import zipfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..validator.artifact import ArtifactFingerprint, validate_artifact
@@ -39,8 +39,8 @@ def prepare_directory(
             if item.is_file():
                 archive.write(item, item.relative_to(source).as_posix())
     # Validation happens before the final name becomes visible to upload tasks.
-    validate_artifact(temporary, expected_kind="zip")
+    fingerprint = validate_artifact(temporary, expected_kind="zip")
     if before_promote is not None:
         before_promote()
     os.replace(temporary, final)
-    return PrepareResult(final, validate_artifact(final, expected_kind="zip"))
+    return PrepareResult(final, replace(fingerprint, path=final))

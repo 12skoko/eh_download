@@ -19,21 +19,18 @@ class ArtifactFingerprint:
     path: Path
     kind: str
     size: int
-    sha256: str
-    sha1: str
+    sha1: str | None
     checked_at: datetime
 
 
-def _hashes(path: Path) -> tuple[str, str, int]:
-    sha256 = hashlib.sha256()
+def _sha1(path: Path) -> tuple[str, int]:
     sha1 = hashlib.sha1()
     size = 0
     with path.open("rb") as handle:
         while chunk := handle.read(1024 * 1024):
             size += len(chunk)
-            sha256.update(chunk)
             sha1.update(chunk)
-    return sha256.hexdigest(), sha1.hexdigest(), size
+    return sha1.hexdigest(), size
 
 
 def _validate_zip(path: Path) -> None:
@@ -60,19 +57,26 @@ def _validate_zip(path: Path) -> None:
         raise ValidationError("truncated_archive", str(exc)) from exc
 
 
-def _validate_directory(path: Path) -> None:
-    files = []
+def _validate_directory(path: Path) -> int:
+    file_count = 0
+    size = 0
     for item in path.rglob("*"):
         if item.is_symlink():
             raise ValidationError("symlink_member", f"directory contains symlink: {item}")
         if item.is_file():
-            files.append(item)
-    if not files:
+            file_count += 1
+            size += item.stat().st_size
+    if not file_count:
         raise ValidationError("empty_directory", "directory contains no files")
+    return size
 
 
 def validate_artifact(
-    path: str | Path, *, expected_kind: str | None = None, max_size: int | None = None
+    path: str | Path,
+    *,
+    expected_kind: str | None = None,
+    max_size: int | None = None,
+    calculate_sha1: bool = True,
 ) -> ArtifactFingerprint:
     path = Path(path)
     if not path.exists():
@@ -80,22 +84,11 @@ def validate_artifact(
     if path.is_dir():
         if expected_kind == "file":
             raise ValidationError("unexpected_directory", "directory cannot be uploaded as a file")
-        _validate_directory(path)
-        digest256 = hashlib.sha256()
-        digest1 = hashlib.sha1()
-        size = 0
-        for item in sorted(x for x in path.rglob("*") if x.is_file()):
-            h256, h1, item_size = _hashes(item)
-            relative_name = item.relative_to(path).as_posix()
-            digest256.update(relative_name.encode())
-            digest256.update(h256.encode())
-            digest1.update(relative_name.encode())
-            digest1.update(h1.encode())
-            size += item_size
+        size = _validate_directory(path)
         if max_size is not None and size > max_size:
             raise ValidationError("artifact_too_large", f"{size} > {max_size}")
         kind = "directory"
-        sha256, sha1 = digest256.hexdigest(), digest1.hexdigest()
+        sha1 = None
     else:
         size = path.stat().st_size
         if size <= 0:
@@ -108,13 +101,16 @@ def validate_artifact(
             raise ValidationError("error_page", "artifact looks like an HTML/JSON response")
         observed_size = size
         _validate_zip(path)
-        sha256, sha1, size = _hashes(path)
+        if calculate_sha1:
+            sha1, size = _sha1(path)
+        else:
+            sha1 = None
         if path.stat().st_size != observed_size or size != observed_size:
             raise ValidationError("artifact_changing", "artifact changed during validation")
         kind = "zip"
     if expected_kind and expected_kind != kind:
         raise ValidationError("kind_mismatch", f"expected {expected_kind}, got {kind}")
-    return ArtifactFingerprint(path, kind, size, sha256, sha1, datetime.now(UTC))
+    return ArtifactFingerprint(path, kind, size, sha1, datetime.now(UTC))
 
 
 def quarantine_artifact(path: str | Path, destination: str | Path) -> Path:
