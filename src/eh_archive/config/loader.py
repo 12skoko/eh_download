@@ -79,6 +79,7 @@ class SupervisorConfig:
     lease_seconds: int = 900
     lease_recovery_seconds: int = 60
     retry_limit: int = 5
+    torrent_stall_seconds: int = 7 * 24 * 60 * 60
     request_timeout_seconds: float = 30.0
     shutdown_grace_seconds: float = 30.0
     thumbnail_interval_seconds: float = 900.0
@@ -97,7 +98,6 @@ class SupervisorConfig:
             "delete": 1,
         }
     )
-    torrent_stall_seconds: int = 7 * 24 * 60 * 60
 
 
 @dataclass(frozen=True)

@@ -182,7 +182,7 @@ $env:EHARCHIVE_WEB_SECRET = 'change-this-long-random-secret'
 | `external_request_delay_seconds` | 同一个 worker 连续访问 EH 外部网页请求完成后的最小等待秒数，默认 `5.0`；设为 `0` 可关闭。作用于列表、详情、torrent、archive/direct/H@H 网页请求，不作用于 LANraragi 和 qBittorrent |
 | `lanraragi_url` | LANraragi 地址 |
 | `max_file_size` | 单个产物允许的最大字节数 |
-| `fallback_method` | 无种子或种子停滞时的 `direct`、`hah` 或 `aria2` |
+| `fallback_method` | 无 torrent/无做种、qBittorrent 任务被手动标记为 `failed`，或未完成的 `stalledDL` 超过停滞阈值时使用的 `direct`、`hah` 或 `aria2` |
 | `aria2_enabled`、`hah_enabled` | 启用对应可选下载器 |
 | `[roots]` | 受控文件根目录；每个值都必须是运行机器上的绝对目录 |
 
@@ -364,7 +364,7 @@ eharchive --config-dir config collect 'https://e-hentai.org/?f_search=...' --end
 
 `--stop-mode` 与 `--end` 互斥。不写 `--stop-mode` 时，手动 `collect` 仍默认抓到最后一页。采集使用 browse 会话；Cookie、代理或 EH 返回登录页时，错误会记录在日志和档案事件中。
 
-再次抓到数据库中已有的 `manga_id` 时，程序只刷新名称、链接、发布时间、分类、标签、页数、评分和上传者等网页元数据，不会重置正在下载、已上传、已完成或已删除等工作流状态。`deferred` 是唯一会重新判断的已有状态：到期时重新执行 `judge_screen_flag`，可能回到普通 `discovered`、进入 screenall、直接进入 `download_pending`，或再次延后。
+再次抓到数据库中已有的 `manga_id` 时，程序只刷新名称、链接、发布时间、分类、标签、页数、评分和上传者等网页元数据，不会重置正在下载、已上传、已完成或已删除等工作流状态。`deferred` 是唯一会在再次采集到时重新判断的已有状态：程序使用更新后的网页元数据重新执行 `judge_screen_flag`，可能回到普通 `discovered`、进入 screenall、直接进入 `download_pending`，或再次延后。Supervisor 不会仅因为 `defer_until` 已到而恢复记录；没有再次采集到的记录会一直保持 `deferred`。
 
 ### 7.2 手工加入单个画廊
 
@@ -389,7 +389,7 @@ discovered/deferred
         -> uploading -> uploaded -> completed
 ```
 
-Supervisor 会自动运行 `details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。种子优先提交 qBittorrent；没有可用种子、种子丢失或长期停滞时，根据 `fallback_method` 切换 direct/H@H/aria2。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小、CRC、SHA-1 和 SHA-256。
+Supervisor 会自动运行 `details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。种子优先提交 qBittorrent；EH 页面没有 torrent 或没有可用做种时，根据 `fallback_method` 切换 direct/H@H/aria2。qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的 `stalledDL` 超过 `torrent_stall_seconds` 后也会自动删除任务并切换 fallback。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小、CRC、SHA-1 和 SHA-256。
 
 上传到 LANraragi 前必须有完整 MangaInfo。上传成功必须同时拿到 40 位 SHA-1 archive ID 并通过远端 metadata 确认，之后才会清理本地文件和 qBittorrent/aria2 任务。HTTP 409、结果不确定或 archive ID 无法确认时会进入 `manual_review`，不会猜测上传是否成功。
 
@@ -577,7 +577,7 @@ python scripts/reconcile_migration.py \
 - 先看 `/health`，再看 `/api/manga/{manga_id}` 的 `attempts` 和 `events`。失败会有 `error_code`、下次重试时间和最后一次操作。
 - 维护前先暂停 `all`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；Supervisor 会终止子进程并在下次启动时恢复过期租约。
 - `manual_review` 不是自动重试状态：检查 EH 页面、文件、LANraragi metadata 或重复上传后，用 Web action 或人工 archive confirmation 明确恢复。
-- 看到 `qBittorrent no longer reports...`、种子长期 `stalleddl` 时，检查 qBittorrent 任务和磁盘；程序会在停滞阈值后清理并切换 fallback。
+- 看到 `qBittorrent no longer reports...` 或 qBittorrent `error`/`missingFiles` 时，先人工检查任务和磁盘；需要切换 fallback 时，在 qBittorrent 管理界面给任务添加精确的 `failed` 标签。如果记录已经进入 `manual_review`，先用 Web 的 retry/resume action 恢复下载流程，程序才会再次读取这个标签。未标记 `failed` 的 `stalledDL` 在超过 `torrent_stall_seconds` 后会自动删除任务并 fallback，未超过阈值时继续等待。
 - LANraragi 返回 401/403 通常是 Authorization 错误；415 会把产物移到 quarantine；409 或不确定的 5xx 结果必须人工核对 archive ID。
 - `db ping` 正常但没有新档案时，检查 `crawl.toml` 的 `[urls]`、browse Cookie、代理、分类/关键词过滤和观察期。
 - 如果提示 `qbittorrent-api is missing`，确认当前 Conda/venv 已执行 `python -m pip install -e .`；aria2 仍需单独安装 `.[aria2]`。

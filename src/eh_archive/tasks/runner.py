@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import time
 from datetime import timedelta
@@ -32,6 +33,26 @@ from ..services.uploader.lanraragi import LANraragiClient
 from ..services.validator.artifact import ValidationError, quarantine_artifact, validate_artifact
 
 log = get_logger(__name__)
+
+
+def _qbit_tags(info: Any) -> set[str]:
+    raw = getattr(info, "tags", None)
+    if raw is None:
+        try:
+            raw = info["tags"]
+        except (KeyError, TypeError):
+            raw = ""
+    if isinstance(raw, str):
+        values = re.split(r"[,;]", raw)
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        values = raw
+    else:
+        values = (raw,)
+    return {str(value).strip().casefold() for value in values if str(value).strip()}
+
+
+def _has_qbit_tag(info: Any, tag: str) -> bool:
+    return tag.casefold() in _qbit_tags(info)
 
 
 def _info(record: Any):
@@ -117,6 +138,36 @@ class TaskExecutor:
             seconds=min(3600, 2 ** min(record.attempt_count, 8))
         )
 
+    def _fallback_torrent(
+        self,
+        repository: ArchiveRepository,
+        claim: ClaimedAttempt,
+        record: MangaRecord,
+        qbit: Any,
+        *,
+        error_code: str,
+        error_detail: str,
+    ) -> None:
+        if not repository.begin_external_effect(claim, owner=self.owner):
+            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        try:
+            qbit.delete(record.external_download_id, delete_files=True)
+        except Exception as exc:
+            raise ArchiveError(
+                "torrent_fallback_cleanup",
+                f"failed to delete qBittorrent task: {exc}",
+                ErrorClass.ITEM,
+            ) from exc
+        record.download_method = self.app.fallback_method
+        record.external_download_id = None
+        repository.finish(
+            claim,
+            owner=self.owner,
+            event="fallback",
+            error_code=error_code,
+            error_detail=error_detail,
+        )
+
     def _execute(self, repository: ArchiveRepository, claim: ClaimedAttempt) -> None:
         record = repository.get(claim.manga_id)
         if record is None:
@@ -153,57 +204,70 @@ class TaskExecutor:
         if record.external_download_id:
             info = qbit.info(record.external_download_id)
             if info is None:
-                record.download_method = self.app.fallback_method
+                missing_hash = record.external_download_id
                 record.external_download_id = None
-                repository.finish(
+                raise ArchiveError(
+                    "torrent_missing",
+                    f"qBittorrent no longer reports external hash {missing_hash}",
+                    ErrorClass.ITEM,
+                )
+            if _has_qbit_tag(info, "failed"):
+                self._fallback_torrent(
+                    repository,
                     claim,
-                    owner=self.owner,
-                    event="retry",
-                    error_code="torrent_missing",
-                    error_detail="qBittorrent no longer reports the external hash",
+                    record,
+                    qbit,
+                    error_code="torrent_failed",
+                    error_detail="qBittorrent task was manually tagged failed",
                 )
                 return
-            raw_completion = getattr(info, "completion_on", None) or getattr(info, "progress", 0)
+            state = str(getattr(info, "state", "") or "").lower()
+            if state in {"error", "missingfiles"}:
+                raise ArchiveError(
+                    "torrent_error",
+                    f"qBittorrent task is in error state: {state}",
+                    ErrorClass.ITEM,
+                )
+            raw_completion_on = getattr(info, "completion_on", 0) or 0
+            raw_progress = getattr(info, "progress", 0) or 0
             try:
-                completion = float(raw_completion or 0)
+                completion_on = float(raw_completion_on)
             except (TypeError, ValueError):
-                completion = 0.0
-            state = str(getattr(info, "state", "")).lower()
-            if not (completion > 0 or state in {"uploading", "stalledup", "completed"}):
+                completion_on = 0.0
+            if state == "stalleddl" and completion_on <= 0:
                 raw_added_on = getattr(info, "added_on", 0) or 0
                 try:
                     added_on = float(raw_added_on)
                 except (TypeError, ValueError):
                     added_on = 0.0
-                stalled = state in {"error", "missingfiles"} or (
-                    state == "stalleddl"
-                    and added_on > 0
-                    and time.time() - added_on >= self.supervisor.torrent_stall_seconds
-                )
-                if stalled:
-                    if not repository.begin_external_effect(claim, owner=self.owner):
-                        raise ArchiveError(
-                            "stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY
-                        )
-                    try:
-                        qbit.delete(record.external_download_id, delete_files=True)
-                    except Exception as exc:
-                        raise ArchiveError(
-                            "torrent_stall_cleanup_failed",
-                            str(exc),
-                            ErrorClass.TEMPORARY,
-                            retryable=True,
-                        ) from exc
-                    record.download_method = self.app.fallback_method
-                    record.external_download_id = None
-                    repository.finish(
+                if added_on > 0 and time.time() - added_on >= self.supervisor.torrent_stall_seconds:
+                    self._fallback_torrent(
+                        repository,
                         claim,
-                        owner=self.owner,
-                        event="fallback",
+                        record,
+                        qbit,
                         error_code="torrent_stalled",
-                        error_detail=f"qBittorrent state={state}",
+                        error_detail=(
+                            "qBittorrent stalledDL exceeded "
+                            f"{self.supervisor.torrent_stall_seconds} seconds"
+                        ),
                     )
                     return
+            try:
+                progress = float(raw_progress)
+            except (TypeError, ValueError):
+                progress = 0.0
+            complete = (
+                completion_on > 0
+                or progress >= 1
+                or state
+                in {
+                    "uploading",
+                    "stalledup",
+                    "completed",
+                }
+            )
+            if not complete:
                 repository.finish(claim, owner=self.owner)
                 return
             raw_external = str(getattr(info, "content_path", "") or "")

@@ -416,46 +416,6 @@ class ArchiveRepository:
             )
         return flag
 
-    def resume_deferred(
-        self,
-        *,
-        now: datetime | None = None,
-        limit: int = 100,
-        name_keywords: tuple[str, ...] = (),
-        tag_keywords: tuple[str, ...] = (),
-        observation_days: int = 1,
-        exclude_categories: tuple[str, ...] = (),
-    ) -> int:
-        """Rejudge deferred rows as soon as their observation period expires."""
-
-        now = now or utcnow()
-        rows = list(
-            self.session.scalars(
-                select(MangaRecord)
-                .where(
-                    MangaRecord.status == Status.DEFERRED.value,
-                    MangaRecord.defer_until.is_not(None),
-                    MangaRecord.defer_until <= now,
-                    or_(MangaRecord.lease_until.is_(None), MangaRecord.lease_until < now),
-                )
-                .order_by(MangaRecord.defer_until)
-                .with_for_update(skip_locked=True)
-                .limit(limit)
-            )
-        )
-        for row in rows:
-            self._apply_screen_flag(
-                row,
-                name_keywords=name_keywords,
-                tag_keywords=tag_keywords,
-                observation_days=observation_days,
-                exclude_categories=exclude_categories,
-                now=now,
-                actor="supervisor",
-                reason="observation_period_elapsed",
-            )
-        return len(rows)
-
     def rescreen_discovered(
         self,
         *,
