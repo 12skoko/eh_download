@@ -3,6 +3,22 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+QBITTORRENT_CATEGORY = "eharchive"
+
+
+def torrent_category(info: Any) -> str:
+    value = getattr(info, "category", None)
+    if value is None:
+        try:
+            value = info["category"]
+        except (KeyError, TypeError):
+            value = ""
+    return str(value or "")
+
+
+def is_managed_torrent(info: Any) -> bool:
+    return torrent_category(info) == QBITTORRENT_CATEGORY
+
 
 class QBittorrentClient:
     """Thin qBittorrent adapter; business state remains in EH Archive."""
@@ -15,15 +31,19 @@ class QBittorrentClient:
         self.client = qbittorrentapi.Client(**options)
         self.client.auth_log_in()
 
-    def add(self, torrent_bytes: bytes, *, save_path: str | Path, category: str) -> str:
+    def add(self, torrent_bytes: bytes, *, save_path: str | Path) -> str:
         self.client.torrents_add(
-            torrent_files=torrent_bytes, save_path=str(save_path), category=category
+            torrent_files=torrent_bytes,
+            save_path=str(save_path),
+            category=QBITTORRENT_CATEGORY,
         )
         # qBittorrent may acknowledge before the hash is visible. Polling is
         # bounded and does not hold a database lease.
         for _ in range(10):
             for torrent in self.client.torrents_info():
-                if _path_key(torrent.save_path) == _path_key(save_path):
+                if _path_key(torrent.save_path) == _path_key(save_path) and is_managed_torrent(
+                    torrent
+                ):
                     return str(torrent.hash)
             import time
 

@@ -21,7 +21,7 @@ from ..services.cleanup import CleanupService
 from ..services.collector.parser import EhTagTranslation, parse_info
 from ..services.downloader.archive import request_direct_download_url
 from ..services.downloader.direct import DirectDownloader
-from ..services.downloader.torrent import TorrentService
+from ..services.downloader.torrent import TorrentService, is_managed_torrent
 from ..services.paths import (
     ArtifactPathService,
     UnsafePathError,
@@ -148,6 +148,18 @@ class TaskExecutor:
         error_code: str,
         error_detail: str,
     ) -> None:
+        current = qbit.info(record.external_download_id)
+        if current is None:
+            missing_hash = record.external_download_id
+            record.external_download_id = None
+            raise ArchiveError(
+                "torrent_missing",
+                f"qBittorrent no longer reports external hash {missing_hash}",
+                ErrorClass.ITEM,
+            )
+        if not is_managed_torrent(current):
+            repository.finish(claim, owner=self.owner)
+            return
         if not repository.begin_external_effect(claim, owner=self.owner):
             raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
         try:
@@ -211,6 +223,9 @@ class TaskExecutor:
                     f"qBittorrent no longer reports external hash {missing_hash}",
                     ErrorClass.ITEM,
                 )
+            if not is_managed_torrent(info):
+                repository.finish(claim, owner=self.owner)
+                return
             if _has_qbit_tag(info, "failed"):
                 self._fallback_torrent(
                     repository,
@@ -347,7 +362,6 @@ class TaskExecutor:
             or str(self.app.root("torrent_download").resolve()),
             cookies=self.secrets.cookies(self.app.browse_session),
             proxies=browse_network.get("proxies"),
-            category="eharchive",
         )
         if not repository.begin_external_effect(claim, owner=self.owner):
             raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)

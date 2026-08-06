@@ -393,6 +393,8 @@ Supervisor 会自动运行 `details`、`torrent_download`、`direct_download`、
 
 qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的 `stalledDL` 超过 `torrent_stall_seconds` 后也会自动删除任务并切换 fallback。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小和 CRC，再为最终 ZIP 计算 LANraragi 所需的 SHA-1。
 
+程序提交的 qBittorrent category 固定为区分大小写的 `eharchive`。只有仍在该类别中的种子由程序托管；手工移到其他类别或清空类别后，即使任务带有 `failed` 标签、发生错误、长期停滞或已经完成，程序也不会处理它，数据库保持 `downloading`。移回 `eharchive` 后自动恢复轮询。cleanup 也不会删除已经移出 `eharchive` 的种子任务。
+
 上传到 LANraragi 前必须有完整 MangaInfo。上传成功必须同时拿到 40 位 SHA-1 archive ID 并通过远端 metadata 确认，之后才会清理本地文件和 qBittorrent/aria2 任务。HTTP 409、结果不确定或 archive ID 无法确认时会进入 `manual_review`，不会猜测上传是否成功。
 
 ### 7.4 手动运行单类任务

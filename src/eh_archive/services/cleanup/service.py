@@ -4,6 +4,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from ..downloader.torrent import is_managed_torrent
+
 
 class CleanupService:
     """Perform only explicitly registered, idempotent cleanup operations."""
@@ -29,6 +31,8 @@ class CleanupService:
         try:
             info = self.qbit.info(torrent_hash)
             if info is None:
+                return True
+            if not is_managed_torrent(info):
                 return True
             self.qbit.delete(torrent_hash, delete_files=delete_files)
             return True

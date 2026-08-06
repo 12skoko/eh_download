@@ -278,7 +278,6 @@ class TorrentService:
         headers: dict[str, str] | None = None,
         cookies: dict[str, str] | None = None,
         proxies: dict[str, str] | None = None,
-        category: str = "eharchive",
     ) -> None:
         self.http = http
         self.qbit = qbit
@@ -286,7 +285,6 @@ class TorrentService:
         # filesystem path. The caller maps completed content separately.
         self.torrent_root = str(torrent_root)
         self.headers, self.cookies, self.proxies = headers or {}, cookies or {}, proxies
-        self.category = category
 
     def submit(
         self,
@@ -329,7 +327,7 @@ class TorrentService:
                 "invalid_torrent", "torrent response is not a bencode dictionary", ErrorClass.ITEM
             )
         save_path = _join_external_path(self.torrent_root, safe_filename(manga_id.split("/", 1)[0]))
-        torrent_hash = self.qbit.add(content, save_path=save_path, category=self.category)
+        torrent_hash = self.qbit.add(content, save_path=save_path)
         return torrent_hash, choice
 
 

@@ -208,6 +208,7 @@ outdated
 - torrent-download 按 priority 和入队时间串行领取档案；对当前档案查找种子、下载并校验 `.torrent` 文件，然后推送 qBittorrent。同一时刻不并行获取或提交多个 `.torrent`。
 - 首次选择种子前必须保证 MangaInfo 完整且 `estimated_size_raw` 可以解析。torrent 页面使用 HTML 结构解析；`Outdated Torrents` 分区及红色时间的种子无条件忽略，仅剩过时种子时 fallback。非过时种子中只要存在视频标记且 remark 不含 `skip video` 就进入 `manual_review`，即使该种子同时带有重采样标记；remark 含 `skip video` 时视频种子按普通种子处理。明确的 `1280x/800x/1920x/2560x` 重采样直接忽略。
 - 小于 `estimated_size_raw` 80% 的候选视为异常；所有候选都过小时进入 `manual_review`。对其余候选使用“同时更大且更新”淘汰旧版本；唯一胜出版本没有 Seeder、或剩余不同大小版本无法比较时进入 `manual_review`。剩余候选大小全部相同时先选 Seeder 最多者，Seeder 相同时选发布时间最新者。
+- qBittorrent 类别固定为精确字符串 `eharchive`，它同时是程序对种子任务的所有权边界。提交和按 save_path 反查 hash 只使用该类别；轮询发现任务类别为空或不是 `eharchive` 时不得检查错误、标签、停滞或完成状态，不读取产物、不 fallback、不删除任务，数据库保持 `downloading`。任务移回 `eharchive` 后恢复轮询。fallback 删除前必须重新确认类别；cleanup 对已移出类别的任务跳过 qBittorrent 删除，但继续清理程序自己的产物并完成业务流程。
 - qBittorrent 返回稳定 hash 且可按 hash 查询到任务后，设置 `download_method=torrent`、保存 `external_download_id` 并进入 `downloading`，随即释放该档案的 attempt 和控制任务处理名额。
 - 已进入 qBittorrent 的后台任务不受 EH Archive 的单实例限制；允许多个档案同时保持 `downloading` 并由 qBittorrent 并行传输，具体数量、排队和限速服从 qBittorrent 自身配置。
 - qBittorrent 完成后进入 `downloaded`。
