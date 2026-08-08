@@ -77,7 +77,6 @@ class SupervisorConfig:
     collect_interval_seconds: float = 3 * 60 * 60
     batch_size: int = 10
     lease_seconds: int = 900
-    lease_recovery_seconds: int = 60
     retry_limit: int = 5
     torrent_stall_seconds: int = 7 * 24 * 60 * 60
     request_timeout_seconds: float = 30.0
@@ -296,7 +295,6 @@ def load_config(
         collect_interval_seconds=float(supervisor_raw.get("collect_interval_seconds", 10800)),
         batch_size=int(supervisor_raw.get("batch_size", 10)),
         lease_seconds=int(supervisor_raw.get("lease_seconds", 900)),
-        lease_recovery_seconds=int(supervisor_raw.get("lease_recovery_seconds", 60)),
         retry_limit=int(supervisor_raw.get("retry_limit", 5)),
         torrent_stall_seconds=int(supervisor_raw.get("torrent_stall_seconds", 7 * 24 * 60 * 60)),
         request_timeout_seconds=float(supervisor_raw.get("request_timeout_seconds", 30)),

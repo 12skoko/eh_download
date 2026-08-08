@@ -11,9 +11,8 @@ from pathlib import Path
 
 from ..config import load_config
 from ..db import ArchiveRepository, Database
-from ..db.models import JobAttempt, MangaRecord, SystemControl
+from ..db.models import SystemControl
 from ..db.repository import utcnow
-from ..domain.states import Status
 from ..logging import configure_logging, get_logger
 from ..services.uploader.thumbnails import ThumbnailBatch
 
@@ -59,7 +58,6 @@ class Supervisor:
     def tick(self) -> None:
         self._heartbeat()
         self._reap_children()
-        self._recover_expired()
         self._complete_cancellations()
         self._maybe_collect()
         self._maybe_thumbnails()
@@ -205,38 +203,9 @@ class Supervisor:
         )
         self.last_thumbnails = now
 
-    def _recover_expired(self) -> None:
-        now = utcnow()
-        with self.database.session() as session:
-            rows = list(session.scalars(select_expired(now)))
-            for manga in rows:
-                if manga.active_attempt_id:
-                    attempt = session.get(JobAttempt, manga.active_attempt_id)
-                    if attempt and attempt.status == "running":
-                        attempt.status, attempt.finished_at = "abandoned", now
-                target = {
-                    Status.DOWNLOADING.value: Status.DOWNLOAD_PENDING.value,
-                    Status.VALIDATING.value: Status.DOWNLOADED.value,
-                    Status.PREPARING.value: Status.DOWNLOADED.value,
-                    Status.UPLOADING.value: Status.UPLOAD_PENDING.value,
-                }.get(manga.status, manga.status)
-                manga.status = target
-                manga.status_updated_at = manga.updated_at = now
-                manga.active_attempt_id = manga.lease_token = manga.lease_owner = (
-                    manga.lease_until
-                ) = None
-                manga.next_retry_at = now
-                manga.row_version += 1
-
     def _complete_cancellations(self) -> None:
         with self.database.session() as session:
             ArchiveRepository(session).complete_cancellations(limit=self.config.batch_size)
-
-
-def select_expired(now):
-    from sqlalchemy import select
-
-    return select(MangaRecord).where(MangaRecord.lease_until < now)
 
 
 def main(argv: list[str] | None = None) -> int:

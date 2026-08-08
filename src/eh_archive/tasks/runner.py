@@ -112,13 +112,17 @@ class TaskExecutor:
             claim = repository.claim_next(
                 operation, owner=self.owner, lease_seconds=self.supervisor.lease_seconds
             )
-            if claim is None:
-                return False
+        if claim is None:
+            return False
+        # Claiming is a short transaction. The committed lease and execution
+        # state must be visible before any network or filesystem work begins.
+        with self.database.session() as session:
+            repository = ArchiveRepository(session)
             try:
                 self._execute(repository, claim)
             except Exception as exc:  # noqa: BLE001 - task boundary must classify all failures
                 self._handle_error(repository, claim, exc)
-            return True
+        return True
 
     def run_batch(self, operation: str, limit: int | None = None) -> int:
         count = 0
@@ -137,6 +141,20 @@ class TaskExecutor:
         record.next_retry_at = utcnow() + timedelta(
             seconds=min(3600, 2 ** min(record.attempt_count, 8))
         )
+
+    def _begin_external_effect(
+        self, repository: ArchiveRepository, claim: ClaimedAttempt
+    ) -> None:
+        if not repository.begin_external_effect(claim, owner=self.owner):
+            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        repository.session.commit()
+
+    def _set_external_id(
+        self, repository: ArchiveRepository, claim: ClaimedAttempt, external_id: str
+    ) -> None:
+        if not repository.set_external_id(claim, external_id, owner=self.owner):
+            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        repository.session.commit()
 
     def _fallback_torrent(
         self,
@@ -160,8 +178,7 @@ class TaskExecutor:
         if not is_managed_torrent(current):
             repository.finish(claim, owner=self.owner)
             return
-        if not repository.begin_external_effect(claim, owner=self.owner):
-            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        self._begin_external_effect(repository, claim)
         try:
             qbit.delete(record.external_download_id, delete_files=True)
         except Exception as exc:
@@ -363,8 +380,7 @@ class TaskExecutor:
             cookies=self.secrets.cookies(self.app.browse_session),
             proxies=browse_network.get("proxies"),
         )
-        if not repository.begin_external_effect(claim, owner=self.owner):
-            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        self._begin_external_effect(repository, claim)
         torrent_hash, _ = service.submit(
             record.manga_id,
             record.torrent_link,
@@ -373,10 +389,9 @@ class TaskExecutor:
             excluded_resolutions=self.crawl.excluded_resolutions,
             video_markers=self.crawl.video_markers,
         )
-        if not repository.set_external_id(claim, torrent_hash, owner=self.owner):
-            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
         record.download_method = "torrent"
         record.external_download_id = torrent_hash
+        self._set_external_id(repository, claim, torrent_hash)
         # qBittorrent owns the long-running transfer. Release this EH Archive
         # control attempt immediately while retaining downloading status.
         repository.finish(claim, owner=self.owner)
@@ -484,6 +499,7 @@ class TaskExecutor:
             role="archive",
         )
         destination = paths.temporary
+        self._begin_external_effect(repository, claim)
         download_url = request_direct_download_url(
             archive_session,
             info.archive_url,
@@ -542,12 +558,10 @@ class TaskExecutor:
                 proxies=self.secrets.network(self.app.archive_session).get("proxies"),
                 role="archive",
             )
-            if not repository.begin_external_effect(claim, owner=self.owner):
-                raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+            self._begin_external_effect(repository, claim)
             adapter.queue(info.archive_url)
             record.download_method, record.external_download_id = "hah", f"hah:{record.manga_id}"
-            if not repository.set_external_id(claim, record.external_download_id, owner=self.owner):
-                raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+            self._set_external_id(repository, claim, record.external_download_id)
             repository.finish(claim, owner=self.owner)
             return
         from ..integrations.aria2 import Aria2Adapter
@@ -572,8 +586,7 @@ class TaskExecutor:
             proxy = proxies.get("https") or proxies.get("http")
             if proxy:
                 aria_options["all-proxy"] = proxy
-        if not repository.begin_external_effect(claim, owner=self.owner):
-            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        self._begin_external_effect(repository, claim)
         gid = adapter.download(
             download_url or info.archive_url,
             directory=str(temporary.parent),
@@ -581,8 +594,7 @@ class TaskExecutor:
             options=aria_options,
         )
         record.download_method, record.external_download_id = "aria2", gid
-        if not repository.set_external_id(claim, gid, owner=self.owner):
-            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        self._set_external_id(repository, claim, gid)
         repository.finish(claim, owner=self.owner)
 
     def _poll_optional_download(
@@ -737,8 +749,7 @@ class TaskExecutor:
             headers=self.secrets.lanraragi,
             timeout=self.supervisor.request_timeout_seconds,
         )
-        if not repository.begin_external_effect(claim, owner=self.owner):
-            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        self._begin_external_effect(repository, claim)
         outcome = client.upload(
             path, info, checksum=record.artifact_sha1, max_size=self.app.max_file_size
         )
@@ -879,8 +890,7 @@ class TaskExecutor:
         if record.download_method == "torrent" and record.external_download_id:
             from ..integrations.qbittorrent import QBittorrentClient
 
-            if not repository.begin_external_effect(claim, owner=self.owner):
-                raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+            self._begin_external_effect(repository, claim)
             options = dict(self.secrets.qbittorrent)
             options.setdefault("host", self.app.qbittorrent_url)
             if not CleanupService(qbit=QBittorrentClient(**options)).remove_torrent(
@@ -895,8 +905,7 @@ class TaskExecutor:
         if record.download_method == "aria2" and record.external_download_id:
             from ..integrations.aria2 import Aria2Adapter
 
-            if not repository.begin_external_effect(claim, owner=self.owner):
-                raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+            self._begin_external_effect(repository, claim)
             adapter = Aria2Adapter(
                 **self.secrets.network(self.app.archive_session).get("aria2", {})
             )
@@ -926,8 +935,7 @@ class TaskExecutor:
                 headers=self.secrets.lanraragi,
                 timeout=self.supervisor.request_timeout_seconds,
             )
-            if not repository.begin_external_effect(claim, owner=self.owner):
-                raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+            self._begin_external_effect(repository, claim)
             outcome = client.delete(record.lrr_archive_id)
             if outcome.kind != "deleted":
                 raise ArchiveError("delete_uncertain", outcome.response, ErrorClass.ITEM)

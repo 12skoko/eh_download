@@ -245,7 +245,7 @@ latest = "https://e-hentai.org/?f_search=..."
 - `poll_seconds`：Supervisor 调度轮询间隔；
 - `collect_interval_seconds`：自动采集周期，默认 3 小时；
 - `batch_size`：每个任务子进程处理的最大条数；
-- `lease_seconds`、`lease_recovery_seconds`：任务租约和过期恢复；
+- `lease_seconds`：任务租约有效期；过期租约不会自动接管，需要人工核对；
 - `retry_limit`：网络或临时失败的重试次数；
 - `[modules]`：控制 Supervisor 是否自动调度各业务模块；
 - `max_concurrency`：各任务槽的并发数，默认每类为 1；
@@ -579,7 +579,7 @@ python scripts/reconcile_migration.py \
 
 - 日志目录由 `app.toml` 的 `log_dir` 指定，也必须是绝对目录；不要把 Cookie、Authorization 或代理密码写入事件备注。
 - 先看 `/health`，再看 `/api/manga/{manga_id}` 的 `attempts` 和 `events`。失败会有 `error_code`、下次重试时间和最后一次操作。
-- 维护前先暂停 `all`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；Supervisor 会终止子进程并在下次启动时恢复过期租约。
+- 维护前先暂停 `all`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；强制终止后应人工核对数据库中的过期租约、产物和外部任务，Supervisor 不会自动接管。
 - `manual_review` 不是自动重试状态：检查 EH 页面、文件、LANraragi metadata 或重复上传后，用 Web action 或人工 archive confirmation 明确恢复。
 - 看到 `qBittorrent no longer reports...` 或 qBittorrent `error`/`missingFiles` 时，先人工检查任务和磁盘；需要切换 fallback 时，在 qBittorrent 管理界面给任务添加精确的 `failed` 标签。如果记录已经进入 `manual_review`，先用 Web 的 retry/resume action 恢复下载流程，程序才会再次读取这个标签。未标记 `failed` 的 `stalledDL` 在超过 `torrent_stall_seconds` 后会自动删除任务并 fallback，未超过阈值时继续等待。
 - LANraragi 返回 401/403 通常是 Authorization 错误；415 会把产物移到 quarantine；409 或不确定的 5xx 结果必须人工核对 archive ID。

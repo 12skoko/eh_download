@@ -586,7 +586,9 @@ class ArchiveRepository:
             select(MangaRecord.manga_id)
             .where(MangaRecord.status.in_(states))
             .where(_retry_ready_clause(operation, now))
-            .where(or_(MangaRecord.lease_until.is_(None), MangaRecord.lease_until < now))
+            # Expired attempts require manual inspection; only unleased rows
+            # are eligible for automatic scheduling.
+            .where(MangaRecord.lease_until.is_(None))
             .limit(1)
         )
         if operation == "details":
@@ -616,7 +618,7 @@ class ArchiveRepository:
             select(MangaRecord)
             .where(MangaRecord.status.in_(states))
             .where(_retry_ready_clause(operation, now))
-            .where(or_(MangaRecord.lease_until.is_(None), MangaRecord.lease_until < now))
+            .where(MangaRecord.lease_until.is_(None))
             .order_by(desc(MangaRecord.priority), MangaRecord.created_at)
             .with_for_update(skip_locked=True)
             .limit(1)

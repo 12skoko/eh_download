@@ -2,7 +2,6 @@ poll_seconds = 5
 collect_interval_seconds = 10800
 batch_size = 10
 lease_seconds = 900
-lease_recovery_seconds = 60
 retry_limit = 5
 torrent_stall_seconds = 604800
 request_timeout_seconds = 30
