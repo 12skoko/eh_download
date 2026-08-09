@@ -9,9 +9,11 @@ from .parser import (
     screen_group_id,
     screen_priority,
 )
-from .service import CollectionResult, Collector
+from .service import CollectedManga, CollectedPage, CollectionResult, Collector
 
 __all__ = [
+    "CollectedManga",
+    "CollectedPage",
     "CollectionResult",
     "Collector",
     "EhTagTranslation",

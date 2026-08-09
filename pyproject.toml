@@ -22,6 +22,7 @@ dependencies = [
   "uvicorn[standard]>=0.29,<1",
   "APScheduler>=3.10,<4",
   "qbittorrent-api>=2024.1",
+  "tzdata>=2025.2",
 ]
 
 [project.optional-dependencies]

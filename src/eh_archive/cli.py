@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import uuid
 from urllib.parse import urlparse
 
 from .config import load_config
@@ -9,7 +11,9 @@ from .db import ArchiveRepository, Database
 from .db.models import EventLog, MangaRecord
 from .db.schema import upgrade
 from .domain.states import Status
-from .logging import configure_logging
+from .logging import configure_logging, get_logger
+
+log = get_logger(__name__)
 
 
 def _gallery_id(value: str) -> str | None:
@@ -77,7 +81,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     app, _, crawl, secrets = load_config(args.config_dir)
-    configure_logging(app.log_level, app.log_dir)
+    session_run_id = str(uuid.uuid4())
+    component = args.command if args.command in {"supervisor", "web"} else "cli"
+    main_log_path = configure_logging(
+        app.log_level,
+        app.log_dir,
+        timezone=app.timezone,
+        component=component,
+        run_id=session_run_id,
+    )
     database = Database(app.database_url)
     if args.command == "db":
         if args.action == "upgrade":
@@ -96,7 +108,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "supervisor":
         from .supervisor.app import Supervisor
 
-        Supervisor(database, config_dir=args.config_dir).run_forever()
+        log.info(
+            "supervisor started: run_id=%s pid=%s log=%s",
+            session_run_id,
+            os.getpid(),
+            main_log_path,
+        )
+        try:
+            Supervisor(
+                database,
+                config_dir=args.config_dir,
+                run_id=session_run_id,
+                main_log_path=main_log_path,
+            ).run_forever()
+        finally:
+            log.info("supervisor stopped: run_id=%s pid=%s", session_run_id, os.getpid())
         return 0
     if args.command == "web":
         import uvicorn

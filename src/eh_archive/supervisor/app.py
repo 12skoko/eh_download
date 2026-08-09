@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import subprocess
 import sys
@@ -13,7 +14,13 @@ from ..config import load_config
 from ..db import ArchiveRepository, Database
 from ..db.models import SystemControl
 from ..db.repository import utcnow
-from ..logging import configure_logging, get_logger
+from ..logging import (
+    MAIN_LOG_ENV,
+    SUPERVISOR_RUN_ID_ENV,
+    configure_logging,
+    get_logger,
+    session_log_path,
+)
 from ..services.uploader.thumbnails import ThumbnailBatch
 
 log = get_logger(__name__)
@@ -38,12 +45,16 @@ class Supervisor:
         *,
         config_dir: str | Path = "config",
         runner_module: str = "eh_archive.tasks.runner",
+        run_id: str | None = None,
+        main_log_path: str | Path | None = None,
     ) -> None:
         self.database = database
         self.config_dir = str(config_dir)
         self.app, self.config, self.crawl, self.secrets = load_config(config_dir)
         self.runner_module = runner_module
-        self.owner = f"supervisor-{uuid.uuid4()}"
+        self.run_id = run_id or str(uuid.uuid4())
+        self.main_log_path = Path(main_log_path).resolve() if main_log_path else None
+        self.owner = f"supervisor-{self.run_id}"
         self.children: dict[str, subprocess.Popen] = {}
         self.stopping = False
         self.last_collect = 0.0
@@ -73,7 +84,8 @@ class Supervisor:
                     continue
             # One bounded child per operation. qBittorrent's own background
             # transfer count is intentionally not controlled here.
-            self.children[operation] = subprocess.Popen(
+            self._start_child(
+                operation,
                 [
                     sys.executable,
                     "-m",
@@ -85,8 +97,6 @@ class Supervisor:
                     "--limit",
                     str(self.config.batch_size),
                 ],
-                stdout=None,
-                stderr=None,
             )
 
     def run_forever(self) -> None:
@@ -149,6 +159,12 @@ class Supervisor:
     def _reap_children(self) -> None:
         for operation, child in list(self.children.items()):
             if child.poll() is not None:
+                log.info(
+                    "submodule exited: operation=%s pid=%s returncode=%s",
+                    operation,
+                    child.pid,
+                    child.returncode,
+                )
                 if child.returncode not in (0, None):
                     with self.database.session() as session:
                         ArchiveRepository(session).set_component(
@@ -159,6 +175,16 @@ class Supervisor:
                         )
                 self.children.pop(operation, None)
 
+    def _start_child(self, operation: str, args: list[str]) -> subprocess.Popen:
+        child_env = os.environ.copy()
+        if self.main_log_path is not None:
+            child_env[MAIN_LOG_ENV] = str(self.main_log_path)
+            child_env[SUPERVISOR_RUN_ID_ENV] = self.run_id
+        child = subprocess.Popen(args, stdout=None, stderr=None, env=child_env)
+        self.children[operation] = child
+        log.info("submodule started: operation=%s pid=%s", operation, child.pid)
+        return child
+
     def _maybe_collect(self) -> None:
         if not self.config.modules["collect"] or self._paused("collect"):
             return
@@ -168,10 +194,9 @@ class Supervisor:
             return
         if now - self.last_collect < self.config.collect_interval_seconds:
             return
-        self.children["collect"] = subprocess.Popen(
+        self._start_child(
+            "collect",
             [sys.executable, "-m", "eh_archive.tasks.collect", "--config-dir", self.config_dir],
-            stdout=None,
-            stderr=None,
         )
         self.last_collect = now
 
@@ -188,7 +213,8 @@ class Supervisor:
             if not ThumbnailBatch.has_work(session, limit=self.config.batch_size):
                 self.last_thumbnails = now
                 return
-        self.children["thumbnail"] = subprocess.Popen(
+        self._start_child(
+            "thumbnail",
             [
                 sys.executable,
                 "-m",
@@ -198,8 +224,6 @@ class Supervisor:
                 "--limit",
                 str(self.config.batch_size),
             ],
-            stdout=None,
-            stderr=None,
         )
         self.last_thumbnails = now
 
@@ -213,8 +237,33 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-dir", default="config")
     args = parser.parse_args(argv)
     app, _, _, _ = load_config(args.config_dir)
-    configure_logging(app.log_level, app.log_dir)
-    Supervisor(Database(app.database_url), config_dir=args.config_dir).run_forever()
+    run_id = str(uuid.uuid4())
+    requested_log_path = session_log_path(
+        app.log_dir, "supervisor", timezone=app.timezone, run_id=run_id
+    )
+    main_log_path = configure_logging(
+        app.log_level,
+        app.log_dir,
+        timezone=app.timezone,
+        component="supervisor",
+        run_id=run_id,
+        log_file=requested_log_path,
+    )
+    log.info(
+        "supervisor started: run_id=%s pid=%s log=%s",
+        run_id,
+        os.getpid(),
+        main_log_path,
+    )
+    try:
+        Supervisor(
+            Database(app.database_url),
+            config_dir=args.config_dir,
+            run_id=run_id,
+            main_log_path=main_log_path,
+        ).run_forever()
+    finally:
+        log.info("supervisor stopped: run_id=%s pid=%s", run_id, os.getpid())
     return 0
 
 

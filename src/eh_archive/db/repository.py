@@ -27,6 +27,17 @@ class ClaimedAttempt:
     artifact_generation: int | None
 
 
+@dataclass(frozen=True)
+class ScreenDecision:
+    screen_group_id: str
+    real_name: str
+    manga_id: str
+    candidate_count: int
+    selected: bool
+    priority: float
+    resulting_status: str
+
+
 OPERATION_STATES: dict[str, tuple[tuple[str, ...], str | None]] = {
     "details": (
         (
@@ -455,7 +466,13 @@ class ArchiveRepository:
             )
         return len(rows)
 
-    def screenall(self, *, limit: int | None = None, actor: str = "screenall") -> int:
+    def screenall(
+        self,
+        *,
+        limit: int | None = None,
+        actor: str = "screenall",
+        decisions: list[ScreenDecision] | None = None,
+    ) -> int:
         """Run the legacy same-title version selection for pending rows.
 
         Rows with ``screen_pending=False`` are deliberately left alone. This
@@ -513,10 +530,10 @@ class ArchiveRepository:
                         detail={"created": False, "reason": "screen_group_assigned"},
                     )
 
+            priorities = [screen_priority(self._screen_manga(row)) for row in similar]
             if len(similar) == 1:
                 selected = {0}
             else:
-                priorities = [screen_priority(self._screen_manga(row)) for row in similar]
                 selected = {index for index, value in enumerate(screen(priorities)) if value}
 
             for index, row in enumerate(similar):
@@ -544,6 +561,18 @@ class ArchiveRepository:
                         "candidate_count": len(similar),
                     },
                 )
+                if decisions is not None:
+                    decisions.append(
+                        ScreenDecision(
+                            screen_group_id=relation,
+                            real_name=group_key,
+                            manga_id=row.manga_id,
+                            candidate_count=len(similar),
+                            selected=index in selected,
+                            priority=priorities[index],
+                            resulting_status=row.status,
+                        )
+                    )
                 processed += 1
         return processed
 

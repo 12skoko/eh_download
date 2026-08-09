@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -524,7 +525,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-dir", default="config")
     args = parser.parse_args(argv)
     app_config, _, _, _ = load_config(args.config_dir)
-    configure_logging(app_config.log_level, app_config.log_dir)
+    configure_logging(
+        app_config.log_level,
+        app_config.log_dir,
+        timezone=app_config.timezone,
+        component="web",
+        run_id=str(uuid.uuid4()),
+    )
     application = create_app(Database(app_config.database_url), config_dir=args.config_dir)
     import uvicorn
 

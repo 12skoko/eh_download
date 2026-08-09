@@ -17,6 +17,16 @@ class ThumbnailBatchResult:
     accepted: int = 0
     failed: int = 0
     skipped: int = 0
+    items: tuple[ThumbnailItem, ...] = ()
+
+
+@dataclass(frozen=True)
+class ThumbnailItem:
+    manga_id: str
+    archive_id: str
+    outcome: str
+    error_code: str | None = None
+    detail: str | None = None
 
 
 class ThumbnailBatch:
@@ -24,10 +34,18 @@ class ThumbnailBatch:
 
     STATUSES = ("uploaded", "completed")
 
-    def __init__(self, session: Session, client: LANraragiClient, *, actor: str = "thumbnail"):
+    def __init__(
+        self,
+        session: Session,
+        client: LANraragiClient,
+        *,
+        actor: str = "thumbnail",
+        run_id: str | None = None,
+    ):
         self.session = session
         self.client = client
         self.actor = actor
+        self.run_id = run_id
 
     @classmethod
     def has_work(cls, session: Session, *, limit: int = 1) -> bool:
@@ -76,9 +94,13 @@ class ThumbnailBatch:
             )
         )
         attempted = accepted = failed = skipped = 0
+        items: list[ThumbnailItem] = []
         for row in rows:
             if not self._needs_refresh(self.session, row):
                 skipped += 1
+                items.append(
+                    ThumbnailItem(str(row.manga_id), str(row.lrr_archive_id or ""), "skipped")
+                )
                 continue
             archive_id = str(row.lrr_archive_id)
             if not re.fullmatch(r"[0-9a-fA-F]{40}", archive_id):
@@ -89,6 +111,9 @@ class ThumbnailBatch:
                     detail={"archive_id": archive_id},
                 )
                 failed += 1
+                items.append(
+                    ThumbnailItem(str(row.manga_id), archive_id, "failed", "invalid_archive_id")
+                )
                 continue
             attempted += 1
             try:
@@ -101,6 +126,15 @@ class ThumbnailBatch:
                     detail={"message": str(exc)[:1000]},
                 )
                 failed += 1
+                items.append(
+                    ThumbnailItem(
+                        str(row.manga_id),
+                        archive_id,
+                        "failed",
+                        type(exc).__name__,
+                        str(exc)[:1000],
+                    )
+                )
                 continue
             if outcome.kind == "accepted":
                 self._event(
@@ -109,6 +143,7 @@ class ThumbnailBatch:
                     detail={"status_code": outcome.status_code},
                 )
                 accepted += 1
+                items.append(ThumbnailItem(str(row.manga_id), archive_id, "regenerated"))
             else:
                 self._event(
                     row,
@@ -121,7 +156,16 @@ class ThumbnailBatch:
                     },
                 )
                 failed += 1
-        return ThumbnailBatchResult(attempted, accepted, failed, skipped)
+                items.append(
+                    ThumbnailItem(
+                        str(row.manga_id),
+                        archive_id,
+                        "failed",
+                        f"lrr_{outcome.status_code or outcome.kind}",
+                        outcome.response[:1000],
+                    )
+                )
+        return ThumbnailBatchResult(attempted, accepted, failed, skipped, tuple(items))
 
     def _event(
         self,
@@ -134,6 +178,7 @@ class ThumbnailBatch:
         self.session.add(
             EventLog(
                 manga_id=row.manga_id,
+                run_id=self.run_id,
                 component="thumbnail",
                 event_type=event_type,
                 operation="thumbnail",

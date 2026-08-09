@@ -6,17 +6,27 @@ import os
 import re
 import shutil
 import time
-from datetime import timedelta
+import uuid
+from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from ..config import load_config
-from ..db import ArchiveRepository, Database, MangaRecord
+from ..db import ArchiveRepository, Database, JobAttempt, MangaRecord
 from ..db.repository import ClaimedAttempt, utcnow
 from ..domain.errors import ArchiveError, ErrorClass, classify_exception
 from ..domain.states import Status
 from ..integrations.http import RoleSession
-from ..logging import configure_logging, get_logger
+from ..logging import (
+    RunReport,
+    clean_report_value,
+    configure_logging,
+    format_report_datetime,
+    format_report_size,
+    get_logger,
+)
 from ..services.cleanup import CleanupService
 from ..services.collector.parser import EhTagTranslation, parse_info
 from ..services.downloader.archive import request_direct_download_url
@@ -84,18 +94,51 @@ def _info(record: Any):
     )
 
 
+@dataclass(frozen=True)
+class TaskRunResult:
+    manga_id: str
+    attempt_id: int
+    operation: str
+    previous_status: str | None
+    resulting_status: str
+    attempt_status: str
+    error_code: str | None
+    error_detail: str | None
+    next_retry_at: datetime | None
+    download_method: str | None
+    external_download_id: str | None
+    artifact_location: str | None
+    artifact_filename: str | None
+    artifact_kind: str | None
+    artifact_size: int | None
+    artifact_sha1: str | None
+    lrr_archive_id: str | None
+    superseded_by_id: str | None
+    name: str
+    category: str
+    pages: int | None
+
+
 class TaskExecutor:
     """Execute one bounded task batch. Each task owns its attempt fencing."""
 
     def __init__(
-        self, database: Database, *, config_dir: str | Path = "config", owner: str | None = None
+        self,
+        database: Database,
+        *,
+        config_dir: str | Path = "config",
+        owner: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         self.database = database
         self.config_dir = Path(config_dir)
         self.app, self.supervisor, self.crawl, self.secrets = load_config(config_dir)
         self.owner = owner or f"task-{os.getpid()}"
+        self.run_id = run_id or str(uuid.uuid4())
         self.paths = ArtifactPathService(self.app)
         self.system_error = False
+        self.results: list[TaskRunResult] = []
+        self.current_claim: ClaimedAttempt | None = None
         self._tag_translation: EhTagTranslation | None = None
         self._http_sessions: dict[str, RoleSession] = {}
 
@@ -108,21 +151,60 @@ class TaskExecutor:
 
     def run_once(self, operation: str) -> bool:
         with self.database.session() as session:
-            repository = ArchiveRepository(session)
+            repository = ArchiveRepository(session, run_id=self.run_id)
             claim = repository.claim_next(
                 operation, owner=self.owner, lease_seconds=self.supervisor.lease_seconds
             )
         if claim is None:
             return False
+        self.current_claim = claim
         # Claiming is a short transaction. The committed lease and execution
         # state must be visible before any network or filesystem work begins.
+        result: TaskRunResult | None = None
         with self.database.session() as session:
-            repository = ArchiveRepository(session)
+            repository = ArchiveRepository(session, run_id=self.run_id)
             try:
                 self._execute(repository, claim)
             except Exception as exc:  # noqa: BLE001 - task boundary must classify all failures
                 self._handle_error(repository, claim, exc)
+            result = self._result_snapshot(repository, claim)
+        if result is not None:
+            self.results.append(result)
+        self.current_claim = None
         return True
+
+    @staticmethod
+    def _result_snapshot(
+        repository: ArchiveRepository, claim: ClaimedAttempt
+    ) -> TaskRunResult | None:
+        record = repository.get(claim.manga_id)
+        attempt = repository.session.get(JobAttempt, claim.attempt_id)
+        if record is None or attempt is None:
+            return None
+        info = record.info
+        return TaskRunResult(
+            manga_id=record.manga_id,
+            attempt_id=claim.attempt_id,
+            operation=claim.operation,
+            previous_status=attempt.previous_status,
+            resulting_status=attempt.resulting_status or record.status,
+            attempt_status=attempt.status,
+            error_code=attempt.error_code,
+            error_detail=record.last_error_detail if attempt.error_code else None,
+            next_retry_at=record.next_retry_at,
+            download_method=record.download_method,
+            external_download_id=record.external_download_id,
+            artifact_location=record.artifact_location,
+            artifact_filename=record.artifact_filename,
+            artifact_kind=record.artifact_kind,
+            artifact_size=record.artifact_size,
+            artifact_sha1=record.artifact_sha1,
+            lrr_archive_id=record.lrr_archive_id,
+            superseded_by_id=record.superseded_by_id,
+            name=info.name if info is not None else record.name,
+            category=info.category if info is not None else record.category,
+            pages=info.pages if info is not None else record.pages,
+        )
 
     def run_batch(self, operation: str, limit: int | None = None) -> int:
         count = 0
@@ -142,9 +224,7 @@ class TaskExecutor:
             seconds=min(3600, 2 ** min(record.attempt_count, 8))
         )
 
-    def _begin_external_effect(
-        self, repository: ArchiveRepository, claim: ClaimedAttempt
-    ) -> None:
+    def _begin_external_effect(self, repository: ArchiveRepository, claim: ClaimedAttempt) -> None:
         if not repository.begin_external_effect(claim, owner=self.owner):
             raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
         repository.session.commit()
@@ -1100,6 +1180,143 @@ class TaskExecutor:
         )
 
 
+def _task_outcome(result: TaskRunResult) -> str:
+    if result.attempt_status == "abandoned":
+        return "abandoned"
+    if result.error_code:
+        if (
+            result.operation == "torrent_download"
+            and result.resulting_status == Status.DOWNLOAD_PENDING.value
+            and result.download_method != "torrent"
+        ):
+            return "fallback"
+        if result.next_retry_at is not None:
+            return "retry"
+        if result.resulting_status == Status.MANUAL_REVIEW.value:
+            return "manual_review"
+        if result.resulting_status == Status.UNAVAILABLE.value:
+            return "unavailable"
+        return "failed"
+    if result.operation == "details":
+        return "updated"
+    if result.operation in {"torrent_download", "direct_download"}:
+        return result.resulting_status
+    return {
+        "validate": "validated",
+        "prepare": "prepared",
+        "upload": "uploaded",
+        "cleanup": "completed",
+        "delete": "deleted",
+    }.get(result.operation, result.resulting_status)
+
+
+def _task_result_line(result: TaskRunResult, *, timezone: str) -> str:
+    outcome = _task_outcome(result)
+    fields = [clean_report_value(result.manga_id), outcome]
+    if result.operation == "details" and not result.error_code:
+        fields.extend(
+            [
+                f"title={clean_report_value(result.name)}",
+                f"category={clean_report_value(result.category)}",
+                f"pages={result.pages if result.pages is not None else 'unknown'}",
+            ]
+        )
+    elif result.operation in {"torrent_download", "direct_download", "validate", "prepare"}:
+        if result.artifact_filename:
+            fields.append(f"file={clean_report_value(result.artifact_filename)}")
+        if result.artifact_kind:
+            fields.append(f"kind={result.artifact_kind}")
+        if result.artifact_size is not None:
+            fields.append(f"size={format_report_size(result.artifact_size)}")
+        if result.artifact_sha1:
+            fields.append(f"sha1={result.artifact_sha1}")
+        if outcome == "downloading" and result.external_download_id:
+            fields.append(f"external_id={clean_report_value(result.external_download_id)}")
+        if outcome == "fallback" and result.download_method:
+            fields.append(f"fallback_method={result.download_method}")
+        if result.operation in {"validate", "prepare"}:
+            fields.append(f"next_status={result.resulting_status}")
+    elif result.operation == "upload":
+        if result.artifact_filename:
+            fields.append(f"file={clean_report_value(result.artifact_filename)}")
+        if result.lrr_archive_id:
+            fields.append(f"archive_id={clean_report_value(result.lrr_archive_id)}")
+    elif result.operation == "cleanup" and result.lrr_archive_id:
+        fields.append(f"archive_id={clean_report_value(result.lrr_archive_id)}")
+    elif result.operation == "delete" and result.superseded_by_id:
+        fields.append(f"replacement={clean_report_value(result.superseded_by_id)}")
+
+    if result.error_code:
+        fields.append(f"error={clean_report_value(result.error_code)}")
+    if result.next_retry_at is not None:
+        fields.append(f"next_retry={format_report_datetime(result.next_retry_at, timezone)}")
+    if result.error_detail:
+        fields.append(f"detail={clean_report_value(result.error_detail)[:500]}")
+    return " | ".join(fields)
+
+
+def _write_task_lines(report: RunReport, operation: str, results: list[TaskRunResult]) -> None:
+    section = {
+        "details": "details",
+        "torrent_download": "torrent downloads",
+        "direct_download": "direct downloads",
+        "validate": "validations",
+        "prepare": "preparations",
+        "upload": "uploads",
+        "cleanup": "cleanups",
+        "delete": "deletions",
+    }.get(operation, operation)
+    report.section(section)
+    total = len(results)
+    for index, result in enumerate(results, 1):
+        report.write(f"[{index}/{total}] {_task_result_line(result, timezone=report.timezone)}")
+
+
+def _finish_task_report(
+    report: RunReport,
+    operation: str,
+    results: list[TaskRunResult],
+    *,
+    system_error: bool,
+) -> None:
+    _write_task_lines(report, operation, results)
+    outcomes = Counter(_task_outcome(result) for result in results)
+    if system_error:
+        status = "failed"
+    elif (
+        outcomes["manual_review"]
+        or outcomes["failed"]
+        or outcomes["unavailable"]
+        or outcomes["abandoned"]
+    ):
+        status = "succeeded_with_errors"
+    elif outcomes["retry"]:
+        status = "succeeded_with_retry"
+    else:
+        status = "succeeded"
+    summary: dict[str, Any] = {"claimed": len(results)}
+    for name in (
+        "updated",
+        "downloading",
+        "downloaded",
+        "validated",
+        "prepared",
+        "uploaded",
+        "completed",
+        "deleted",
+        "fallback",
+        "retry",
+        "manual_review",
+        "unavailable",
+        "abandoned",
+        "failed",
+    ):
+        if outcomes[name]:
+            summary[name] = outcomes[name]
+    summary["status"] = status
+    report.finish(summary)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="eharchive-task")
     parser.add_argument("--operation", required=True)
@@ -1107,9 +1324,37 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args(argv)
     app, _, _, _ = load_config(args.config_dir)
-    configure_logging(app.log_level, app.log_dir)
-    executor = TaskExecutor(Database(app.database_url), config_dir=args.config_dir)
-    executor.run_batch(args.operation, args.limit)
+    run_id = str(uuid.uuid4())
+    configure_logging(
+        app.log_level,
+        app.log_dir,
+        timezone=app.timezone,
+        component=args.operation,
+        run_id=run_id,
+    )
+    executor = TaskExecutor(Database(app.database_url), config_dir=args.config_dir, run_id=run_id)
+    batch_limit = args.limit if args.limit is not None else executor.supervisor.batch_size
+    report = RunReport(app.log_dir, args.operation, timezone=app.timezone, run_id=run_id)
+    report.fields({"batch_limit": batch_limit})
+    try:
+        executor.run_batch(args.operation, args.limit)
+    except Exception as exc:
+        _write_task_lines(report, args.operation, executor.results)
+        current = executor.current_claim
+        report.fatal(
+            exc,
+            current_manga=current.manga_id if current else None,
+            attempt_id=current.attempt_id if current else None,
+            result={"claimed": len(executor.results)},
+        )
+        log.exception("task submodule failed: operation=%s run_id=%s", args.operation, run_id)
+        return 1
+    _finish_task_report(
+        report,
+        args.operation,
+        executor.results,
+        system_error=executor.system_error,
+    )
     return 2 if executor.system_error else 0
 
 

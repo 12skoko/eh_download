@@ -577,7 +577,7 @@ python scripts/reconcile_migration.py \
 
 ## 11. 运维、停止和故障排查
 
-- 日志目录由 `app.toml` 的 `log_dir` 指定，也必须是绝对目录；不要把 Cookie、Authorization 或代理密码写入事件备注。
+- 日志目录由 `app.toml` 的 `log_dir` 指定，也必须是绝对目录。每次 Supervisor 运行会创建 `supervisor/<启动时间>_<run_id>.log`，它包含 Supervisor 及其子进程的公共 JSON 日志；各子模块的简明运行报告位于 `detail/<模块>/<启动时间>_<run_id>.log`。Web、CLI 和手动独立运行的模块使用各自的会话目录。旧的 `eharchive.log` 不再追加；不要把 Cookie、Authorization 或代理密码写入事件备注。
 - 先看 `/health`，再看 `/api/manga/{manga_id}` 的 `attempts` 和 `events`。失败会有 `error_code`、下次重试时间和最后一次操作。
 - 维护前先暂停 `all`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；强制终止后应人工核对数据库中的过期租约、产物和外部任务，Supervisor 不会自动接管。
 - `manual_review` 不是自动重试状态：检查 EH 页面、文件、LANraragi metadata 或重复上传后，用 Web action 或人工 archive confirmation 明确恢复。

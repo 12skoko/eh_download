@@ -2,17 +2,27 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import sys
+import uuid
 from datetime import UTC, datetime
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+MAIN_LOG_ENV = "EHARCHIVE_MAIN_LOG"
+SUPERVISOR_RUN_ID_ENV = "EHARCHIVE_SUPERVISOR_RUN_ID"
 
 
 class JsonFormatter(logging.Formatter):
+    def __init__(self, timezone: str = "UTC") -> None:
+        super().__init__()
+        self.timezone = _load_timezone(timezone)
+
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "time": datetime.now(UTC).isoformat(),
+            "time": datetime.now(self.timezone).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -24,24 +34,59 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
-def configure_logging(level: str = "INFO", log_dir: str | Path | None = None) -> None:
+def _load_timezone(timezone: str):
+    if timezone.upper() == "UTC":
+        return UTC
+    try:
+        return ZoneInfo(timezone)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Unknown timezone: {timezone}") from exc
+
+
+def session_log_path(
+    log_dir: str | Path,
+    component: str,
+    *,
+    timezone: str = "UTC",
+    run_id: str | None = None,
+) -> Path:
+    safe_component = re.sub(r"[^A-Za-z0-9_-]+", "_", component).strip("_") or "application"
+    started_at = datetime.now(_load_timezone(timezone)).strftime("%Y%m%d_%H%M%S")
+    identifier = run_id or str(uuid.uuid4())
+    return Path(log_dir) / safe_component / f"{started_at}_{identifier}.log"
+
+
+def configure_logging(
+    level: str = "INFO",
+    log_dir: str | Path | None = None,
+    *,
+    timezone: str = "UTC",
+    component: str = "application",
+    run_id: str | None = None,
+    log_file: str | Path | None = None,
+) -> Path | None:
+    formatter = JsonFormatter(timezone)
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter())
+    handler.setFormatter(formatter)
     root = logging.getLogger()
+    for existing in root.handlers:
+        existing.close()
     root.handlers.clear()
     root.addHandler(handler)
+    path: Path | None = None
     if log_dir is not None:
-        directory = Path(log_dir)
-        directory.mkdir(parents=True, exist_ok=True)
-        file_handler = RotatingFileHandler(
-            directory / "eharchive.log",
-            maxBytes=50 * 1024 * 1024,
-            backupCount=5,
-            encoding="utf-8",
+        inherited = os.environ.get(MAIN_LOG_ENV)
+        path = (
+            Path(log_file or inherited).resolve()
+            if log_file or inherited
+            else session_log_path(log_dir, component, timezone=timezone, run_id=run_id).resolve()
         )
-        file_handler.setFormatter(JsonFormatter())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(path, encoding="utf-8")
+        file_handler.setFormatter(formatter)
         root.addHandler(file_handler)
     root.setLevel(level.upper())
+    return path
 
 
 def get_logger(name: str) -> logging.Logger:

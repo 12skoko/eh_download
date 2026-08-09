@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlsplit
@@ -24,6 +24,8 @@ class CollectionResult:
     skipped: int = 0
     unavailable: int = 0
     errors: int = 0
+    items: list[CollectedManga] = field(default_factory=list)
+    pages: list[CollectedPage] = field(default_factory=list)
 
     def add(self, other: CollectionResult) -> None:
         self.discovered += other.discovered
@@ -32,6 +34,33 @@ class CollectionResult:
         self.skipped += other.skipped
         self.unavailable += other.unavailable
         self.errors += other.errors
+        self.items.extend(other.items)
+        self.pages.extend(other.pages)
+
+
+@dataclass(frozen=True)
+class CollectedManga:
+    manga_id: str
+    action: str
+    name: str
+    category: str
+    status: str
+    screen_pending: bool
+    remark: str | None
+
+
+@dataclass(frozen=True)
+class CollectedPage:
+    url: str
+    discovered: int
+    created: int
+    updated: int
+    queued: int
+    screen_pending: int
+    deferred: int
+    excluded: int
+    errors: int
+    items: tuple[CollectedManga, ...]
 
 
 class Collector:
@@ -112,7 +141,20 @@ class Collector:
                 manga.screen_pending = False
                 manga.defer_until = None
                 result.queued += 1
-            self.repository.upsert_manga(_record(manga), actor=actor)
+            incoming = _record(manga)
+            stored = self.repository.upsert_manga(incoming, actor=actor)
+            persisted = stored or incoming
+            result.items.append(
+                CollectedManga(
+                    manga_id=persisted.manga_id,
+                    action="created" if stored is None or stored is incoming else "updated",
+                    name=persisted.name,
+                    category=persisted.category,
+                    status=persisted.status,
+                    screen_pending=bool(persisted.screen_pending),
+                    remark=persisted.remark,
+                )
+            )
         return result
 
     def collect_url(
@@ -133,7 +175,25 @@ class Collector:
                 raise RuntimeError(f"collection pagination loop detected: {current_url}")
             seen.add(current_url)
             html = self._get_page(current_url, timeout=timeout)
-            result.add(self.collect_html(html, source=source, actor=actor))
+            page_result = self.collect_html(html, source=source, actor=actor)
+            page_result.pages.append(
+                CollectedPage(
+                    url=current_url,
+                    discovered=page_result.discovered,
+                    created=sum(item.action == "created" for item in page_result.items),
+                    updated=sum(item.action == "updated" for item in page_result.items),
+                    queued=page_result.queued,
+                    screen_pending=sum(item.screen_pending for item in page_result.items),
+                    deferred=page_result.deferred,
+                    excluded=sum(
+                        item.remark in {"excluded_category", "screen_not_eligible"}
+                        for item in page_result.items
+                    ),
+                    errors=page_result.errors,
+                    items=tuple(page_result.items),
+                )
+            )
+            result.add(page_result)
             if not follow_next:
                 break
             next_url = self._next_url(html, current_url)
