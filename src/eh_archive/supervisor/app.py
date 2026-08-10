@@ -59,6 +59,7 @@ class Supervisor:
         self.main_log_path = Path(main_log_path).resolve() if main_log_path else None
         self.owner = f"supervisor-{self.run_id}"
         self.children: dict[str, subprocess.Popen] = {}
+        self.next_start_at: dict[str, float] = {}
         self.stopping = False
         self.draining = False
         self.drain_heartbeat = True
@@ -88,6 +89,8 @@ class Supervisor:
         self._maybe_thumbnails()
         for operation in TASK_OPERATIONS:
             if not self.config.modules[operation] or self._paused(operation):
+                continue
+            if time.monotonic() < self.next_start_at.get(operation, 0.0):
                 continue
             child = self.children.get(operation)
             if child is not None and child.poll() is None:
@@ -200,6 +203,10 @@ class Supervisor:
                     child.returncode,
                 )
                 self.children.pop(operation, None)
+                if operation in TASK_OPERATIONS:
+                    self.next_start_at[operation] = (
+                        time.monotonic() + self.config.module_restart_delay_seconds
+                    )
                 if self.stopping or child.returncode in (0, None):
                     continue
                 if child.returncode == TEMPORARY_CHILD_EXIT_CODE:

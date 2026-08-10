@@ -886,6 +886,17 @@ class ArchiveRepository:
         )
         return True
 
+    def defer(self, claim: ClaimedAttempt, *, owner: str, retry_at: datetime) -> bool:
+        """Finish a normal asynchronous poll without marking it as an error."""
+
+        if not self.finish(claim, owner=owner):
+            return False
+        manga = self.session.get(MangaRecord, claim.manga_id)
+        if manga is None:
+            return False
+        manga.next_retry_at = retry_at
+        return True
+
     def mark_error_retry(
         self, claim: ClaimedAttempt, *, owner: str, error_code: str, detail: str, retry_at: datetime
     ) -> bool:

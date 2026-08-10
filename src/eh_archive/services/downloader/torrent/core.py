@@ -326,8 +326,9 @@ class TorrentService:
             raise ArchiveError(
                 "invalid_torrent", "torrent response is not a bencode dictionary", ErrorClass.ITEM
             )
-        save_path = _join_external_path(self.torrent_root, safe_filename(manga_id.split("/", 1)[0]))
-        torrent_hash = self.qbit.add(content, save_path=save_path)
+        idnum = safe_filename(manga_id.split("/", 1)[0])
+        save_path = _join_external_path(self.torrent_root, idnum)
+        torrent_hash = self.qbit.add(content, save_path=save_path, display_name=idnum)
         return torrent_hash, choice
 
 

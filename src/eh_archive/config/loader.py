@@ -79,6 +79,8 @@ class SupervisorConfig:
     lease_seconds: int = 900
     retry_limit: int = 5
     torrent_stall_seconds: int = 7 * 24 * 60 * 60
+    torrent_poll_seconds: float = 60.0
+    module_restart_delay_seconds: float = 5.0
     request_timeout_seconds: float = 30.0
     shutdown_grace_seconds: float = 30.0
     thumbnail_interval_seconds: float = 900.0
@@ -297,6 +299,8 @@ def load_config(
         lease_seconds=int(supervisor_raw.get("lease_seconds", 900)),
         retry_limit=int(supervisor_raw.get("retry_limit", 5)),
         torrent_stall_seconds=int(supervisor_raw.get("torrent_stall_seconds", 7 * 24 * 60 * 60)),
+        torrent_poll_seconds=float(supervisor_raw.get("torrent_poll_seconds", 60.0)),
+        module_restart_delay_seconds=float(supervisor_raw.get("module_restart_delay_seconds", 5.0)),
         request_timeout_seconds=float(supervisor_raw.get("request_timeout_seconds", 30)),
         shutdown_grace_seconds=float(supervisor_raw.get("shutdown_grace_seconds", 30)),
         thumbnail_interval_seconds=float(supervisor_raw.get("thumbnail_interval_seconds", 900)),
@@ -306,6 +310,10 @@ def load_config(
             **{str(k): int(v) for k, v in limits.items()},
         },
     )
+    if supervisor.torrent_poll_seconds < 0:
+        raise ValueError("torrent_poll_seconds must not be negative")
+    if supervisor.module_restart_delay_seconds < 0:
+        raise ValueError("module_restart_delay_seconds must not be negative")
     crawl = CrawlConfig(
         urls={str(k): str(v) for k, v in dict(crawl_raw.get("urls", {})).items()},
         collect_tags=_string_tuple(crawl_raw.get("collect_tags", []), "collect_tags"),

@@ -329,7 +329,7 @@ class TaskExecutor:
                     ErrorClass.ITEM,
                 )
             if not is_managed_torrent(info):
-                repository.finish(claim, owner=self.owner)
+                self._defer_torrent_poll(repository, claim)
                 return
             if _has_qbit_tag(info, "failed"):
                 self._fallback_torrent(
@@ -388,7 +388,7 @@ class TaskExecutor:
                 }
             )
             if not complete:
-                repository.finish(claim, owner=self.owner)
+                self._defer_torrent_poll(repository, claim)
                 return
             raw_external = str(getattr(info, "content_path", "") or "")
             root = self.app.root("torrent_download").resolve()
@@ -481,8 +481,13 @@ class TaskExecutor:
         record.external_download_id = torrent_hash
         self._set_external_id(repository, claim, torrent_hash)
         # qBittorrent owns the long-running transfer. Release this EH Archive
-        # control attempt immediately while retaining downloading status.
-        repository.finish(claim, owner=self.owner)
+        # control attempt immediately while retaining downloading status. The
+        # next poll is deliberately delayed so this batch cannot reclaim it.
+        self._defer_torrent_poll(repository, claim)
+
+    def _defer_torrent_poll(self, repository: ArchiveRepository, claim: ClaimedAttempt) -> None:
+        retry_at = utcnow() + timedelta(seconds=self.supervisor.torrent_poll_seconds)
+        repository.defer(claim, owner=self.owner, retry_at=retry_at)
 
     def _details(self, record: MangaRecord, *, role: str = "archive") -> Any:
         http = self._http_session(role)

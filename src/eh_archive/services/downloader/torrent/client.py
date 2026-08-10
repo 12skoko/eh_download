@@ -57,12 +57,19 @@ class QBittorrentClient:
                 ErrorClass.SYSTEM,
             ) from exc
 
-    def add(self, torrent_bytes: bytes, *, save_path: str | Path) -> str:
+    def add(
+        self, torrent_bytes: bytes, *, save_path: str | Path, display_name: str | None = None
+    ) -> str:
+        options: dict[str, Any] = {
+            "torrent_files": torrent_bytes,
+            "save_path": str(save_path),
+            "category": QBITTORRENT_CATEGORY,
+        }
+        if display_name is not None:
+            options["rename"] = display_name
         self._call(
             "torrents_add",
-            torrent_files=torrent_bytes,
-            save_path=str(save_path),
-            category=QBITTORRENT_CATEGORY,
+            **options,
         )
         # qBittorrent may acknowledge before the hash is visible. Polling is
         # bounded and does not hold a database lease.
