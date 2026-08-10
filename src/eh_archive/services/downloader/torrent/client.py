@@ -82,7 +82,12 @@ class QBittorrentClient:
             import time
 
             time.sleep(0.5)
-        raise RuntimeError("qBittorrent accepted torrent but returned no stable hash")
+        raise ArchiveError(
+            "torrent_hash_not_found",
+            "qBittorrent did not report the submitted torrent hash",
+            ErrorClass.TEMPORARY,
+            retryable=True,
+        )
 
     def info(self, torrent_hash: str) -> Any | None:
         values = self._call("torrents_info", torrent_hashes=torrent_hash)
