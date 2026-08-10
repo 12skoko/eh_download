@@ -92,16 +92,6 @@ def _field_text(form: Any, name: str) -> tuple[str, Any]:
 
 
 def _download_url(anchor: Any) -> str:
-    onclick = str(anchor.get("onclick", ""))
-    assignment = "document.location="
-    start = onclick.find(assignment)
-    if start >= 0:
-        value = onclick[start + len(assignment) :].lstrip()
-        if value and value[0] in {"'", '"'}:
-            quote = value[0]
-            end = value.find(quote, 1)
-            if end > 1:
-                return value[1:end]
     return str(anchor.get("href", "")).strip()
 
 
@@ -116,12 +106,7 @@ def _parse_torrent_form(form: Any, page_order: int) -> tuple[TorrentChoice | Non
     size_raw, _ = _field_text(form, "Size")
     seeds_raw, _ = _field_text(form, "Seeds")
     anchor = next(
-        (
-            item
-            for item in form.find_all("a", href=True)
-            if ".torrent" in str(item.get("href", ""))
-            or "document.location=" in str(item.get("onclick", ""))
-        ),
+        (item for item in form.find_all("a", href=True) if ".torrent" in str(item.get("href", ""))),
         None,
     )
     if anchor is None:
