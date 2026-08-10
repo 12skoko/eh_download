@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ...domain.errors import ArchiveError, ErrorClass
+from ...domain.errors import ArchiveError, ErrorClass, classify_exception
 
 
 @dataclass(frozen=True)
@@ -106,9 +106,20 @@ class DirectDownloader:
                         ErrorClass.TEMPORARY,
                         retryable=True,
                     )
+                if status in {401, 403}:
+                    raise ArchiveError(
+                        "eh_authentication_failed",
+                        f"archive download returned HTTP {status}",
+                        ErrorClass.SYSTEM,
+                    )
                 if status == 416 and existing:
                     part.unlink(missing_ok=True)
-                    raise OSError("server rejected the resume range")
+                    raise ArchiveError(
+                        "download_resume_rejected",
+                        "server rejected the resume range",
+                        ErrorClass.TEMPORARY,
+                        retryable=True,
+                    )
                 response.raise_for_status()
                 resumed = existing > 0 and status == 206
                 if existing and not resumed:
@@ -141,8 +152,11 @@ class DirectDownloader:
                     handle.flush()
                     os.fsync(handle.fileno())
                 if expected_total is not None and written != expected_total:
-                    raise OSError(
-                        f"download size mismatch: expected {expected_total}, got {written}"
+                    raise ArchiveError(
+                        "download_size_mismatch",
+                        f"download size mismatch: expected {expected_total}, got {written}",
+                        ErrorClass.TEMPORARY,
+                        retryable=True,
                     )
                 os.replace(part, destination)
                 return DownloadResult(destination, written, resumed, attempt)
@@ -151,7 +165,10 @@ class DirectDownloader:
                     raise
                 last_error = exc
                 time.sleep(self.backoff ** (attempt - 1) + random.random() * self.jitter)
-            except Exception as exc:  # noqa: BLE001 - adapters expose different request exception classes
+            except Exception as exc:
+                info = classify_exception(exc)
+                if info.category == ErrorClass.SYSTEM:
+                    raise ArchiveError(info.code, info.message, ErrorClass.SYSTEM) from exc
                 last_error = exc
                 if attempt >= self.retries:
                     break

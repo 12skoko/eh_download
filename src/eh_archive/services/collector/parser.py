@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar
 
+from ...domain.errors import ArchiveError, ErrorClass
 from ...domain.models import Manga, MangaInfo
 
 
@@ -148,6 +149,20 @@ def parse_metadata(tr_soup: Any) -> Manga:
 def parse_info(
     soup: Any, tag_translation: EhTagTranslation | None = None
 ) -> tuple[MangaInfo, str, str | None]:
+    title = soup.select_one("#gj") or soup.select_one("#gn")
+    if (
+        title is None
+        or soup.select_one("#gdc") is None
+        or soup.select_one("#gdn") is None
+        or len(soup.select("td.gdt2")) < 6
+        or soup.select_one("#taglist") is None
+    ):
+        raise ArchiveError(
+            "details_page_structure_invalid",
+            "gallery details page is missing required EH elements",
+            ErrorClass.SYSTEM,
+        )
+
     def text(selector: str, default: str = "") -> str:
         node = soup.select_one(selector)
         return node.get_text(" ", strip=True) if node else default

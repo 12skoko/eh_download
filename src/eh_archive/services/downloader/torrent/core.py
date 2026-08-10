@@ -77,7 +77,7 @@ def _field_text(form: Any, name: str) -> tuple[str, Any]:
         raise ArchiveError(
             "torrent_list_parse_error",
             f"torrent row is missing {name}",
-            ErrorClass.ITEM,
+            ErrorClass.SYSTEM,
         )
     label = marker.get_text(" ", strip=True)
     text = cell.get_text(" ", strip=True)
@@ -86,7 +86,7 @@ def _field_text(form: Any, name: str) -> tuple[str, Any]:
         raise ArchiveError(
             "torrent_list_parse_error",
             f"torrent row has an empty {name}",
-            ErrorClass.ITEM,
+            ErrorClass.SYSTEM,
         )
     return value, cell
 
@@ -128,7 +128,7 @@ def _parse_torrent_form(form: Any, page_order: int) -> tuple[TorrentChoice | Non
         raise ArchiveError(
             "torrent_list_parse_error",
             "torrent row has no download link",
-            ErrorClass.ITEM,
+            ErrorClass.SYSTEM,
         )
     url = _download_url(anchor)
     label = anchor.get_text(" ", strip=True)
@@ -139,13 +139,13 @@ def _parse_torrent_form(form: Any, page_order: int) -> tuple[TorrentChoice | Non
         raise ArchiveError(
             "torrent_list_parse_error",
             f"torrent row has invalid time or seed count: {posted_raw!r}, {seeds_raw!r}",
-            ErrorClass.ITEM,
+            ErrorClass.SYSTEM,
         ) from exc
     if not url or not label or seeds < 0:
         raise ArchiveError(
             "torrent_list_parse_error",
             "torrent row has an invalid URL, title, or seed count",
-            ErrorClass.ITEM,
+            ErrorClass.SYSTEM,
         )
     return (
         TorrentChoice(
@@ -192,7 +192,7 @@ def select_torrent(
             raise ArchiveError(
                 "torrent_list_parse_error",
                 "active torrent row could not be parsed",
-                ErrorClass.ITEM,
+                ErrorClass.SYSTEM,
             )
         active.append(choice)
     if not active:
@@ -205,7 +205,7 @@ def select_torrent(
         raise ArchiveError(
             "torrent_list_parse_error",
             "torrent page contains no recognizable active torrent rows",
-            ErrorClass.ITEM,
+            ErrorClass.SYSTEM,
         )
 
     if not skip_video:

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ..config import load_config
 from ..db import Database
+from ..domain.errors import ErrorClass, classify_exception
 from ..logging import (
     RunReport,
     clean_report_value,
@@ -62,9 +63,9 @@ def run(config_dir: str | Path = "config", *, limit: int = 100, run_id: str | No
     except Exception as exc:
         report.fatal(exc)
         log.exception("thumbnail submodule failed: run_id=%s", run_id)
-        return 1
+        return 2 if classify_exception(exc).category == ErrorClass.SYSTEM else 1
     _write_report(report, result)
-    return 0
+    return 2 if report.write_failed else 0
 
 
 def main(argv: list[str] | None = None) -> int:

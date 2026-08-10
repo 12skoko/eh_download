@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 
 from ...config.loader import AppConfig, CrawlConfig, SecretsConfig
 from ...db.repository import ArchiveRepository
+from ...domain.errors import ArchiveError, ErrorClass
 from ...domain.models import Manga
 from ...domain.states import QueueSource, Status
 from ...integrations.http import RoleSession
@@ -90,7 +91,11 @@ class Collector:
         soup = BeautifulSoup(html, "lxml")
         table = soup.find("table", class_="itg glte")
         if table is None:
-            raise ValueError("collection page has no gallery table")
+            raise ArchiveError(
+                "collection_page_structure_invalid",
+                "collection page has no EH gallery table",
+                ErrorClass.SYSTEM,
+            )
         result = CollectionResult()
         for row in table.find_all("tr", recursive=False):
             try:
@@ -154,6 +159,12 @@ class Collector:
                     screen_pending=bool(persisted.screen_pending),
                     remark=persisted.remark,
                 )
+            )
+        if result.errors and result.discovered == 0:
+            raise ArchiveError(
+                "collection_page_structure_invalid",
+                "all gallery rows failed EH metadata parsing",
+                ErrorClass.SYSTEM,
             )
         return result
 

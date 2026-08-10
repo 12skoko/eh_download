@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from ...domain.errors import ArchiveError, ErrorClass
 from ..downloader.torrent import is_managed_torrent
 
 
@@ -36,6 +37,10 @@ class CleanupService:
                 return True
             self.qbit.delete(torrent_hash, delete_files=delete_files)
             return True
+        except ArchiveError as exc:
+            if exc.info.category == ErrorClass.SYSTEM:
+                raise
+            return False
         except Exception:  # noqa: BLE001 - qBittorrent adapters use their own exception hierarchy
             return False
 

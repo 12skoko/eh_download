@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...db.models import EventLog, MangaRecord
+from ...domain.errors import ArchiveError, ErrorClass, classify_exception
 from .lanraragi import LANraragiClient
 
 
@@ -118,7 +119,9 @@ class ThumbnailBatch:
             attempted += 1
             try:
                 outcome = self.client.regenerate_thumbnails(archive_id)
-            except Exception as exc:  # noqa: BLE001 - batch must continue per archive
+            except Exception as exc:
+                if classify_exception(exc).category == ErrorClass.SYSTEM:
+                    raise
                 self._event(
                     row,
                     "thumbnail_error",
@@ -136,6 +139,12 @@ class ThumbnailBatch:
                     )
                 )
                 continue
+            if outcome.kind == "system":
+                raise ArchiveError(
+                    "lanraragi_authentication_failed",
+                    f"LANraragi rejected thumbnail authentication with HTTP {outcome.status_code}",
+                    ErrorClass.SYSTEM,
+                )
             if outcome.kind == "accepted":
                 self._event(
                     row,

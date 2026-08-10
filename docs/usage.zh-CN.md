@@ -580,6 +580,7 @@ python scripts/reconcile_migration.py \
 - 日志目录由 `app.toml` 的 `log_dir` 指定，也必须是绝对目录。每次 Supervisor 运行会创建 `supervisor/<启动时间>_<run_id>.log`，它包含 Supervisor 及其子进程的公共 JSON 日志；各子模块的简明运行报告位于 `detail/<模块>/<启动时间>_<run_id>.log`。Web、CLI 和手动独立运行的模块使用各自的会话目录。旧的 `eharchive.log` 不再追加；不要把 Cookie、Authorization 或代理密码写入事件备注。
 - 先看 `/health`，再看 `/api/manga/{manga_id}` 的 `attempts` 和 `events`。失败会有 `error_code`、下次重试时间和最后一次操作。
 - 维护前先暂停 `all`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；强制终止后应人工核对数据库中的过期租约、产物和外部任务，Supervisor 不会自动接管。
+- 子模块遇到严重公共故障时会返回严重错误：E 站 Cookie 失效、代理不可达、关键页面结构失效、qBittorrent/LANraragi 不可达或认证失败、工作目录无法读写、磁盘已满以及数据库失联。Supervisor 会暂停出错模块并进入排空状态，不再启动任何新子模块；已经运行的其他子模块自然结束后，Supervisor 释放自己的租约并以非零状态退出。单条漫画失败、种子失败后回退 direct、E 站单次超时/SSL 中断及 HTTP 429/5xx 仍按条目错误或临时错误处理，不触发排空停机。若使用 systemd、Docker 等自动重启策略，需要避免在非零退出后立即重启，否则未暂停的模块会在新 Supervisor 中继续运行。
 - `manual_review` 不是自动重试状态：检查 EH 页面、文件、LANraragi metadata 或重复上传后，用 Web action 或人工 archive confirmation 明确恢复。
 - 看到 `qBittorrent no longer reports...` 或 qBittorrent `error`/`missingFiles` 时，先人工检查任务和磁盘；需要切换 fallback 时，在 qBittorrent 管理界面给任务添加精确的 `failed` 标签。如果记录已经进入 `manual_review`，先用 Web 的 retry/resume action 恢复下载流程，程序才会再次读取这个标签。未标记 `failed` 的 `stalledDL` 在超过 `torrent_stall_seconds` 后会自动删除任务并 fallback，未超过阈值时继续等待。
 - LANraragi 返回 401/403 通常是 Authorization 错误；415 会把产物移到 quarantine；409 或不确定的 5xx 结果必须人工核对 archive ID。

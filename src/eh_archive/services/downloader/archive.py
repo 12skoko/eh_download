@@ -39,7 +39,7 @@ def determine_download_method(html: str) -> DownloadMethod:
         raise ArchiveError(
             "download_options_missing",
             "archive page lacks Original download options",
-            ErrorClass.ITEM,
+            ErrorClass.SYSTEM,
         )
     direct_cost = _cost(direct_node.get_text(), free_word="Free!")
     hah_cost = _cost(hah_node.get_text(), free_word="Free")
@@ -68,14 +68,14 @@ def extract_direct_download_url(html: str, *, base_url: str) -> str:
         raise ArchiveError(
             "direct_link_missing",
             "archive response has no direct download link",
-            ErrorClass.ITEM,
+            ErrorClass.SYSTEM,
         )
     href = str(node.get("href", "")).strip()
     if not href:
         raise ArchiveError(
             "direct_link_missing",
             "archive response has an empty direct download link",
-            ErrorClass.ITEM,
+            ErrorClass.SYSTEM,
         )
     link = urljoin(base_url, href)
     if re.search(r"(?:[?&])start=", link):

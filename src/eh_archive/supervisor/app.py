@@ -14,6 +14,7 @@ from ..config import load_config
 from ..db import ArchiveRepository, Database
 from ..db.models import SystemControl
 from ..db.repository import utcnow
+from ..domain.errors import ErrorClass, classify_exception
 from ..logging import (
     MAIN_LOG_ENV,
     SUPERVISOR_RUN_ID_ENV,
@@ -36,6 +37,8 @@ TASK_OPERATIONS = (
     "cleanup",
     "delete",
 )
+SEVERE_CHILD_EXIT_CODES = {1, 2}
+TEMPORARY_CHILD_EXIT_CODE = 3
 
 
 class Supervisor:
@@ -57,6 +60,10 @@ class Supervisor:
         self.owner = f"supervisor-{self.run_id}"
         self.children: dict[str, subprocess.Popen] = {}
         self.stopping = False
+        self.draining = False
+        self.drain_heartbeat = True
+        self.exit_code = 0
+        self.failed_operations: set[str] = set()
         self.last_collect = 0.0
         self.last_thumbnails = 0.0
         disabled = [name for name, enabled in self.config.modules.items() if not enabled]
@@ -67,8 +74,15 @@ class Supervisor:
         self.stopping = True
 
     def tick(self) -> None:
+        if self.draining:
+            self._reap_children()
+            if self.drain_heartbeat:
+                self._heartbeat()
+            return
         self._heartbeat()
         self._reap_children()
+        if self.draining:
+            return
         self._complete_cancellations()
         self._maybe_collect()
         self._maybe_thumbnails()
@@ -99,28 +113,48 @@ class Supervisor:
                 ],
             )
 
-    def run_forever(self) -> None:
+    def run_forever(self) -> int:
+        signal.signal(signal.SIGINT, self.stop)
         signal.signal(signal.SIGTERM, self.stop)
         if hasattr(signal, "SIGBREAK"):
             signal.signal(signal.SIGBREAK, self.stop)
-        while not self.stopping:
-            try:
-                self.tick()
-            except RuntimeError as exc:
-                log.error("supervisor lease unavailable: %s", exc)
-                self.stopping = True
-            except Exception:
-                log.exception("supervisor tick failed")
-                time.sleep(min(self.config.poll_seconds * 2, 60))
-            else:
+        try:
+            while not self.stopping:
+                try:
+                    self.tick()
+                except Exception as exc:
+                    info = classify_exception(exc)
+                    log.exception(
+                        "supervisor tick failed; entering drain: code=%s category=%s",
+                        info.code,
+                        info.category.value,
+                    )
+                    self._enter_draining(
+                        None,
+                        2 if info.category == ErrorClass.SYSTEM else 1,
+                        f"{info.code}: {info.message}",
+                        maintain_heartbeat=False,
+                    )
+                if self.draining and not self.children:
+                    break
                 time.sleep(self.config.poll_seconds)
-        deadline = time.monotonic() + self.config.shutdown_grace_seconds
-        for child in self.children.values():
-            if child.poll() is None:
-                child.terminate()
-        while self.children and time.monotonic() < deadline:
-            self._reap_children()
-            time.sleep(0.1)
+        finally:
+            if self.stopping:
+                deadline = time.monotonic() + self.config.shutdown_grace_seconds
+                for child in self.children.values():
+                    if child.poll() is None:
+                        child.terminate()
+                while self.children and time.monotonic() < deadline:
+                    self._reap_children()
+                    time.sleep(0.1)
+            self._release_lease()
+        if self.draining:
+            log.critical(
+                "supervisor drained and exiting: failed_operations=%s exit_code=%s",
+                ",".join(sorted(self.failed_operations)) or "supervisor",
+                self.exit_code,
+            )
+        return self.exit_code
 
     def _paused(self, component: str) -> bool:
         with self.database.session() as session:
@@ -165,15 +199,85 @@ class Supervisor:
                     child.pid,
                     child.returncode,
                 )
-                if child.returncode not in (0, None):
-                    with self.database.session() as session:
-                        ArchiveRepository(session).set_component(
-                            operation,
-                            "paused",
-                            actor=self.owner,
-                            reason=f"task exited with code {child.returncode}",
-                        )
                 self.children.pop(operation, None)
+                if self.stopping or child.returncode in (0, None):
+                    continue
+                if child.returncode == TEMPORARY_CHILD_EXIT_CODE:
+                    log.warning(
+                        "submodule ended with a temporary error: operation=%s pid=%s",
+                        operation,
+                        child.pid,
+                    )
+                    continue
+                if child.returncode not in SEVERE_CHILD_EXIT_CODES:
+                    log.error(
+                        "submodule returned an unknown fatal code: operation=%s returncode=%s",
+                        operation,
+                        child.returncode,
+                    )
+                self._enter_draining(
+                    operation,
+                    int(child.returncode),
+                    f"task exited with severe code {child.returncode}",
+                )
+
+    def _enter_draining(
+        self,
+        operation: str | None,
+        returncode: int,
+        reason: str,
+        *,
+        maintain_heartbeat: bool = True,
+    ) -> None:
+        first_failure = not self.draining
+        self.draining = True
+        self.drain_heartbeat = self.drain_heartbeat and maintain_heartbeat
+        self.exit_code = 2 if returncode == 2 or self.exit_code == 2 else 1
+        if operation is not None:
+            self.failed_operations.add(operation)
+            try:
+                with self.database.session() as session:
+                    ArchiveRepository(session).set_component(
+                        operation,
+                        "paused",
+                        actor=self.owner,
+                        reason=reason,
+                    )
+            except Exception:
+                self.drain_heartbeat = False
+                log.exception(
+                    "failed to persist submodule pause: operation=%s reason=%s",
+                    operation,
+                    reason,
+                )
+        if first_failure:
+            log.critical(
+                "supervisor draining; no new submodules will start: "
+                "failed_operation=%s reason=%s running_children=%s",
+                operation or "supervisor",
+                reason,
+                ",".join(sorted(self.children)) or "none",
+            )
+
+    def _release_lease(self) -> None:
+        from sqlalchemy import select
+
+        try:
+            with self.database.session() as session:
+                control = session.scalar(
+                    select(SystemControl)
+                    .where(SystemControl.component == "supervisor")
+                    .with_for_update()
+                )
+                if control is None or control.lease_owner != self.owner:
+                    return
+                control.lease_owner = None
+                control.lease_until = None
+                control.heartbeat_at = utcnow()
+                control.updated_by = self.owner
+                control.row_version += 1
+        except Exception:
+            log.exception("failed to release supervisor lease: owner=%s", self.owner)
 
     def _start_child(self, operation: str, args: list[str]) -> subprocess.Popen:
         child_env = os.environ.copy()
@@ -256,7 +360,7 @@ def main(argv: list[str] | None = None) -> int:
         main_log_path,
     )
     try:
-        Supervisor(
+        exit_code = Supervisor(
             Database(app.database_url),
             config_dir=args.config_dir,
             run_id=run_id,
@@ -264,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
         ).run_forever()
     finally:
         log.info("supervisor stopped: run_id=%s pid=%s", run_id, os.getpid())
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

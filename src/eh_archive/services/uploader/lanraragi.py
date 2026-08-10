@@ -59,6 +59,21 @@ class LANraragiClient:
             self.session = requests.Session()
         return self.session
 
+    def _request(self, method: str, url: str, **kwargs: Any) -> Any:
+        try:
+            return getattr(self._session(), method)(url, **kwargs)
+        except Exception as exc:
+            name = type(exc).__name__.lower()
+            if isinstance(exc, OSError) or any(
+                term in name for term in ("connection", "timeout", "refused", "reset")
+            ):
+                raise ArchiveError(
+                    "lanraragi_unavailable",
+                    f"LANraragi is unavailable: {exc}",
+                    ErrorClass.SYSTEM,
+                ) from exc
+            raise
+
     def upload(
         self, path: str | Path, info: MangaInfo, *, checksum: str, max_size: int | None = None
     ) -> UploadOutcome:
@@ -71,27 +86,23 @@ class LANraragiClient:
         data = {"title": info.name, "tags": build_tags(info), "file_checksum": checksum}
         try:
             from requests_toolbelt.multipart.encoder import MultipartEncoder
-
-            with path.open("rb") as handle:
-                fields = {**data, "file": (path.name, handle, "application/zip")}
-                encoder = MultipartEncoder(fields=fields)
-                headers = {**self.headers, "Content-Type": encoder.content_type}
-                response = self._session().put(
-                    f"{self.base_url}/api/archives/upload",
-                    data=encoder,
-                    headers=headers,
-                    timeout=self.timeout,
-                )
         except ImportError as exc:
             raise ArchiveError(
                 "upload_dependency_missing",
                 "requests-toolbelt is required for streaming uploads",
                 ErrorClass.SYSTEM,
             ) from exc
-        except Exception as exc:
-            raise ArchiveError(
-                "upload_unknown", str(exc), ErrorClass.TEMPORARY, retryable=False
-            ) from exc
+        with path.open("rb") as handle:
+            fields = {**data, "file": (path.name, handle, "application/zip")}
+            encoder = MultipartEncoder(fields=fields)
+            headers = {**self.headers, "Content-Type": encoder.content_type}
+            response = self._request(
+                "put",
+                f"{self.base_url}/api/archives/upload",
+                data=encoder,
+                headers=headers,
+                timeout=self.timeout,
+            )
         body = response.text[:4000]
         status = int(response.status_code)
         if status == 200:
@@ -125,6 +136,13 @@ class LANraragiClient:
                     f"upload accepted but metadata confirmation failed: {exc}",
                 )
             if metadata_status != 200:
+                if metadata_status in {401, 403}:
+                    return UploadOutcome(
+                        "system",
+                        archive_id,
+                        metadata_status,
+                        "upload accepted but metadata authentication was rejected",
+                    )
                 return UploadOutcome(
                     "unknown",
                     archive_id,
@@ -149,7 +167,8 @@ class LANraragiClient:
         return UploadOutcome("unknown", status_code=status, response=body)
 
     def metadata(self, archive_id: str) -> tuple[int, dict[str, Any] | None]:
-        response = self._session().get(
+        response = self._request(
+            "get",
             f"{self.base_url}/api/archives/{archive_id}/metadata",
             headers=self.headers,
             timeout=self.timeout,
@@ -163,17 +182,30 @@ class LANraragiClient:
     def exists_by_sha1(self, checksum: str) -> bool | None:
         try:
             status, _payload = self.metadata(checksum)
+        except ArchiveError as exc:
+            if exc.info.category == ErrorClass.SYSTEM:
+                raise
+            return None
         except Exception:  # noqa: BLE001 - an unknown result must never trigger a blind retry
             return None
         if status == 200:
             return True
         if status == 400 or status == 404:
             return False
+        if status in {401, 403}:
+            raise ArchiveError(
+                "lanraragi_authentication_failed",
+                f"LANraragi rejected metadata authentication with HTTP {status}",
+                ErrorClass.SYSTEM,
+            )
         return None
 
     def delete(self, archive_id: str) -> UploadOutcome:
-        response = self._session().delete(
-            f"{self.base_url}/api/archives/{archive_id}", headers=self.headers, timeout=self.timeout
+        response = self._request(
+            "delete",
+            f"{self.base_url}/api/archives/{archive_id}",
+            headers=self.headers,
+            timeout=self.timeout,
         )
         if response.status_code in {200, 204}:
             try:
@@ -198,12 +230,17 @@ class LANraragiClient:
             return UploadOutcome(
                 "retry", status_code=int(response.status_code), response=response.text[:1000]
             )
+        if response.status_code in {401, 403}:
+            return UploadOutcome(
+                "system", status_code=int(response.status_code), response=response.text[:1000]
+            )
         return UploadOutcome(
             "review", status_code=int(response.status_code), response=response.text[:1000]
         )
 
     def regenerate_thumbnails(self, archive_id: str) -> UploadOutcome:
-        response = self._session().post(
+        response = self._request(
+            "post",
             f"{self.base_url}/api/archives/{archive_id}/files/thumbnails",
             headers=self.headers,
             timeout=self.timeout,
@@ -215,6 +252,10 @@ class LANraragiClient:
         if response.status_code in {423, 429, 500, 502, 503, 504}:
             return UploadOutcome(
                 "retry", status_code=int(response.status_code), response=response.text[:1000]
+            )
+        if response.status_code in {401, 403}:
+            return UploadOutcome(
+                "system", status_code=int(response.status_code), response=response.text[:1000]
             )
         return UploadOutcome(
             "review", status_code=int(response.status_code), response=response.text[:1000]

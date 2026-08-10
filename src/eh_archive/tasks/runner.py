@@ -261,6 +261,14 @@ class TaskExecutor:
         self._begin_external_effect(repository, claim)
         try:
             qbit.delete(record.external_download_id, delete_files=True)
+        except ArchiveError as exc:
+            if exc.info.category == ErrorClass.SYSTEM:
+                raise
+            raise ArchiveError(
+                "torrent_fallback_cleanup",
+                f"failed to delete qBittorrent task: {exc}",
+                ErrorClass.ITEM,
+            ) from exc
         except Exception as exc:
             raise ArchiveError(
                 "torrent_fallback_cleanup",
@@ -865,16 +873,10 @@ class TaskExecutor:
                 error_detail=outcome.response,
             )
         elif outcome.kind == "system":
-            self._schedule_retry(record)
-            repository.set_component(
-                "upload", "paused", actor=self.owner, reason=f"LANraragi HTTP {outcome.status_code}"
-            )
-            repository.finish(
-                claim,
-                owner=self.owner,
-                event="retry",
-                error_code=f"lrr_{outcome.status_code}",
-                error_detail=outcome.response,
+            raise ArchiveError(
+                "lanraragi_authentication_failed",
+                f"LANraragi rejected upload authentication with HTTP {outcome.status_code}",
+                ErrorClass.SYSTEM,
             )
         elif outcome.kind == "unknown" and record.artifact_sha1:
             known = client.exists_by_sha1(record.artifact_sha1)
@@ -1017,6 +1019,12 @@ class TaskExecutor:
             )
             self._begin_external_effect(repository, claim)
             outcome = client.delete(record.lrr_archive_id)
+            if outcome.kind == "system":
+                raise ArchiveError(
+                    "lanraragi_authentication_failed",
+                    f"LANraragi rejected delete authentication with HTTP {outcome.status_code}",
+                    ErrorClass.SYSTEM,
+                )
             if outcome.kind != "deleted":
                 raise ArchiveError("delete_uncertain", outcome.response, ErrorClass.ITEM)
         if record.artifact_location and record.artifact_filename:
@@ -1042,6 +1050,12 @@ class TaskExecutor:
         info = classify_exception(exc)
         if info.category == ErrorClass.SYSTEM:
             self.system_error = True
+            self._handle_system_error(repository, claim, info)
+            log.exception(
+                "task failed",
+                extra={"event": {"manga_id": claim.manga_id, "operation": claim.operation}},
+            )
+            return
         if isinstance(exc, ValidationError) and claim.operation == "validate":
             record = repository.get(claim.manga_id)
             if record and record.artifact_location and record.artifact_filename:
@@ -1087,7 +1101,21 @@ class TaskExecutor:
                             error_detail=str(exc),
                         )
                     return
-                except (OSError, ValueError):
+                except OSError as system_exc:
+                    system_info = classify_exception(system_exc)
+                    self.system_error = True
+                    self._handle_system_error(repository, claim, system_info)
+                    log.exception(
+                        "task failed",
+                        extra={
+                            "event": {
+                                "manga_id": claim.manga_id,
+                                "operation": claim.operation,
+                            }
+                        },
+                    )
+                    return
+                except ValueError:
                     pass
         if info.retryable and info.category == ErrorClass.TEMPORARY:
             record = repository.get(claim.manga_id)
@@ -1177,6 +1205,35 @@ class TaskExecutor:
         log.exception(
             "task failed",
             extra={"event": {"manga_id": claim.manga_id, "operation": claim.operation}},
+        )
+
+    def _handle_system_error(
+        self, repository: ArchiveRepository, claim: ClaimedAttempt, info: Any
+    ) -> None:
+        """Release a system-failed attempt without advancing its workflow."""
+
+        record = repository.get(claim.manga_id)
+        if record is None:
+            return
+        if claim.operation == "delete":
+            repository.finish(
+                claim,
+                owner=self.owner,
+                status=record.status,
+                error_code=info.code,
+                error_detail=info.message,
+            )
+            return
+        retry_event = {
+            "details": "details_retry",
+            "cleanup": "cleanup_retry",
+        }.get(claim.operation, "retry")
+        repository.finish(
+            claim,
+            owner=self.owner,
+            event=retry_event,
+            error_code=info.code,
+            error_detail=info.message,
         )
 
 
@@ -1339,6 +1396,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         executor.run_batch(args.operation, args.limit)
     except Exception as exc:
+        error = classify_exception(exc)
         _write_task_lines(report, args.operation, executor.results)
         current = executor.current_claim
         report.fatal(
@@ -1348,14 +1406,14 @@ def main(argv: list[str] | None = None) -> int:
             result={"claimed": len(executor.results)},
         )
         log.exception("task submodule failed: operation=%s run_id=%s", args.operation, run_id)
-        return 1
+        return 2 if error.category == ErrorClass.SYSTEM else 1
     _finish_task_report(
         report,
         args.operation,
         executor.results,
         system_error=executor.system_error,
     )
-    return 2 if executor.system_error else 0
+    return 2 if executor.system_error or report.write_failed else 0
 
 
 if __name__ == "__main__":

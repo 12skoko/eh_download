@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..config import load_config
 from ..db import ArchiveRepository, Database, ScreenDecision
+from ..domain.errors import ErrorClass, classify_exception
 from ..logging import RunReport, clean_report_value, configure_logging, get_logger
 from ..services.collector import CollectionResult, Collector
 
@@ -160,13 +161,20 @@ def run(config_dir: str | Path = "config", *, end: int | None = None) -> int:
             log.info("screenall completed: %s rows resolved run_id=%s", screened, run_id)
             repository.finish_collect_run("succeeded", detail={"end": collect_end})
     except Exception as exc:
+        error = classify_exception(exc)
         report.fatal(
             exc,
             context={"current_source": current_source or "not_started", "database": "rolled_back"},
             result={"sources_completed": len(source_results)},
         )
         log.exception("automatic collection failed: run_id=%s", run_id)
-        return 1
+        return (
+            2
+            if error.category == ErrorClass.SYSTEM
+            else 3
+            if error.category == ErrorClass.TEMPORARY
+            else 1
+        )
 
     _write_collect_report(report, source_results, screen_decisions, screened=screened)
     log.info(
@@ -175,7 +183,7 @@ def run(config_dir: str | Path = "config", *, end: int | None = None) -> int:
         collect_end,
         screened,
     )
-    return 0
+    return 2 if report.write_failed else 0
 
 
 def main(argv=None) -> int:

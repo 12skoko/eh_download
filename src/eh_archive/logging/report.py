@@ -83,6 +83,7 @@ class RunReport:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._stream = path.open("x", encoding="utf-8", buffering=1)
         except OSError:
+            self._write_failed = True
             log.warning("failed to create detailed run report: %s", path, exc_info=True)
             return
         self.path = path
@@ -157,7 +158,12 @@ class RunReport:
         try:
             self._stream.close()
         except OSError:
+            self._write_failed = True
             log.warning("failed to close detailed run report: %s", self.path, exc_info=True)
+
+    @property
+    def write_failed(self) -> bool:
+        return self._write_failed
 
     def __enter__(self) -> Self:
         return self
