@@ -2,7 +2,7 @@
 __pycache__/
 
 log/
-log/
+logs/
 lozip/
 tempfile/
 test/
