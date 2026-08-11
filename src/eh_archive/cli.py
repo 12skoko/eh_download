@@ -61,8 +61,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     task.add_argument("--limit", type=int, default=None)
-    thumbnails = sub.add_parser("thumbnails")
-    thumbnails.add_argument("--limit", type=int, default=100)
     sub.add_parser("supervisor")
     sub.add_parser("web")
     picacg = sub.add_parser("picacg")
@@ -101,10 +99,6 @@ def main(argv: list[str] | None = None) -> int:
 
         TaskExecutor(database, config_dir=args.config_dir).run_batch(args.operation, args.limit)
         return 0
-    if args.command == "thumbnails":
-        from .tasks.thumbnails import run
-
-        return run(args.config_dir, limit=args.limit)
     if args.command == "supervisor":
         from .supervisor.app import Supervisor
 

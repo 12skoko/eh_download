@@ -238,10 +238,10 @@ class LANraragiClient:
             "review", status_code=int(response.status_code), response=response.text[:1000]
         )
 
-    def regenerate_thumbnails(self, archive_id: str) -> UploadOutcome:
+    def regenerate_all_thumbnails(self) -> UploadOutcome:
         response = self._request(
             "post",
-            f"{self.base_url}/api/archives/{archive_id}/files/thumbnails",
+            f"{self.base_url}/api/regen_thumbs?force=0",
             headers=self.headers,
             timeout=self.timeout,
         )

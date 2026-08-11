@@ -23,7 +23,6 @@ from ..logging import (
     get_logger,
     session_log_path,
 )
-from ..services.uploader.thumbnails import ThumbnailBatch
 
 log = get_logger(__name__)
 
@@ -67,7 +66,6 @@ class Supervisor:
         self.exit_code = 0
         self.failed_operations: set[str] = set()
         self.last_collect = 0.0
-        self.last_thumbnails = 0.0
         self.maintenance_active = False
         self.maintenance_idle_logged = False
         self.maintenance_next_probe_at = 0.0
@@ -96,7 +94,6 @@ class Supervisor:
             return
         self._complete_cancellations()
         self._maybe_collect()
-        self._maybe_thumbnails()
         for operation in TASK_OPERATIONS:
             if not self.config.modules[operation] or self._paused(operation):
                 continue
@@ -397,33 +394,6 @@ class Supervisor:
             [sys.executable, "-m", "eh_archive.tasks.collect", "--config-dir", self.config_dir],
         )
         self.last_collect = now
-
-    def _maybe_thumbnails(self) -> None:
-        if not self.config.modules["thumbnail"] or self._paused("thumbnail"):
-            return
-        now = time.monotonic()
-        child = self.children.get("thumbnail")
-        if child is not None and child.poll() is None:
-            return
-        if now - self.last_thumbnails < self.config.thumbnail_interval_seconds:
-            return
-        with self.database.session() as session:
-            if not ThumbnailBatch.has_work(session, limit=self.config.batch_size):
-                self.last_thumbnails = now
-                return
-        self._start_child(
-            "thumbnail",
-            [
-                sys.executable,
-                "-m",
-                "eh_archive.tasks.thumbnails",
-                "--config-dir",
-                self.config_dir,
-                "--limit",
-                str(self.config.batch_size),
-            ],
-        )
-        self.last_thumbnails = now
 
     def _complete_cancellations(self) -> None:
         with self.database.session() as session:

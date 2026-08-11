@@ -42,7 +42,7 @@ from ..services.paths import (
     safe_filename,
 )
 from ..services.preparer.zipper import prepare_directory
-from ..services.uploader.lanraragi import LANraragiClient
+from ..services.uploader.lanraragi import LANraragiClient, UploadOutcome
 from ..services.validator.artifact import ValidationError, quarantine_artifact, validate_artifact
 
 log = get_logger(__name__)
@@ -158,6 +158,7 @@ class TaskExecutor:
         self._active_report_updated_at = 0.0
         self._tag_translation: EhTagTranslation | None = None
         self._http_sessions: dict[str, RoleSession] = {}
+        self.thumbnail_regeneration: UploadOutcome | None = None
 
     def _http_session(self, role: str) -> RoleSession:
         session = self._http_sessions.get(role)
@@ -352,6 +353,32 @@ class TaskExecutor:
             count += 1
             if self.system_error:
                 break
+        if operation == "upload" and count > 0 and not self.system_error:
+            client = LANraragiClient(
+                self.app.lanraragi_url,
+                headers=self.secrets.lanraragi,
+                timeout=self.supervisor.request_timeout_seconds,
+            )
+            outcome = client.regenerate_all_thumbnails()
+            if outcome.kind == "system":
+                raise ArchiveError(
+                    "lanraragi_authentication_failed",
+                    "LANraragi rejected thumbnail regeneration authentication "
+                    f"with HTTP {outcome.status_code}",
+                    ErrorClass.SYSTEM,
+                )
+            self.thumbnail_regeneration = outcome
+            if outcome.kind == "accepted":
+                log.info(
+                    "LANraragi thumbnail regeneration requested: status_code=%s",
+                    outcome.status_code,
+                )
+            else:
+                log.warning(
+                    "LANraragi thumbnail regeneration request failed: status_code=%s response=%s",
+                    outcome.status_code,
+                    outcome.response[:1000],
+                )
         return count
 
     @staticmethod
@@ -1483,9 +1510,19 @@ def _finish_task_report(
     *,
     system_error: bool,
     write_task_lines: bool = True,
+    thumbnail_regeneration: UploadOutcome | None = None,
 ) -> None:
     if write_task_lines:
         _write_task_lines(report, operation, results)
+    if operation == "upload" and thumbnail_regeneration is not None:
+        report.section("thumbnail regeneration")
+        fields = [
+            thumbnail_regeneration.kind,
+            f"status_code={thumbnail_regeneration.status_code}",
+        ]
+        if thumbnail_regeneration.response and thumbnail_regeneration.kind != "accepted":
+            fields.append(f"detail={clean_report_value(thumbnail_regeneration.response)[:500]}")
+        report.write(" | ".join(fields))
     outcomes = Counter(_task_outcome(result) for result in results)
     if system_error:
         status = "failed"
@@ -1520,6 +1557,8 @@ def _finish_task_report(
         if outcomes[name]:
             summary[name] = outcomes[name]
     summary["status"] = status
+    if thumbnail_regeneration is not None:
+        summary["thumbnail_regeneration"] = thumbnail_regeneration.kind
     report.finish(summary)
 
 
@@ -1573,6 +1612,7 @@ def main(argv: list[str] | None = None) -> int:
         executor.results,
         system_error=executor.system_error,
         write_task_lines=not stream_direct_report,
+        thumbnail_regeneration=executor.thumbnail_regeneration,
     )
     return 2 if executor.system_error or report.write_failed else 0
 

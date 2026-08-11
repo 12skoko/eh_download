@@ -17,8 +17,7 @@ EHentai/E-Hentai
         |      +-- collect
         |      +-- details
         |      +-- torrent/direct download
-        |      +-- validate/prepare/upload/cleanup/delete
-        |      `-- thumbnail batch
+        |      `-- validate/prepare/upload/cleanup/delete
         |
         +-- eharchive-web (浏览器/API 控制)
         |
@@ -254,7 +253,6 @@ latest = "https://e-hentai.org/?f_search=..."
 - `maintenance_recovery_timeout_seconds`：维护结束后等待数据库恢复的最长时间，默认 900 秒；超时后按数据库严重故障退出；
 - `[modules]`：控制 Supervisor 是否自动调度各业务模块；
 - `max_concurrency`：各任务槽的并发数，默认每类为 1；
-- `thumbnail_interval_seconds`：缩略图批处理周期。
 
 不要把 `torrent_download` 的并发数理解为 qBittorrent 的传输数。它只限制 EH Archive 同时查找、提交和轮询种子的控制任务；已经提交的种子由 qBittorrent 自己管理。
 
@@ -429,15 +427,10 @@ qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会
 
 `delete` 只处理已经被新版本替代且状态为 `outdated` 的记录；不要用它代替普通清理。任务执行是有租约和 attempt fencing 的，已过期的进程不能覆盖新产物。
 
-### 7.5 缩略图批处理
+### 7.5 缩略图再生成
 
-缩略图再生成独立于主上传链路，Supervisor 会按间隔自动处理；需要立即处理时：
-
-```powershell
-.\.venv\Scripts\eharchive.exe --config-dir config thumbnails --limit 100
-```
-
-它不会把 `uploaded` 或 `completed` 档案改回下载状态。
+每个 upload 子进程完成整个上传批次后，会统一调用一次 LANraragi 的
+`POST /api/regen_thumbs?force=0`。缩略图不再作为独立模块调度，也不为每本漫画维护单独状态。
 
 ### 7.6 Picacg 导入
 

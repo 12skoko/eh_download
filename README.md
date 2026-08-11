@@ -14,9 +14,8 @@ recoverable services driven by PostgreSQL state.
 The complete Chinese setup and operations guide is [docs/usage.zh-CN.md](docs/usage.zh-CN.md).
 
 The Supervisor runs bounded collection/download/validation/upload/cleanup
-workers and periodically starts the independent thumbnail regeneration batch.
-Run `eharchive thumbnails --config-dir config` manually when an immediate
-thumbnail pass is needed.
+workers. After each upload worker finishes its batch, it requests one global
+LANraragi thumbnail regeneration pass.
 
 The `scripts/` directory contains one-time MySQL migration and reconciliation
 tools. Runtime code never imports those scripts.

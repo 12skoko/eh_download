@@ -21,7 +21,6 @@ DEFAULT_LOCATIONS = (
 
 SUPERVISOR_MODULES = (
     "collect",
-    "thumbnail",
     "details",
     "torrent_download",
     "direct_download",
@@ -31,6 +30,7 @@ SUPERVISOR_MODULES = (
     "cleanup",
     "delete",
 )
+LEGACY_SUPERVISOR_MODULES = {"thumbnail"}
 
 
 @dataclass(frozen=True)
@@ -85,7 +85,6 @@ class SupervisorConfig:
     module_restart_delay_seconds: float = 5.0
     request_timeout_seconds: float = 30.0
     shutdown_grace_seconds: float = 30.0
-    thumbnail_interval_seconds: float = 900.0
     maintenance_start: clock_time | None = None
     maintenance_end: clock_time | None = None
     maintenance_retry_seconds: float = 30.0
@@ -214,7 +213,7 @@ def _module_map(value: Any) -> dict[str, bool]:
         value = {}
     if not isinstance(value, dict):
         raise TypeError("supervisor.toml [modules] must be a table")
-    unknown = sorted(set(value) - set(SUPERVISOR_MODULES))
+    unknown = sorted(set(value) - set(SUPERVISOR_MODULES) - LEGACY_SUPERVISOR_MODULES)
     if unknown:
         raise ValueError("unsupported [modules] entries: " + ", ".join(unknown))
     invalid = sorted(str(key) for key, enabled in value.items() if type(enabled) is not bool)
@@ -332,7 +331,6 @@ def load_config(
         module_restart_delay_seconds=float(supervisor_raw.get("module_restart_delay_seconds", 5.0)),
         request_timeout_seconds=float(supervisor_raw.get("request_timeout_seconds", 30)),
         shutdown_grace_seconds=float(supervisor_raw.get("shutdown_grace_seconds", 30)),
-        thumbnail_interval_seconds=float(supervisor_raw.get("thumbnail_interval_seconds", 900)),
         maintenance_start=_optional_clock_time(
             supervisor_raw.get("maintenance_start"), "maintenance_start"
         ),
