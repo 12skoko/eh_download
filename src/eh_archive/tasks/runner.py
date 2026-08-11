@@ -345,7 +345,7 @@ class TaskExecutor:
     def run_batch(self, operation: str, limit: int | None = None) -> int:
         count = 0
         if limit is None:
-            limit = self.supervisor.batch_size
+            limit = self.supervisor.batch_size_for(operation)
         if limit < 0:
             raise ValueError("limit must be non-negative")
         while count < limit and self.run_once(operation):
@@ -1538,7 +1538,9 @@ def main(argv: list[str] | None = None) -> int:
         component=args.operation,
         run_id=run_id,
     )
-    batch_limit = args.limit if args.limit is not None else supervisor.batch_size
+    batch_limit = (
+        args.limit if args.limit is not None else supervisor.batch_size_for(args.operation)
+    )
     report = RunReport(app.log_dir, args.operation, timezone=app.timezone, run_id=run_id)
     report.fields({"batch_limit": batch_limit})
     stream_direct_report = args.operation == "direct_download"

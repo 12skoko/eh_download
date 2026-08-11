@@ -122,7 +122,7 @@ class Supervisor:
                     "--config-dir",
                     self.config_dir,
                     "--limit",
-                    str(self.config.batch_size),
+                    str(self.config.batch_size_for(operation)),
                 ],
             )
 

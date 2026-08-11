@@ -77,6 +77,7 @@ class SupervisorConfig:
     poll_seconds: float = 5.0
     collect_interval_seconds: float = 3 * 60 * 60
     batch_size: int = 10
+    direct_download_batch_size: int = 1
     lease_seconds: int = 900
     retry_limit: int = 5
     torrent_stall_seconds: int = 7 * 24 * 60 * 60
@@ -104,6 +105,11 @@ class SupervisorConfig:
             "delete": 1,
         }
     )
+
+    def batch_size_for(self, operation: str) -> int:
+        if operation == "direct_download":
+            return self.direct_download_batch_size
+        return self.batch_size
 
 
 @dataclass(frozen=True)
@@ -318,6 +324,7 @@ def load_config(
         poll_seconds=float(supervisor_raw.get("poll_seconds", 5)),
         collect_interval_seconds=float(supervisor_raw.get("collect_interval_seconds", 10800)),
         batch_size=int(supervisor_raw.get("batch_size", 10)),
+        direct_download_batch_size=int(supervisor_raw.get("direct_download_batch_size", 1)),
         lease_seconds=int(supervisor_raw.get("lease_seconds", 900)),
         retry_limit=int(supervisor_raw.get("retry_limit", 5)),
         torrent_stall_seconds=int(supervisor_raw.get("torrent_stall_seconds", 7 * 24 * 60 * 60)),
@@ -342,6 +349,10 @@ def load_config(
             **{str(k): int(v) for k, v in limits.items()},
         },
     )
+    if supervisor.batch_size <= 0:
+        raise ValueError("batch_size must be greater than zero")
+    if supervisor.direct_download_batch_size <= 0:
+        raise ValueError("direct_download_batch_size must be greater than zero")
     if supervisor.torrent_poll_seconds < 0:
         raise ValueError("torrent_poll_seconds must not be negative")
     if supervisor.module_restart_delay_seconds < 0:
