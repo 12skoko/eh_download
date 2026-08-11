@@ -58,3 +58,33 @@ crawl farther because these rows participate in the dynamic end calculation.
 Rows with a later job attempt, lease, download ID, artifact, or LANraragi ID
 block the operation. The command never calls qBittorrent or LANraragi and
 never changes local files.
+
+## LANraragi/database comparison
+
+Export the complete LANraragi archive list:
+
+```powershell
+python scripts/collect_all_archives.py --config-dir config
+```
+
+Compare the current LANraragi archive list with new-database rows whose status
+is `completed`:
+
+```powershell
+python scripts/compare_lanraragi_database.py --config-dir config
+```
+
+The comparison can instead use a previously exported file:
+
+```powershell
+python scripts/compare_lanraragi_database.py `
+  --config-dir config `
+  --archives <path-to-all_archives-json>
+```
+
+Both scripts read the LANraragi URL and authentication headers from the normal
+application configuration. Generated JSON is always written below the
+configured `log_dir/tools` directory, which should remain outside version
+control. The comparison lists database-only IDs, LANraragi-only IDs, duplicate
+IDs, invalid database IDs, and LANraragi archives whose source gallery URL
+could not be parsed.
