@@ -7,14 +7,15 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ..config import load_config
 from ..db import ArchiveRepository, Database
 from ..db.models import SystemControl
 from ..db.repository import utcnow
-from ..domain.errors import ErrorClass, classify_exception
+from ..domain.errors import ArchiveError, ErrorClass, classify_exception
 from ..logging import (
     MAIN_LOG_ENV,
     SUPERVISOR_RUN_ID_ENV,
@@ -67,6 +68,11 @@ class Supervisor:
         self.failed_operations: set[str] = set()
         self.last_collect = 0.0
         self.last_thumbnails = 0.0
+        self.maintenance_active = False
+        self.maintenance_idle_logged = False
+        self.maintenance_next_probe_at = 0.0
+        self.maintenance_recovery_started_at: float | None = None
+        self.timezone = ZoneInfo(self.app.timezone)
         disabled = [name for name, enabled in self.config.modules.items() if not enabled]
         if disabled:
             log.info("supervisor modules disabled by config: %s", ", ".join(disabled))
@@ -75,12 +81,16 @@ class Supervisor:
         self.stopping = True
 
     def tick(self) -> None:
+        maintenance_blocked, heartbeat_done = self._maintenance_tick()
+        if maintenance_blocked:
+            return
         if self.draining:
             self._reap_children()
-            if self.drain_heartbeat:
+            if self.drain_heartbeat and not heartbeat_done:
                 self._heartbeat()
             return
-        self._heartbeat()
+        if not heartbeat_done:
+            self._heartbeat()
         self._reap_children()
         if self.draining:
             return
@@ -115,6 +125,83 @@ class Supervisor:
                     str(self.config.batch_size),
                 ],
             )
+
+    def _maintenance_tick(self) -> tuple[bool, bool]:
+        """Return whether scheduling is blocked and whether heartbeat already ran."""
+
+        if self.config.maintenance_start is None or self.config.maintenance_end is None:
+            return False, False
+        if self._in_maintenance_window():
+            if not self.maintenance_active:
+                self.maintenance_active = True
+                self.maintenance_idle_logged = False
+                self.maintenance_next_probe_at = 0.0
+                self.maintenance_recovery_started_at = None
+                log.info(
+                    "maintenance window started: start=%s end=%s timezone=%s running_children=%s",
+                    self.config.maintenance_start.isoformat(timespec="minutes"),
+                    self.config.maintenance_end.isoformat(timespec="minutes"),
+                    self.app.timezone,
+                    ",".join(sorted(self.children)) or "none",
+                )
+            self._reap_children()
+            if not self.children and not self.maintenance_idle_logged:
+                log.info("maintenance window idle: waiting for scheduled maintenance to finish")
+                self.maintenance_idle_logged = True
+            return True, False
+        if not self.maintenance_active:
+            return False, False
+
+        self._reap_children()
+        now = time.monotonic()
+        if self.maintenance_recovery_started_at is None:
+            self.maintenance_recovery_started_at = now
+        if now < self.maintenance_next_probe_at:
+            return True, False
+        try:
+            self._heartbeat()
+        except Exception as exc:
+            info = classify_exception(exc)
+            if info.code != "database_unavailable":
+                raise
+            elapsed = now - self.maintenance_recovery_started_at
+            if elapsed >= self.config.maintenance_recovery_timeout_seconds:
+                raise ArchiveError(
+                    "database_unavailable",
+                    "database remained unavailable for "
+                    f"{self.config.maintenance_recovery_timeout_seconds:g} seconds after "
+                    "the maintenance window ended",
+                    ErrorClass.SYSTEM,
+                ) from exc
+            self.maintenance_next_probe_at = now + self.config.maintenance_retry_seconds
+            log.warning(
+                "maintenance window ended but database is unavailable; retrying in %s seconds "
+                "elapsed=%s timeout=%s",
+                self.config.maintenance_retry_seconds,
+                round(elapsed, 1),
+                self.config.maintenance_recovery_timeout_seconds,
+            )
+            return True, False
+
+        self.maintenance_active = False
+        self.maintenance_idle_logged = False
+        self.maintenance_next_probe_at = 0.0
+        self.maintenance_recovery_started_at = None
+        log.info("maintenance window ended: database available; scheduling resumed")
+        return False, True
+
+    def _in_maintenance_window(self, now: datetime | None = None) -> bool:
+        start = self.config.maintenance_start
+        end = self.config.maintenance_end
+        if start is None or end is None:
+            return False
+        local_now = (
+            now.astimezone(self.timezone) if now is not None else datetime.now(self.timezone)
+        )
+        current = local_now.time().replace(tzinfo=None)
+        if start < end:
+            return start <= current < end
+        return current >= start or current < end
 
     def run_forever(self) -> int:
         signal.signal(signal.SIGINT, self.stop)

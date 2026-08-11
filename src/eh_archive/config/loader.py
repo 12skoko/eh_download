@@ -4,6 +4,7 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass, field
+from datetime import time as clock_time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
@@ -84,6 +85,10 @@ class SupervisorConfig:
     request_timeout_seconds: float = 30.0
     shutdown_grace_seconds: float = 30.0
     thumbnail_interval_seconds: float = 900.0
+    maintenance_start: clock_time | None = None
+    maintenance_end: clock_time | None = None
+    maintenance_retry_seconds: float = 30.0
+    maintenance_recovery_timeout_seconds: float = 900.0
     modules: dict[str, bool] = field(
         default_factory=lambda: {name: True for name in SUPERVISOR_MODULES}
     )
@@ -227,6 +232,23 @@ def _string_tuple(value: Any, key: str) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _optional_clock_time(value: Any, key: str) -> clock_time | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, clock_time):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = clock_time.fromisoformat(value.strip())
+        except ValueError as exc:
+            raise ValueError(f"{key} must use HH:MM or HH:MM:SS") from exc
+    else:
+        raise TypeError(f"{key} must be a time string")
+    if parsed.tzinfo is not None:
+        raise ValueError(f"{key} must not include a timezone offset")
+    return parsed.replace(microsecond=0)
+
+
 def _role(raw: dict[str, Any], key: str) -> SessionRole:
     value = raw.get(key, {}) or {}
     return SessionRole(str(value.get("account", "default")), str(value.get("network", "direct")))
@@ -304,6 +326,16 @@ def load_config(
         request_timeout_seconds=float(supervisor_raw.get("request_timeout_seconds", 30)),
         shutdown_grace_seconds=float(supervisor_raw.get("shutdown_grace_seconds", 30)),
         thumbnail_interval_seconds=float(supervisor_raw.get("thumbnail_interval_seconds", 900)),
+        maintenance_start=_optional_clock_time(
+            supervisor_raw.get("maintenance_start"), "maintenance_start"
+        ),
+        maintenance_end=_optional_clock_time(
+            supervisor_raw.get("maintenance_end"), "maintenance_end"
+        ),
+        maintenance_retry_seconds=float(supervisor_raw.get("maintenance_retry_seconds", 30)),
+        maintenance_recovery_timeout_seconds=float(
+            supervisor_raw.get("maintenance_recovery_timeout_seconds", 900)
+        ),
         modules=_module_map(supervisor_raw.get("modules", {})),
         max_concurrency={
             **SupervisorConfig().max_concurrency,
@@ -314,6 +346,17 @@ def load_config(
         raise ValueError("torrent_poll_seconds must not be negative")
     if supervisor.module_restart_delay_seconds < 0:
         raise ValueError("module_restart_delay_seconds must not be negative")
+    if (supervisor.maintenance_start is None) != (supervisor.maintenance_end is None):
+        raise ValueError("maintenance_start and maintenance_end must be configured together")
+    if (
+        supervisor.maintenance_start is not None
+        and supervisor.maintenance_start == supervisor.maintenance_end
+    ):
+        raise ValueError("maintenance_start and maintenance_end must be different")
+    if supervisor.maintenance_retry_seconds < 0:
+        raise ValueError("maintenance_retry_seconds must not be negative")
+    if supervisor.maintenance_recovery_timeout_seconds < 0:
+        raise ValueError("maintenance_recovery_timeout_seconds must not be negative")
     crawl = CrawlConfig(
         urls={str(k): str(v) for k, v in dict(crawl_raw.get("urls", {})).items()},
         collect_tags=_string_tuple(crawl_raw.get("collect_tags", []), "collect_tags"),

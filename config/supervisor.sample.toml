@@ -9,6 +9,11 @@ module_restart_delay_seconds = 5
 request_timeout_seconds = 30
 shutdown_grace_seconds = 30
 thumbnail_interval_seconds = 900
+# Optional daily maintenance window, interpreted in app.toml's timezone.
+# maintenance_start = "05:30"
+# maintenance_end = "06:30"
+maintenance_retry_seconds = 30
+maintenance_recovery_timeout_seconds = 900
 
 [modules]
 collect = true

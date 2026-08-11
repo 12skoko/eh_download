@@ -249,11 +249,25 @@ latest = "https://e-hentai.org/?f_search=..."
 - `retry_limit`：网络或临时失败的重试次数；
 - `torrent_poll_seconds`：qBittorrent 后台任务未完成时的再次检查间隔，默认 60 秒；
 - `module_restart_delay_seconds`：同一个普通模块的子进程批次结束后，启动下一批前的等待时间，默认 5 秒；
+- `maintenance_start` / `maintenance_end`：每日维护窗口，按 `app.toml` 的时区解释；窗口内不启动新模块，也不访问数据库，现有子进程自然结束；
+- `maintenance_retry_seconds`：维护结束后数据库尚未恢复时的重新连接间隔，默认 30 秒；
+- `maintenance_recovery_timeout_seconds`：维护结束后等待数据库恢复的最长时间，默认 900 秒；超时后按数据库严重故障退出；
 - `[modules]`：控制 Supervisor 是否自动调度各业务模块；
 - `max_concurrency`：各任务槽的并发数，默认每类为 1；
 - `thumbnail_interval_seconds`：缩略图批处理周期。
 
 不要把 `torrent_download` 的并发数理解为 qBittorrent 的传输数。它只限制 EH Archive 同时查找、提交和轮询种子的控制任务；已经提交的种子由 qBittorrent 自己管理。
+
+例如数据库和 LANraragi 每天 06:00 关机备份，可以配置：
+
+```toml
+maintenance_start = "05:30"
+maintenance_end = "06:30"
+maintenance_retry_seconds = 30
+maintenance_recovery_timeout_seconds = 900
+```
+
+Supervisor 会在 05:30 停止启动新子模块，等待已有子模块自然结束，然后保持主进程运行且跳过数据库心跳。06:30 后如果数据库仍未恢复，Supervisor 会每 30 秒重试；15 分钟内连接成功就自动恢复正常调度，超过 15 分钟仍未恢复则按 `database_unavailable` 严重错误退出。维护开始时间应早于实际关机时间，给正在运行的子模块留出完成时间。
 
 所有模块默认启用。只关闭直接下载、保留其他自动任务的配置如下：
 
