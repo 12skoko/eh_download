@@ -25,6 +25,7 @@ from ..logging import (
     clean_report_value,
     configure_logging,
     format_report_datetime,
+    format_report_duration,
     format_report_size,
     get_logger,
 )
@@ -36,6 +37,7 @@ from ..services.downloader.torrent import TorrentService, is_managed_torrent
 from ..services.paths import (
     ArtifactPathService,
     UnsafePathError,
+    direct_archive_filename,
     map_external_path,
     safe_filename,
 )
@@ -146,7 +148,13 @@ class TaskExecutor:
         self._report_item_index = 0
         self._active_report_line: LiveReportLine | None = None
         self._active_report_manga: str | None = None
+        self._active_report_filename: str | None = None
+        self._active_report_stage: str | None = None
         self._active_report_downloaded = 0
+        self._active_report_total: int | None = None
+        self._active_report_speed = 0.0
+        self._active_report_sample_bytes = 0
+        self._active_report_sample_at = 0.0
         self._active_report_updated_at = 0.0
         self._tag_translation: EhTagTranslation | None = None
         self._http_sessions: dict[str, RoleSession] = {}
@@ -189,12 +197,76 @@ class TaskExecutor:
             return
         self._report_item_index += 1
         self._active_report_manga = claim.manga_id
+        self._active_report_filename = None
+        self._active_report_stage = "starting"
         self._active_report_downloaded = 0
+        self._active_report_total = None
+        self._active_report_speed = 0.0
+        self._active_report_sample_bytes = 0
+        self._active_report_sample_at = time.monotonic()
         self._active_report_updated_at = 0.0
         self._active_report_line = self.report.begin_live_line(
-            f"[{self._report_item_index}] {clean_report_value(claim.manga_id)} "
-            f"| downloading | downloaded={format_report_size(0)}"
+            f"[{self._report_item_index}] {clean_report_value(claim.manga_id)} | starting"
         )
+
+    def _set_direct_report_filename(self, filename: str) -> None:
+        self._active_report_filename = filename
+        if self._active_report_line is None or self._active_report_manga is None:
+            return
+        self._active_report_line.update(
+            f"[{self._report_item_index}] {clean_report_value(self._active_report_manga)} "
+            f"| starting | file={clean_report_value(filename)}"
+        )
+
+    def _start_direct_report_transfer(self, downloaded: int, total: int | None) -> None:
+        if self._active_report_line is None or self._active_report_manga is None:
+            return
+        now = time.monotonic()
+        self._active_report_downloaded = max(0, downloaded)
+        self._active_report_total = total if total is None else max(0, total)
+        self._active_report_speed = 0.0
+        self._active_report_sample_bytes = self._active_report_downloaded
+        self._active_report_sample_at = now
+        self._active_report_updated_at = now
+        if self._active_report_stage == "starting":
+            fields = [
+                f"[{self._report_item_index}] {clean_report_value(self._active_report_manga)}",
+                "started",
+            ]
+            if self._active_report_filename:
+                fields.append(f"file={clean_report_value(self._active_report_filename)}")
+            fields.append(f"expected_size={format_report_size(self._active_report_total)}")
+            if self._active_report_downloaded:
+                fields.append(f"resumed_from={format_report_size(self._active_report_downloaded)}")
+            self._active_report_line.finish(" | ".join(fields))
+            self._active_report_line = self.report.begin_live_line(
+                self._direct_report_progress_line()
+            )
+            self._active_report_stage = "progress"
+        else:
+            self._active_report_line.update(self._direct_report_progress_line())
+
+    def _direct_report_progress_line(self) -> str:
+        downloaded = format_report_size(self._active_report_downloaded)
+        if self._active_report_total is None:
+            fields = ["    progress", f"downloaded={downloaded}"]
+        else:
+            total = format_report_size(self._active_report_total)
+            fields = ["    progress", f"downloaded={downloaded} / {total}"]
+            if self._active_report_total > 0:
+                percentage = self._active_report_downloaded / self._active_report_total * 100
+                fields.append(f"progress={percentage:.2f}%")
+        if self._active_report_speed > 0:
+            fields.append(f"speed={format_report_size(int(self._active_report_speed))}/s")
+            if (
+                self._active_report_total is not None
+                and self._active_report_downloaded < self._active_report_total
+            ):
+                remaining = self._active_report_total - self._active_report_downloaded
+                fields.append(
+                    f"eta={format_report_duration(remaining / self._active_report_speed)}"
+                )
+        return " | ".join(fields)
 
     def _update_direct_report_progress(self, downloaded: int, *, force: bool = False) -> None:
         if self._active_report_line is None or self._active_report_manga is None:
@@ -206,11 +278,12 @@ class TaskExecutor:
             and now - self._active_report_updated_at < DIRECT_REPORT_PROGRESS_INTERVAL_SECONDS
         ):
             return
-        self._active_report_line.update(
-            f"[{self._report_item_index}] {clean_report_value(self._active_report_manga)} "
-            "| downloading "
-            f"| downloaded={format_report_size(self._active_report_downloaded)}"
-        )
+        elapsed = now - self._active_report_sample_at
+        transferred = self._active_report_downloaded - self._active_report_sample_bytes
+        self._active_report_speed = transferred / elapsed if elapsed > 0 and transferred >= 0 else 0
+        self._active_report_line.update(self._direct_report_progress_line())
+        self._active_report_sample_bytes = self._active_report_downloaded
+        self._active_report_sample_at = now
         self._active_report_updated_at = now
 
     def _finish_direct_report_line(self, result: TaskRunResult) -> None:
@@ -222,12 +295,19 @@ class TaskExecutor:
         ):
             return
         line = f"[{self._report_item_index}] {_task_result_line(result, timezone=report.timezone)}"
-        if result.error_code and self._active_report_downloaded:
-            line += f" | downloaded={format_report_size(self._active_report_downloaded)}"
-        self._active_report_line.finish(line)
+        if self._active_report_stage == "progress":
+            self._active_report_line.finish(self._direct_report_progress_line())
+            report.write(line)
+        else:
+            self._active_report_line.finish(line)
+        report.write("")
         self._active_report_line = None
         self._active_report_manga = None
+        self._active_report_filename = None
+        self._active_report_stage = None
         self._active_report_downloaded = 0
+        self._active_report_total = None
+        self._active_report_speed = 0.0
 
     @staticmethod
     def _result_snapshot(
@@ -640,6 +720,9 @@ class TaskExecutor:
             attempt_id=claim.attempt_id,
             location="direct_download",
         )
+        final_name = direct_archive_filename(record.manga_id, info.name)
+        final_path = self.paths.resolve("direct_download", final_name)
+        self._set_direct_report_filename(final_path.name)
         archive_session = self._http_session("archive")
         downloader = DirectDownloader(
             session=archive_session,
@@ -662,6 +745,7 @@ class TaskExecutor:
             cookies=self.secrets.cookies(self.app.archive_session),
             proxies=self.secrets.network(self.app.archive_session).get("proxies"),
             max_size=self.app.max_file_size,
+            started=self._start_direct_report_transfer,
             progress=self._update_direct_report_progress,
         )
         self._update_direct_report_progress(download_result.size, force=True)
@@ -671,15 +755,15 @@ class TaskExecutor:
         repository_obj = repository.fenced(claim, owner=self.owner, require_generation=True)
         if repository_obj is None:
             raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
-        if paths.final.exists():
+        if final_path.exists():
             raise ArchiveError(
                 "artifact_generation_exists",
-                f"artifact generation already exists: {paths.final.name}",
+                f"artifact already exists: {final_path.name}",
                 ErrorClass.ITEM,
             )
-        os.replace(destination, paths.final)
+        os.replace(destination, final_path)
         record = repository.get(record.manga_id)
-        record.artifact_location, record.artifact_filename = "direct_download", paths.final.name
+        record.artifact_location, record.artifact_filename = "direct_download", final_path.name
         record.artifact_kind, record.artifact_generation = "zip", generation
         record.artifact_size = fingerprint.size
         record.artifact_sha1 = fingerprint.sha1

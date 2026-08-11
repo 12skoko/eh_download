@@ -94,6 +94,14 @@ def safe_filename(name: str, *, max_length: int = 180) -> str:
     return value
 
 
+def direct_archive_filename(manga_id: str, manga_name: str) -> str:
+    """Build the readable direct-download filename used by the old downloader."""
+
+    idnum = manga_id.split("/", 1)[0]
+    readable_name = re.sub(r'[\\/*?:"<>|]', "_", manga_name)
+    return safe_filename(f"[{idnum}]{readable_name}.zip")
+
+
 @dataclass(frozen=True)
 class ArtifactPaths:
     root: Path

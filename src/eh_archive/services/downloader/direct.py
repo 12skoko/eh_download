@@ -57,6 +57,7 @@ class DirectDownloader:
         proxies: dict[str, str] | None = None,
         expected_size: int | None = None,
         max_size: int | None = None,
+        started: Callable[[int, int | None], None] | None = None,
         progress: Callable[[int], None] | None = None,
     ) -> DownloadResult:
         if self.session is None:
@@ -71,12 +72,12 @@ class DirectDownloader:
         last_error: Exception | None = None
         for attempt in range(1, self.retries + 1):
             existing = part.stat().st_size if part.exists() else 0
-            if progress:
-                # Report the absolute size so retries and resumed transfers do
-                # not make the caller double-count previously written bytes.
-                progress(existing)
             if expected_size and existing >= expected_size:
                 if existing == expected_size:
+                    if started:
+                        started(existing, expected_size)
+                    if progress:
+                        progress(existing)
                     os.replace(part, destination)
                     return DownloadResult(destination, existing, True, attempt - 1)
                 part.unlink(missing_ok=True)
@@ -139,6 +140,12 @@ class DirectDownloader:
                     else None
                 )
                 written = existing
+                if started:
+                    started(written, expected_total)
+                if progress:
+                    # Report the absolute size so retries and resumed transfers do
+                    # not make the caller double-count previously written bytes.
+                    progress(written)
                 with part.open(mode) as handle:
                     for chunk in response.iter_content(chunk_size=self.chunk_size):
                         if not chunk:
