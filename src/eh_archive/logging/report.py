@@ -16,6 +16,26 @@ from .structured import _load_timezone
 log = logging.getLogger(__name__)
 
 
+class LiveReportLine:
+    """A report line that may be replaced while it remains the file's last line."""
+
+    def __init__(self, report: RunReport, offset: int) -> None:
+        self._report = report
+        self._offset = offset
+        self._finished = False
+
+    def update(self, value: str) -> None:
+        if not self._finished:
+            self._report._replace_live_line(self, self._offset, value)
+
+    def finish(self, value: str) -> None:
+        if self._finished:
+            return
+        self._report._replace_live_line(self, self._offset, value)
+        self._finished = True
+        self._report._finish_live_line(self)
+
+
 def clean_report_value(value: Any) -> str:
     """Keep one logical report value on one physical line."""
 
@@ -75,6 +95,7 @@ class RunReport:
         self._stream = None
         self._closed = False
         self._write_failed = False
+        self._live_line: LiveReportLine | None = None
 
         safe_module = re.sub(r"[^A-Za-z0-9_-]+", "_", module).strip("_") or "unknown"
         started_at = datetime.now(_load_timezone(timezone)).strftime("%Y%m%d_%H%M%S")
@@ -111,6 +132,52 @@ class RunReport:
         except OSError:
             self._write_failed = True
             log.warning("failed to write detailed run report: %s", self.path, exc_info=True)
+
+    def begin_live_line(self, value: str) -> LiveReportLine | None:
+        """Append a line that can be updated in place until it is finalized.
+
+        A live line must remain the final line in the report. This keeps a
+        long-running transfer visible without appending repetitive progress
+        records to the finished report.
+        """
+
+        if self._stream is None or self._closed or self._write_failed:
+            return None
+        if self._live_line is not None:
+            raise RuntimeError("a detailed report live line is already active")
+        try:
+            self._stream.flush()
+            offset = self._stream.tell()
+            self._stream.write(f"{value}\n")
+            self._stream.flush()
+        except OSError:
+            self._write_failed = True
+            log.warning("failed to write detailed run report: %s", self.path, exc_info=True)
+            return None
+        line = LiveReportLine(self, offset)
+        self._live_line = line
+        return line
+
+    def _replace_live_line(self, line: LiveReportLine, offset: int, value: str) -> None:
+        if (
+            self._stream is None
+            or self._closed
+            or self._write_failed
+            or self._live_line is not line
+        ):
+            return
+        try:
+            self._stream.seek(offset)
+            self._stream.write(f"{value}\n")
+            self._stream.truncate()
+            self._stream.flush()
+        except OSError:
+            self._write_failed = True
+            log.warning("failed to update detailed run report: %s", self.path, exc_info=True)
+
+    def _finish_live_line(self, line: LiveReportLine) -> None:
+        if self._live_line is line:
+            self._live_line = None
 
     def finish(self, values: Mapping[str, Any]) -> None:
         if self._closed:

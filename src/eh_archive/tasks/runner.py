@@ -20,6 +20,7 @@ from ..domain.errors import ArchiveError, ErrorClass, classify_exception
 from ..domain.states import Status
 from ..integrations.http import RoleSession
 from ..logging import (
+    LiveReportLine,
     RunReport,
     clean_report_value,
     configure_logging,
@@ -43,6 +44,7 @@ from ..services.uploader.lanraragi import LANraragiClient
 from ..services.validator.artifact import ValidationError, quarantine_artifact, validate_artifact
 
 log = get_logger(__name__)
+DIRECT_REPORT_PROGRESS_INTERVAL_SECONDS = 10.0
 
 
 def _qbit_tags(info: Any) -> set[str]:
@@ -129,6 +131,7 @@ class TaskExecutor:
         config_dir: str | Path = "config",
         owner: str | None = None,
         run_id: str | None = None,
+        report: RunReport | None = None,
     ) -> None:
         self.database = database
         self.config_dir = Path(config_dir)
@@ -139,6 +142,12 @@ class TaskExecutor:
         self.system_error = False
         self.results: list[TaskRunResult] = []
         self.current_claim: ClaimedAttempt | None = None
+        self.report = report
+        self._report_item_index = 0
+        self._active_report_line: LiveReportLine | None = None
+        self._active_report_manga: str | None = None
+        self._active_report_downloaded = 0
+        self._active_report_updated_at = 0.0
         self._tag_translation: EhTagTranslation | None = None
         self._http_sessions: dict[str, RoleSession] = {}
 
@@ -158,6 +167,7 @@ class TaskExecutor:
         if claim is None:
             return False
         self.current_claim = claim
+        self._begin_direct_report_line(claim)
         # Claiming is a short transaction. The committed lease and execution
         # state must be visible before any network or filesystem work begins.
         result: TaskRunResult | None = None
@@ -169,9 +179,55 @@ class TaskExecutor:
                 self._handle_error(repository, claim, exc)
             result = self._result_snapshot(repository, claim)
         if result is not None:
+            self._finish_direct_report_line(result)
             self.results.append(result)
         self.current_claim = None
         return True
+
+    def _begin_direct_report_line(self, claim: ClaimedAttempt) -> None:
+        if claim.operation != "direct_download" or self.report is None:
+            return
+        self._report_item_index += 1
+        self._active_report_manga = claim.manga_id
+        self._active_report_downloaded = 0
+        self._active_report_updated_at = 0.0
+        self._active_report_line = self.report.begin_live_line(
+            f"[{self._report_item_index}] {clean_report_value(claim.manga_id)} "
+            f"| downloading | downloaded={format_report_size(0)}"
+        )
+
+    def _update_direct_report_progress(self, downloaded: int, *, force: bool = False) -> None:
+        if self._active_report_line is None or self._active_report_manga is None:
+            return
+        self._active_report_downloaded = max(0, downloaded)
+        now = time.monotonic()
+        if (
+            not force
+            and now - self._active_report_updated_at < DIRECT_REPORT_PROGRESS_INTERVAL_SECONDS
+        ):
+            return
+        self._active_report_line.update(
+            f"[{self._report_item_index}] {clean_report_value(self._active_report_manga)} "
+            "| downloading "
+            f"| downloaded={format_report_size(self._active_report_downloaded)}"
+        )
+        self._active_report_updated_at = now
+
+    def _finish_direct_report_line(self, result: TaskRunResult) -> None:
+        report = self.report
+        if (
+            result.operation != "direct_download"
+            or self._active_report_line is None
+            or report is None
+        ):
+            return
+        line = f"[{self._report_item_index}] {_task_result_line(result, timezone=report.timezone)}"
+        if result.error_code and self._active_report_downloaded:
+            line += f" | downloaded={format_report_size(self._active_report_downloaded)}"
+        self._active_report_line.finish(line)
+        self._active_report_line = None
+        self._active_report_manga = None
+        self._active_report_downloaded = 0
 
     @staticmethod
     def _result_snapshot(
@@ -599,14 +655,16 @@ class TaskExecutor:
             timeout=self.supervisor.request_timeout_seconds,
             headers={"Referer": record.link},
         )
-        downloader.download(
+        download_result = downloader.download(
             download_url,
             destination,
             headers={"User-Agent": "EH-Archive/6", "Referer": record.link},
             cookies=self.secrets.cookies(self.app.archive_session),
             proxies=self.secrets.network(self.app.archive_session).get("proxies"),
             max_size=self.app.max_file_size,
+            progress=self._update_direct_report_progress,
         )
+        self._update_direct_report_progress(download_result.size, force=True)
         fingerprint = validate_artifact(
             destination, expected_kind="zip", max_size=self.app.max_file_size
         )
@@ -1340,8 +1398,10 @@ def _finish_task_report(
     results: list[TaskRunResult],
     *,
     system_error: bool,
+    write_task_lines: bool = True,
 ) -> None:
-    _write_task_lines(report, operation, results)
+    if write_task_lines:
+        _write_task_lines(report, operation, results)
     outcomes = Counter(_task_outcome(result) for result in results)
     if system_error:
         status = "failed"
@@ -1385,7 +1445,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-dir", default="config")
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args(argv)
-    app, _, _, _ = load_config(args.config_dir)
+    app, supervisor, _, _ = load_config(args.config_dir)
     run_id = str(uuid.uuid4())
     configure_logging(
         app.log_level,
@@ -1394,15 +1454,24 @@ def main(argv: list[str] | None = None) -> int:
         component=args.operation,
         run_id=run_id,
     )
-    executor = TaskExecutor(Database(app.database_url), config_dir=args.config_dir, run_id=run_id)
-    batch_limit = args.limit if args.limit is not None else executor.supervisor.batch_size
+    batch_limit = args.limit if args.limit is not None else supervisor.batch_size
     report = RunReport(app.log_dir, args.operation, timezone=app.timezone, run_id=run_id)
     report.fields({"batch_limit": batch_limit})
+    stream_direct_report = args.operation == "direct_download"
+    if stream_direct_report:
+        report.section("direct downloads")
+    executor = TaskExecutor(
+        Database(app.database_url),
+        config_dir=args.config_dir,
+        run_id=run_id,
+        report=report if stream_direct_report else None,
+    )
     try:
         executor.run_batch(args.operation, args.limit)
     except Exception as exc:
         error = classify_exception(exc)
-        _write_task_lines(report, args.operation, executor.results)
+        if not stream_direct_report:
+            _write_task_lines(report, args.operation, executor.results)
         current = executor.current_claim
         report.fatal(
             exc,
@@ -1417,6 +1486,7 @@ def main(argv: list[str] | None = None) -> int:
         args.operation,
         executor.results,
         system_error=executor.system_error,
+        write_task_lines=not stream_direct_report,
     )
     return 2 if executor.system_error or report.write_failed else 0
 

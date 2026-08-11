@@ -1,4 +1,5 @@
 from .report import (
+    LiveReportLine,
     RunReport,
     clean_report_value,
     format_report_datetime,
@@ -16,6 +17,7 @@ from .structured import (
 __all__ = [
     "MAIN_LOG_ENV",
     "SUPERVISOR_RUN_ID_ENV",
+    "LiveReportLine",
     "RunReport",
     "clean_report_value",
     "configure_logging",

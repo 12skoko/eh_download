@@ -71,6 +71,10 @@ class DirectDownloader:
         last_error: Exception | None = None
         for attempt in range(1, self.retries + 1):
             existing = part.stat().st_size if part.exists() else 0
+            if progress:
+                # Report the absolute size so retries and resumed transfers do
+                # not make the caller double-count previously written bytes.
+                progress(existing)
             if expected_size and existing >= expected_size:
                 if existing == expected_size:
                     os.replace(part, destination)
@@ -148,7 +152,7 @@ class DirectDownloader:
                         handle.write(chunk)
                         written += len(chunk)
                         if progress:
-                            progress(len(chunk))
+                            progress(written)
                     handle.flush()
                     os.fsync(handle.fileno())
                 if expected_total is not None and written != expected_total:
