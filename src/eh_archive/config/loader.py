@@ -84,6 +84,7 @@ class SupervisorConfig:
     torrent_poll_seconds: float = 60.0
     module_restart_delay_seconds: float = 5.0
     request_timeout_seconds: float = 30.0
+    upload_timeout_seconds: float = 1800.0
     shutdown_grace_seconds: float = 30.0
     maintenance_start: clock_time | None = None
     maintenance_end: clock_time | None = None
@@ -330,6 +331,7 @@ def load_config(
         torrent_poll_seconds=float(supervisor_raw.get("torrent_poll_seconds", 60.0)),
         module_restart_delay_seconds=float(supervisor_raw.get("module_restart_delay_seconds", 5.0)),
         request_timeout_seconds=float(supervisor_raw.get("request_timeout_seconds", 30)),
+        upload_timeout_seconds=float(supervisor_raw.get("upload_timeout_seconds", 1800)),
         shutdown_grace_seconds=float(supervisor_raw.get("shutdown_grace_seconds", 30)),
         maintenance_start=_optional_clock_time(
             supervisor_raw.get("maintenance_start"), "maintenance_start"
@@ -355,6 +357,8 @@ def load_config(
         raise ValueError("torrent_poll_seconds must not be negative")
     if supervisor.module_restart_delay_seconds < 0:
         raise ValueError("module_restart_delay_seconds must not be negative")
+    if supervisor.upload_timeout_seconds <= 0:
+        raise ValueError("upload_timeout_seconds must be greater than zero")
     if (supervisor.maintenance_start is None) != (supervisor.maintenance_end is None):
         raise ValueError("maintenance_start and maintenance_end must be configured together")
     if (

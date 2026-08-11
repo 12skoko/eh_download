@@ -75,7 +75,13 @@ class LANraragiClient:
             raise
 
     def upload(
-        self, path: str | Path, info: MangaInfo, *, checksum: str, max_size: int | None = None
+        self,
+        path: str | Path,
+        info: MangaInfo,
+        *,
+        checksum: str,
+        max_size: int | None = None,
+        timeout: float | tuple[float, float] | None = None,
     ) -> UploadOutcome:
         path = Path(path)
         size = path.stat().st_size
@@ -101,7 +107,7 @@ class LANraragiClient:
                 f"{self.base_url}/api/archives/upload",
                 data=encoder,
                 headers=headers,
-                timeout=self.timeout,
+                timeout=self.timeout if timeout is None else timeout,
             )
         body = response.text[:4000]
         status = int(response.status_code)

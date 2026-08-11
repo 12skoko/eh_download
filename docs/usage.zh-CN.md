@@ -248,6 +248,8 @@ latest = "https://e-hentai.org/?f_search=..."
 - `retry_limit`：网络或临时失败的重试次数；
 - `torrent_poll_seconds`：qBittorrent 后台任务未完成时的再次检查间隔，默认 60 秒；
 - `module_restart_delay_seconds`：同一个普通模块的子进程批次结束后，启动下一批前的等待时间，默认 5 秒；
+- `request_timeout_seconds`：普通网络请求的连接和读取超时，默认 30 秒；
+- `upload_timeout_seconds`：上传 ZIP 后等待 LANraragi 响应的超时，默认 1800 秒；上传连接超时仍使用 `request_timeout_seconds`；
 - `maintenance_start` / `maintenance_end`：每日维护窗口，按 `app.toml` 的时区解释；窗口内不启动新模块，也不访问数据库，现有子进程自然结束；
 - `maintenance_retry_seconds`：维护结束后数据库尚未恢复时的重新连接间隔，默认 30 秒；
 - `maintenance_recovery_timeout_seconds`：维护结束后等待数据库恢复的最长时间，默认 900 秒；超时后按数据库严重故障退出；

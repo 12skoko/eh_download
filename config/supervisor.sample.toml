@@ -8,6 +8,7 @@ torrent_stall_seconds = 604800
 torrent_poll_seconds = 60
 module_restart_delay_seconds = 5
 request_timeout_seconds = 30
+upload_timeout_seconds = 1800
 shutdown_grace_seconds = 30
 # Optional daily maintenance window, interpreted in app.toml's timezone.
 # maintenance_start = "05:30"

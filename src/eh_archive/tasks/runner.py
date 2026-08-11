@@ -1013,7 +1013,14 @@ class TaskExecutor:
         )
         self._begin_external_effect(repository, claim)
         outcome = client.upload(
-            path, info, checksum=record.artifact_sha1, max_size=self.app.max_file_size
+            path,
+            info,
+            checksum=record.artifact_sha1,
+            max_size=self.app.max_file_size,
+            timeout=(
+                self.supervisor.request_timeout_seconds,
+                self.supervisor.upload_timeout_seconds,
+            ),
         )
         if outcome.kind == "success":
             record.lrr_archive_id = outcome.archive_id
