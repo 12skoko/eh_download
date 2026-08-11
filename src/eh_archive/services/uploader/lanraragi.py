@@ -122,14 +122,10 @@ class LANraragiClient:
                 ) from exc
             archive_id = str(payload.get("id", ""))
             success = payload.get("success") in {1, "1"} and payload.get("operation") == "upload"
-            if (
-                not success
-                or not re.fullmatch(r"[0-9a-fA-F]{40}", archive_id)
-                or archive_id.lower() != checksum.lower()
-            ):
+            if not success or not re.fullmatch(r"[0-9a-fA-F]{40}", archive_id):
                 raise ArchiveError(
                     "upload_missing_archive_id",
-                    "success response has no SHA1 archive ID",
+                    "success response has no valid archive ID",
                     ErrorClass.ITEM,
                 )
             try:
@@ -184,27 +180,6 @@ class LANraragiClient:
         except ValueError:
             value = None
         return int(response.status_code), value
-
-    def exists_by_sha1(self, checksum: str) -> bool | None:
-        try:
-            status, _payload = self.metadata(checksum)
-        except ArchiveError as exc:
-            if exc.info.category == ErrorClass.SYSTEM:
-                raise
-            return None
-        except Exception:  # noqa: BLE001 - an unknown result must never trigger a blind retry
-            return None
-        if status == 200:
-            return True
-        if status == 400 or status == 404:
-            return False
-        if status in {401, 403}:
-            raise ArchiveError(
-                "lanraragi_authentication_failed",
-                f"LANraragi rejected metadata authentication with HTTP {status}",
-                ErrorClass.SYSTEM,
-            )
-        return None
 
     def delete(self, archive_id: str) -> UploadOutcome:
         response = self._request(

@@ -176,7 +176,7 @@ class TaskExecutor:
         if claim is None:
             return False
         self.current_claim = claim
-        self._begin_direct_report_line(claim)
+        self._begin_item_report(claim)
         # Claiming is a short transaction. The committed lease and execution
         # state must be visible before any network or filesystem work begins.
         result: TaskRunResult | None = None
@@ -188,13 +188,23 @@ class TaskExecutor:
                 self._handle_error(repository, claim, exc)
             result = self._result_snapshot(repository, claim)
         if result is not None:
-            self._finish_direct_report_line(result)
+            self._finish_item_report(result)
             self.results.append(result)
         self.current_claim = None
         return True
 
+    def _begin_item_report(self, claim: ClaimedAttempt) -> None:
+        if claim.operation == "direct_download":
+            self._begin_direct_report_line(claim)
+            return
+        report = self.report
+        if report is None:
+            return
+        self._report_item_index += 1
+        report.write(f"[{self._report_item_index}] {clean_report_value(claim.manga_id)} | started")
+
     def _begin_direct_report_line(self, claim: ClaimedAttempt) -> None:
-        if claim.operation != "direct_download" or self.report is None:
+        if self.report is None:
             return
         self._report_item_index += 1
         self._active_report_manga = claim.manga_id
@@ -287,13 +297,20 @@ class TaskExecutor:
         self._active_report_sample_at = now
         self._active_report_updated_at = now
 
+    def _finish_item_report(self, result: TaskRunResult) -> None:
+        if result.operation == "direct_download":
+            self._finish_direct_report_line(result)
+            return
+        report = self.report
+        if report is None:
+            return
+        line = f"[{self._report_item_index}] {_task_result_line(result, timezone=report.timezone)}"
+        report.write(line)
+        report.write("")
+
     def _finish_direct_report_line(self, result: TaskRunResult) -> None:
         report = self.report
-        if (
-            result.operation != "direct_download"
-            or self._active_report_line is None
-            or report is None
-        ):
+        if self._active_report_line is None or report is None:
             return
         line = f"[{self._report_item_index}] {_task_result_line(result, timezone=report.timezone)}"
         if self._active_report_stage == "progress":
@@ -1059,19 +1076,16 @@ class TaskExecutor:
                 f"LANraragi rejected upload authentication with HTTP {outcome.status_code}",
                 ErrorClass.SYSTEM,
             )
-        elif outcome.kind == "unknown" and record.artifact_sha1:
-            known = client.exists_by_sha1(record.artifact_sha1)
-            if known is True:
-                record.lrr_archive_id = record.artifact_sha1
-                repository.finish(claim, owner=self.owner, event="uploaded")
-            else:
-                repository.finish(
-                    claim,
-                    owner=self.owner,
-                    event="review",
-                    error_code="lrr_upload_unknown",
-                    error_detail=outcome.response,
-                )
+        elif outcome.kind == "unknown":
+            if outcome.archive_id:
+                record.lrr_archive_id = outcome.archive_id
+            repository.finish(
+                claim,
+                owner=self.owner,
+                event="review",
+                error_code="lrr_upload_unknown",
+                error_detail=outcome.response,
+            )
         else:
             repository.finish(
                 claim,
@@ -1494,7 +1508,14 @@ def _task_result_line(result: TaskRunResult, *, timezone: str) -> str:
 
 
 def _write_task_lines(report: RunReport, operation: str, results: list[TaskRunResult]) -> None:
-    section = {
+    report.section(_task_section(operation))
+    total = len(results)
+    for index, result in enumerate(results, 1):
+        report.write(f"[{index}/{total}] {_task_result_line(result, timezone=report.timezone)}")
+
+
+def _task_section(operation: str) -> str:
+    return {
         "details": "details",
         "torrent_download": "torrent downloads",
         "direct_download": "direct downloads",
@@ -1504,10 +1525,6 @@ def _write_task_lines(report: RunReport, operation: str, results: list[TaskRunRe
         "cleanup": "cleanups",
         "delete": "deletions",
     }.get(operation, operation)
-    report.section(section)
-    total = len(results)
-    for index, result in enumerate(results, 1):
-        report.write(f"[{index}/{total}] {_task_result_line(result, timezone=report.timezone)}")
 
 
 def _finish_task_report(
@@ -1589,21 +1606,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     report = RunReport(app.log_dir, args.operation, timezone=app.timezone, run_id=run_id)
     report.fields({"batch_limit": batch_limit})
-    stream_direct_report = args.operation == "direct_download"
-    if stream_direct_report:
-        report.section("direct downloads")
+    report.section(_task_section(args.operation))
     executor = TaskExecutor(
         Database(app.database_url),
         config_dir=args.config_dir,
         run_id=run_id,
-        report=report if stream_direct_report else None,
+        report=report,
     )
     try:
         executor.run_batch(args.operation, args.limit)
     except Exception as exc:
         error = classify_exception(exc)
-        if not stream_direct_report:
-            _write_task_lines(report, args.operation, executor.results)
         current = executor.current_claim
         report.fatal(
             exc,
@@ -1618,7 +1631,7 @@ def main(argv: list[str] | None = None) -> int:
         args.operation,
         executor.results,
         system_error=executor.system_error,
-        write_task_lines=not stream_direct_report,
+        write_task_lines=False,
         thumbnail_regeneration=executor.thumbnail_regeneration,
     )
     return 2 if executor.system_error or report.write_failed else 0
