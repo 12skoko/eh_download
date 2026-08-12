@@ -16,6 +16,9 @@ fallback_method = "direct"
 # Minimum seconds between completed external web requests in one worker.
 # This applies to EH web/archive requests, not LANraragi or qBittorrent.
 external_request_delay_seconds = 5.0
+# E-Hentai/ExHentai network request retry policy.
+eh_request_retry_limit = 5
+eh_request_retry_delay_seconds = 10.0
 
 [sessions.browse]
 account = "default"

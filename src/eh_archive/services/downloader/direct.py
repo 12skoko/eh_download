@@ -34,6 +34,7 @@ class DirectDownloader:
         session: Any | None = None,
         timeout: tuple[float, float] = (30.0, 120.0),
         retries: int = 3,
+        retry_delay: float = 10.0,
         backoff: float = 2.0,
         jitter: float = 0.25,
         chunk_size: int = 1024 * 1024,
@@ -42,6 +43,7 @@ class DirectDownloader:
         self.session = session
         self.timeout = timeout
         self.retries = retries
+        self.retry_delay = retry_delay
         self.backoff = backoff
         self.jitter = jitter
         self.chunk_size = chunk_size
@@ -70,6 +72,7 @@ class DirectDownloader:
         destination.parent.mkdir(parents=True, exist_ok=True)
         part = destination.with_name(destination.name + ".part")
         last_error: Exception | None = None
+        network_failure = False
         for attempt in range(1, self.retries + 1):
             existing = part.stat().st_size if part.exists() else 0
             if expected_size and existing >= expected_size:
@@ -95,6 +98,9 @@ class DirectDownloader:
                 }
                 if self.role is not None:
                     request_kwargs["role"] = self.role
+                    # DirectDownloader owns retries for the long-lived stream;
+                    # avoid nesting RoleSession's request retries around it.
+                    request_kwargs["_eh_retry"] = False
                 response = session.get(
                     url,
                     **request_kwargs,
@@ -173,19 +179,33 @@ class DirectDownloader:
                 return DownloadResult(destination, written, resumed, attempt)
             except ArchiveError as exc:
                 if not exc.info.retryable or attempt >= self.retries:
+                    if exc.info.retryable and attempt >= self.retries:
+                        raise ArchiveError(
+                            "eh_site_unavailable",
+                            f"E-Hentai/ExHentai unavailable after {attempt} attempts: {exc}",
+                            ErrorClass.SYSTEM,
+                        ) from exc
                     raise
                 last_error = exc
+                network_failure = True
                 time.sleep(self.backoff ** (attempt - 1) + random.random() * self.jitter)
             except Exception as exc:
                 info = classify_exception(exc)
                 if info.category == ErrorClass.SYSTEM:
                     raise ArchiveError(info.code, info.message, ErrorClass.SYSTEM) from exc
                 last_error = exc
+                network_failure = True
                 if attempt >= self.retries:
                     break
-                time.sleep(self.backoff ** (attempt - 1) + random.random() * self.jitter)
+                time.sleep(self.retry_delay + random.random() * self.jitter)
         message = str(last_error or "download failed")
         message = re.sub(r"https?://[^\s)]+", "<redacted-url>", message)
+        if network_failure:
+            raise ArchiveError(
+                "eh_site_unavailable",
+                f"E-Hentai/ExHentai unavailable after {self.retries} attempts: {message}",
+                ErrorClass.SYSTEM,
+            )
         raise ArchiveError(
             "download_failed",
             message,

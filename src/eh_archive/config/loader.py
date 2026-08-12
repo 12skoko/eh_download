@@ -64,6 +64,10 @@ class AppConfig:
     # made by the same worker/session. LANraragi and qBittorrent clients do
     # not use RoleSession and are intentionally outside this throttle.
     external_request_delay_seconds: float = 5.0
+    # E-Hentai/ExHentai network requests are retried in the shared RoleSession
+    # before the site is considered unavailable.
+    eh_request_retry_limit: int = 5
+    eh_request_retry_delay_seconds: float = 10.0
 
     def root(self, location: str) -> Path:
         try:
@@ -316,9 +320,15 @@ def load_config(
             else "direct"
         ),
         external_request_delay_seconds=float(app_raw.get("external_request_delay_seconds", 5.0)),
+        eh_request_retry_limit=int(app_raw.get("eh_request_retry_limit", 5)),
+        eh_request_retry_delay_seconds=float(app_raw.get("eh_request_retry_delay_seconds", 10.0)),
     )
     if app.external_request_delay_seconds < 0:
         raise ValueError("external_request_delay_seconds must not be negative")
+    if app.eh_request_retry_limit <= 0:
+        raise ValueError("eh_request_retry_limit must be greater than zero")
+    if app.eh_request_retry_delay_seconds < 0:
+        raise ValueError("eh_request_retry_delay_seconds must not be negative")
     limits = dict(supervisor_raw.get("max_concurrency", {}))
     supervisor = SupervisorConfig(
         poll_seconds=float(supervisor_raw.get("poll_seconds", 5)),

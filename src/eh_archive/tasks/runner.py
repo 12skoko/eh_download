@@ -771,7 +771,8 @@ class TaskExecutor:
         downloader = DirectDownloader(
             session=archive_session,
             timeout=(self.supervisor.request_timeout_seconds, 120),
-            retries=self.supervisor.retry_limit,
+            retries=self.app.eh_request_retry_limit,
+            retry_delay=self.app.eh_request_retry_delay_seconds,
             role="archive",
         )
         destination = paths.temporary

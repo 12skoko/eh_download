@@ -62,7 +62,21 @@ def classify_exception(exc: BaseException) -> ErrorInfo:
     name = type(exc).__name__.lower()
     if "proxy" in name:
         return ErrorInfo("proxy_unavailable", str(exc), ErrorClass.SYSTEM)
-    if any(term in name for term in ("timeout", "connection", "reset", "temporary")):
+    if any(
+        term in name
+        for term in (
+            "timeout",
+            "connection",
+            "reset",
+            "temporary",
+            "ssl",
+            "protocol",
+            "remote",
+            "chunked",
+            "incomplete",
+            "eof",
+        )
+    ):
         return ErrorInfo("network_temporary", str(exc), ErrorClass.TEMPORARY, retryable=True)
     if isinstance(exc, RuntimeError):
         return ErrorInfo("system_runtime_error", str(exc), ErrorClass.SYSTEM)
