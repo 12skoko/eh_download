@@ -62,7 +62,7 @@ def safe_manga_id(manga_id: str) -> str:
     return value
 
 
-def safe_filename(name: str, *, max_length: int = 180) -> str:
+def safe_filename(name: str, *, max_length: int = 250) -> str:
     if not name or "\x00" in name:
         raise UnsafePathError("empty or NUL filename")
     if Path(name).name != name or "/" in name or "\\" in name:
@@ -92,6 +92,18 @@ def safe_filename(name: str, *, max_length: int = 180) -> str:
                 trimmed = trimmed[:-1]
             value = trimmed + "_" + suffix
     return value
+
+
+def existing_filename(name: str) -> str:
+    """Validate an existing filename without changing its on-disk spelling."""
+
+    if not name or "\x00" in name:
+        raise UnsafePathError("empty or NUL filename")
+    if Path(name).name != name or "/" in name or "\\" in name:
+        raise UnsafePathError("filename must not contain path separators")
+    if name in {".", ".."}:
+        raise UnsafePathError("invalid filename")
+    return name
 
 
 def direct_archive_filename(manga_id: str, manga_name: str) -> str:
@@ -183,7 +195,10 @@ class ArtifactPathService:
         """Resolve qBittorrent's per-gallery directory without storing it in DB."""
         root = self._root("torrent_download")
         folder = safe_filename(manga_id.split("/", 1)[0])
-        name = safe_filename(filename)
+        # qBittorrent has already created this file. Validate the registered
+        # name for traversal, but do not truncate or otherwise rename it while
+        # reconstructing its real path.
+        name = existing_filename(filename)
         folder_path = root / folder
         if folder_path.is_symlink():
             raise UnsafePathError("torrent artifact path traverses a symlink")
