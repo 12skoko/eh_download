@@ -19,6 +19,9 @@ external_request_delay_seconds = 5.0
 # E-Hentai/ExHentai network request retry policy.
 eh_request_retry_limit = 5
 eh_request_retry_delay_seconds = 10.0
+# Cool down only the affected module after all E-Hentai requests fail.
+# Set to 0 to disable cooldown and drain/stop the Supervisor instead.
+eh_unavailable_cooldown_seconds = 21600
 
 [sessions.browse]
 account = "default"

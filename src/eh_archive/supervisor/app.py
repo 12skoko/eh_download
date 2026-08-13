@@ -15,7 +15,12 @@ from ..config import load_config
 from ..db import ArchiveRepository, Database
 from ..db.models import SystemControl
 from ..db.repository import utcnow
-from ..domain.errors import ArchiveError, ErrorClass, classify_exception
+from ..domain.errors import (
+    EH_SITE_UNAVAILABLE_EXIT_CODE,
+    ArchiveError,
+    ErrorClass,
+    classify_exception,
+)
 from ..logging import (
     MAIN_LOG_ENV,
     SUPERVISOR_RUN_ID_ENV,
@@ -300,6 +305,23 @@ class Supervisor:
                         child.pid,
                     )
                     continue
+                if child.returncode == EH_SITE_UNAVAILABLE_EXIT_CODE:
+                    cooldown = self.app.eh_unavailable_cooldown_seconds
+                    if cooldown == 0:
+                        self._enter_draining(
+                            operation,
+                            2,
+                            "E-Hentai/ExHentai unavailable and module cooldown is disabled",
+                        )
+                        continue
+                    self.next_start_at[operation] = time.monotonic() + cooldown
+                    log.warning(
+                        "E-Hentai/ExHentai unavailable; submodule cooling down: "
+                        "operation=%s cooldown_seconds=%s; other modules continue",
+                        operation,
+                        cooldown,
+                    )
+                    continue
                 if child.returncode not in SEVERE_CHILD_EXIT_CODES:
                     log.error(
                         "submodule returned an unknown fatal code: operation=%s returncode=%s",
@@ -384,6 +406,8 @@ class Supervisor:
         if not self.config.modules["collect"] or self._paused("collect"):
             return
         now = time.monotonic()
+        if now < self.next_start_at.get("collect", 0.0):
+            return
         child = self.children.get("collect")
         if child is not None and child.poll() is None:
             return

@@ -5,6 +5,8 @@ from enum import StrEnum
 from errno import EACCES, EDQUOT, ENOSPC, EROFS
 from typing import Any
 
+EH_SITE_UNAVAILABLE_EXIT_CODE = 4
+
 
 class ErrorClass(StrEnum):
     TEMPORARY = "temporary"

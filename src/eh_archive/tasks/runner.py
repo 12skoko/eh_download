@@ -16,7 +16,12 @@ from typing import Any
 from ..config import load_config
 from ..db import ArchiveRepository, Database, JobAttempt, MangaRecord
 from ..db.repository import ClaimedAttempt, utcnow
-from ..domain.errors import ArchiveError, ErrorClass, classify_exception
+from ..domain.errors import (
+    EH_SITE_UNAVAILABLE_EXIT_CODE,
+    ArchiveError,
+    ErrorClass,
+    classify_exception,
+)
 from ..domain.states import Status
 from ..integrations.http import RoleSession
 from ..logging import (
@@ -142,6 +147,7 @@ class TaskExecutor:
         self.run_id = run_id or str(uuid.uuid4())
         self.paths = ArtifactPathService(self.app)
         self.system_error = False
+        self.eh_site_unavailable = False
         self.results: list[TaskRunResult] = []
         self.current_claim: ClaimedAttempt | None = None
         self.report = report
@@ -368,9 +374,14 @@ class TaskExecutor:
             raise ValueError("limit must be non-negative")
         while count < limit and self.run_once(operation):
             count += 1
-            if self.system_error:
+            if self.system_error or self.eh_site_unavailable:
                 break
-        if operation == "upload" and count > 0 and not self.system_error:
+        if (
+            operation == "upload"
+            and count > 0
+            and not self.system_error
+            and not self.eh_site_unavailable
+        ):
             client = LANraragiClient(
                 self.app.lanraragi_url,
                 headers=self.secrets.lanraragi,
@@ -1245,7 +1256,10 @@ class TaskExecutor:
     ) -> None:
         info = classify_exception(exc)
         if info.category == ErrorClass.SYSTEM:
-            self.system_error = True
+            if info.code == "eh_site_unavailable":
+                self.eh_site_unavailable = True
+            else:
+                self.system_error = True
             self._handle_system_error(repository, claim, info)
             log.exception(
                 "task failed",
@@ -1626,15 +1640,19 @@ def main(argv: list[str] | None = None) -> int:
             result={"claimed": len(executor.results)},
         )
         log.exception("task submodule failed: operation=%s run_id=%s", args.operation, run_id)
+        if error.code == "eh_site_unavailable":
+            return EH_SITE_UNAVAILABLE_EXIT_CODE
         return 2 if error.category == ErrorClass.SYSTEM else 1
     _finish_task_report(
         report,
         args.operation,
         executor.results,
-        system_error=executor.system_error,
+        system_error=executor.system_error or executor.eh_site_unavailable,
         write_task_lines=False,
         thumbnail_regeneration=executor.thumbnail_regeneration,
     )
+    if executor.eh_site_unavailable:
+        return EH_SITE_UNAVAILABLE_EXIT_CODE
     return 2 if executor.system_error or report.write_failed else 0
 
 
