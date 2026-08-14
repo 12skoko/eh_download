@@ -180,7 +180,6 @@ $env:EHARCHIVE_WEB_SECRET = 'change-this-long-random-secret'
 | `qbit_torrent_path` | qBittorrent 主机看到的种子保存路径，可与本地 `roots.torrent_download` 不同 |
 | `external_request_delay_seconds` | 同一个 worker 连续访问 EH 外部网页请求完成后的最小等待秒数，默认 `5.0`；设为 `0` 可关闭。作用于列表、详情、torrent、archive/direct/H@H 网页请求，不作用于 LANraragi 和 qBittorrent |
 | `lanraragi_url` | LANraragi 地址 |
-| `max_file_size` | 单个产物允许的最大字节数 |
 | `fallback_method` | 无 torrent/无做种、qBittorrent 任务被手动标记为 `failed`，或未完成的 `stalledDL` 超过停滞阈值时使用的 `direct`、`hah` 或 `aria2` |
 | `aria2_enabled`、`hah_enabled` | 启用对应可选下载器 |
 | `[roots]` | 受控文件根目录；每个值都必须是运行机器上的绝对目录 |

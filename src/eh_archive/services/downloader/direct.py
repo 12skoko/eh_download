@@ -58,7 +58,6 @@ class DirectDownloader:
         cookies: dict[str, str] | None = None,
         proxies: dict[str, str] | None = None,
         expected_size: int | None = None,
-        max_size: int | None = None,
         started: Callable[[int, int | None], None] | None = None,
         progress: Callable[[int], None] | None = None,
     ) -> DownloadResult:
@@ -156,12 +155,6 @@ class DirectDownloader:
                     for chunk in response.iter_content(chunk_size=self.chunk_size):
                         if not chunk:
                             continue
-                        if max_size is not None and written + len(chunk) > max_size:
-                            raise ArchiveError(
-                                "artifact_too_large",
-                                f"download exceeds configured limit {max_size}",
-                                ErrorClass.ITEM,
-                            )
                         handle.write(chunk)
                         written += len(chunk)
                         if progress:

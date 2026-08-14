@@ -46,7 +46,6 @@ class AppConfig:
     log_level: str = "INFO"
     log_dir: Path = Path("log")
     roots: dict[str, Path] = field(default_factory=dict)
-    max_file_size: int = 20 * 1024 * 1024 * 1024
     # Files at or above this size are reserved for the future filesystem-based
     # LANraragi import path. Zero disables the reservation.
     large_upload_threshold_bytes: int = 2 * 1024 * 1024 * 1024
@@ -310,7 +309,6 @@ def load_config(
         log_level=str(app_raw.get("log_level", "INFO")),
         log_dir=log_dir,
         roots=roots,
-        max_file_size=int(app_raw.get("max_file_size", AppConfig.max_file_size)),
         large_upload_threshold_bytes=int(
             app_raw.get("large_upload_threshold_bytes", AppConfig.large_upload_threshold_bytes)
         ),

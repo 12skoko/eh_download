@@ -628,7 +628,7 @@ class TaskExecutor:
                 content_path = gallery_root / filename
             else:
                 filename, content_path = relative.name, raw_content
-            fingerprint = validate_artifact(content_path, max_size=self.app.max_file_size)
+            fingerprint = validate_artifact(content_path)
             generation = (record.artifact_generation or 0) + 1
             if repository.fenced(claim, owner=self.owner) is None:
                 raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
@@ -812,14 +812,11 @@ class TaskExecutor:
             headers={"User-Agent": "EH-Archive/6", "Referer": record.link},
             cookies=self.secrets.cookies(self.app.archive_session),
             proxies=self.secrets.network(self.app.archive_session).get("proxies"),
-            max_size=self.app.max_file_size,
             started=self._start_direct_report_transfer,
             progress=self._update_direct_report_progress,
         )
         self._update_direct_report_progress(download_result.size, force=True)
-        fingerprint = validate_artifact(
-            destination, expected_kind="zip", max_size=self.app.max_file_size
-        )
+        fingerprint = validate_artifact(destination, expected_kind="zip")
         repository_obj = repository.fenced(claim, owner=self.owner, require_generation=True)
         if repository_obj is None:
             raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
@@ -916,9 +913,7 @@ class TaskExecutor:
             if source is None:
                 repository.finish(claim, owner=self.owner)
                 return
-            fingerprint = validate_artifact(
-                source, expected_kind="directory", max_size=self.app.max_file_size
-            )
+            fingerprint = validate_artifact(source, expected_kind="directory")
             if repository.fenced(claim, owner=self.owner) is None:
                 raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
             record.artifact_location, record.artifact_filename, record.artifact_kind = (
@@ -937,9 +932,7 @@ class TaskExecutor:
                 return
             _, temporary_name = self.paths.names(record.manga_id, generation, None)
             source = self.paths.resolve("aria2_download", temporary_name)
-            fingerprint = validate_artifact(
-                source, expected_kind="zip", max_size=self.app.max_file_size
-            )
+            fingerprint = validate_artifact(source, expected_kind="zip")
             final_name, _ = self.paths.names(record.manga_id, generation, None, extension=".zip")
             final = self.paths.resolve("aria2_download", final_name)
             if final.exists():
@@ -975,7 +968,6 @@ class TaskExecutor:
         fingerprint = validate_artifact(
             path,
             expected_kind=record.artifact_kind,
-            max_size=self.app.max_file_size,
             calculate_sha1=not bool(record.artifact_sha1),
         )
         record.artifact_size = fingerprint.size
@@ -1057,7 +1049,6 @@ class TaskExecutor:
             path,
             info,
             checksum=record.artifact_sha1,
-            max_size=self.app.max_file_size,
             timeout=(
                 self.supervisor.request_timeout_seconds,
                 self.supervisor.upload_timeout_seconds,

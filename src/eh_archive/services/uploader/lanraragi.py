@@ -80,13 +80,9 @@ class LANraragiClient:
         info: MangaInfo,
         *,
         checksum: str,
-        max_size: int | None = None,
         timeout: float | tuple[float, float] | None = None,
     ) -> UploadOutcome:
         path = Path(path)
-        size = path.stat().st_size
-        if max_size is not None and size > max_size:
-            return UploadOutcome("too_large", status_code=413, response=str(size))
         if not info.is_complete():
             raise ArchiveError("missing_mangainfo", "MangaInfo is incomplete", ErrorClass.ITEM)
         data = {"title": info.name, "tags": build_tags(info), "file_checksum": checksum}

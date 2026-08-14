@@ -75,7 +75,6 @@ def validate_artifact(
     path: str | Path,
     *,
     expected_kind: str | None = None,
-    max_size: int | None = None,
     calculate_sha1: bool = True,
 ) -> ArtifactFingerprint:
     path = Path(path)
@@ -85,16 +84,12 @@ def validate_artifact(
         if expected_kind == "file":
             raise ValidationError("unexpected_directory", "directory cannot be uploaded as a file")
         size = _validate_directory(path)
-        if max_size is not None and size > max_size:
-            raise ValidationError("artifact_too_large", f"{size} > {max_size}")
         kind = "directory"
         sha1 = None
     else:
         size = path.stat().st_size
         if size <= 0:
             raise ValidationError("empty_artifact", "artifact is empty")
-        if max_size is not None and size > max_size:
-            raise ValidationError("artifact_too_large", f"{size} > {max_size}")
         with path.open("rb") as handle:
             prefix = handle.read(512).lstrip().lower()
         if prefix.startswith((b"<!doctype html", b"<html", b"{", b"[")):
