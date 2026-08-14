@@ -185,7 +185,10 @@ class TaskExecutor:
         with self.database.session() as session:
             repository = ArchiveRepository(session, run_id=self.run_id)
             claim = repository.claim_next(
-                operation, owner=self.owner, lease_seconds=self.supervisor.lease_seconds
+                operation,
+                owner=self.owner,
+                lease_seconds=self.supervisor.lease_seconds,
+                large_upload_threshold_bytes=self.app.large_upload_threshold_bytes,
             )
         if claim is None:
             return False

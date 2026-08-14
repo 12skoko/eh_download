@@ -109,7 +109,10 @@ class Supervisor:
                 continue
             self.children.pop(operation, None)
             with self.database.session() as session:
-                if not ArchiveRepository(session).has_work(operation):
+                if not ArchiveRepository(session).has_work(
+                    operation,
+                    large_upload_threshold_bytes=self.app.large_upload_threshold_bytes,
+                ):
                     continue
             # One bounded child per operation. qBittorrent's own background
             # transfer count is intentionally not controlled here.

@@ -47,6 +47,9 @@ class AppConfig:
     log_dir: Path = Path("log")
     roots: dict[str, Path] = field(default_factory=dict)
     max_file_size: int = 20 * 1024 * 1024 * 1024
+    # Files at or above this size are reserved for the future filesystem-based
+    # LANraragi import path. Zero disables the reservation.
+    large_upload_threshold_bytes: int = 2 * 1024 * 1024 * 1024
     allowed_archive_extensions: tuple[str, ...] = (".zip",)
     web_host: str = "127.0.0.1"
     web_port: int = 8787
@@ -308,6 +311,9 @@ def load_config(
         log_dir=log_dir,
         roots=roots,
         max_file_size=int(app_raw.get("max_file_size", AppConfig.max_file_size)),
+        large_upload_threshold_bytes=int(
+            app_raw.get("large_upload_threshold_bytes", AppConfig.large_upload_threshold_bytes)
+        ),
         allowed_archive_extensions=tuple(app_raw.get("allowed_archive_extensions", [".zip"])),
         web_host=str(app_raw.get("web_host", "127.0.0.1")),
         web_port=int(app_raw.get("web_port", 8787)),
@@ -332,6 +338,8 @@ def load_config(
     )
     if app.external_request_delay_seconds < 0:
         raise ValueError("external_request_delay_seconds must not be negative")
+    if app.large_upload_threshold_bytes < 0:
+        raise ValueError("large_upload_threshold_bytes must not be negative")
     if app.eh_request_retry_limit <= 0:
         raise ValueError("eh_request_retry_limit must be greater than zero")
     if app.eh_request_retry_delay_seconds < 0:

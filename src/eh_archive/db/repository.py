@@ -605,7 +605,7 @@ class ArchiveRepository:
             )
         return len(rows)
 
-    def has_work(self, operation: str) -> bool:
+    def has_work(self, operation: str, *, large_upload_threshold_bytes: int = 0) -> bool:
         try:
             states, _ = OPERATION_STATES[operation]
         except KeyError as exc:
@@ -633,10 +633,23 @@ class ArchiveRepository:
                     and_(MangaRecord.download_method.is_(None), MangaRecord.torrent_link == ""),
                 )
             )
+        elif operation == "upload" and large_upload_threshold_bytes > 0:
+            query = query.where(
+                or_(
+                    MangaRecord.artifact_size.is_(None),
+                    MangaRecord.artifact_size < large_upload_threshold_bytes,
+                )
+            )
         return self.session.scalar(query) is not None
 
     def claim_next(
-        self, operation: str, *, owner: str, lease_seconds: int = 900, actor: str | None = None
+        self,
+        operation: str,
+        *,
+        owner: str,
+        lease_seconds: int = 900,
+        actor: str | None = None,
+        large_upload_threshold_bytes: int = 0,
     ) -> ClaimedAttempt | None:
         try:
             states, execution_state = OPERATION_STATES[operation]
@@ -663,6 +676,13 @@ class ArchiveRepository:
                 or_(
                     MangaRecord.download_method.in_(("direct", "hah", "aria2")),
                     and_(MangaRecord.download_method.is_(None), MangaRecord.torrent_link == ""),
+                )
+            )
+        elif operation == "upload" and large_upload_threshold_bytes > 0:
+            query = query.where(
+                or_(
+                    MangaRecord.artifact_size.is_(None),
+                    MangaRecord.artifact_size < large_upload_threshold_bytes,
                 )
             )
         manga = self.session.scalars(query).first()

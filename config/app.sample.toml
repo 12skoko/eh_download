@@ -3,6 +3,10 @@ timezone = "Asia/Shanghai"
 log_level = "INFO"
 log_dir = "D:/eharchive-data/log"
 max_file_size = 21474836480
+# Files at or above this size are reserved for the future filesystem-based
+# LANraragi import path and are left in upload_pending for now. Set to 0 to
+# disable this reservation and use normal HTTP upload for every file.
+large_upload_threshold_bytes = 2147483648
 web_host = "127.0.0.1"
 web_port = 8787
 qbittorrent_url = "http://127.0.0.1:8080"
