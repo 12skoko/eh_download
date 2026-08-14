@@ -52,6 +52,14 @@ from ..services.validator.artifact import ValidationError, quarantine_artifact, 
 
 log = get_logger(__name__)
 DIRECT_REPORT_PROGRESS_INTERVAL_SECONDS = 10.0
+TORRENT_FALLBACK_CODES = frozenset(
+    {
+        "no_torrent",
+        "no_seeded_torrent",
+        "only_outdated_torrents",
+        "only_resampled_torrents",
+    }
+)
 
 
 def _qbit_tags(info: Any) -> set[str]:
@@ -637,6 +645,7 @@ class TaskExecutor:
                 error_code="no_torrent",
                 error_detail="gallery has no torrent",
             )
+            self._log_torrent_fallback(claim, reason="no_torrent")
             return
         info = _info(record)
         if info is None or not info.is_complete():
@@ -1385,12 +1394,7 @@ class TaskExecutor:
                 "http_unavailable",
             }:
                 event = "unavailable"
-            if info.code in {
-                "no_torrent",
-                "no_seeded_torrent",
-                "only_outdated_torrents",
-                "only_resampled_torrents",
-            }:
+            if info.code in TORRENT_FALLBACK_CODES:
                 event = "fallback"
                 if claim.operation == "torrent_download":
                     record = repository.get(claim.manga_id)
@@ -1412,9 +1416,27 @@ class TaskExecutor:
                     error_code=info.code,
                     error_detail=info.message,
                 )
+        if claim.operation == "torrent_download" and info.code in TORRENT_FALLBACK_CODES:
+            self._log_torrent_fallback(claim, reason=info.code)
+            return
         log.exception(
             "task failed",
             extra={"event": {"manga_id": claim.manga_id, "operation": claim.operation}},
+        )
+
+    def _log_torrent_fallback(self, claim: ClaimedAttempt, *, reason: str) -> None:
+        """Record expected torrent-selection fallbacks without a traceback."""
+
+        log.info(
+            "torrent unavailable; falling back",
+            extra={
+                "event": {
+                    "manga_id": claim.manga_id,
+                    "operation": claim.operation,
+                    "reason": reason,
+                    "fallback": self.app.fallback_method,
+                }
+            },
         )
 
     def _handle_system_error(
