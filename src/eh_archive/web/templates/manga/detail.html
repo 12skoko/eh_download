@@ -16,8 +16,42 @@
   </article>
 </section>
 {% if row.last_error_code %}<section class="panel error-panel"><div class="section-head"><div><p class="eyebrow">最近故障</p><h2>{{ row.last_error_code }}</h2></div><span>{{ row.last_error_at|datetime }}</span></div><p>{{ row.last_error_detail }}</p><p class="mono">operation: {{ row.last_error_operation or '—' }}</p></section>{% endif %}
-<section class="panel"><div class="section-head"><div><p class="eyebrow">人工控制</p><h2>允许的操作</h2></div></div>
-  <div class="action-grid">{% for action in allowed_actions(row.status) %}<form method="post" action="/manga/{{ row.manga_id }}/actions/{{ action.name }}" class="action-card" hx-confirm="确认执行“{{ action.label }}”？"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><strong>{{ action.label }}</strong><small>{{ action.name }}</small>{% if action.name == 'confirm-uploaded' %}<input name="archive_id" pattern="[0-9A-Fa-f]{40}" placeholder="40 位 archive ID" required>{% endif %}<input name="reason" placeholder="操作原因（可选）"><button type="submit">执行</button></form>{% else %}<div class="empty">当前状态没有可用的人工迁移动作。</div>{% endfor %}</div>
+<section class="panel"><div class="section-head"><div><p class="eyebrow">人工控制</p><h2>调整到关键状态</h2><p class="muted">所有操作都会先打开确认窗口，并写入下方审计轨迹。</p></div></div>
+  {% set execution_active = row.active_attempt_id or row.lease_owner or row.lease_token %}
+  {% if execution_active %}<div class="alert warning">当前档案仍有活动任务或租约，人工状态调整已锁定。</div>{% endif %}
+  <div class="status-action-grid">
+    {% for target in manual_status_targets %}
+    <button type="button" class="status-action-button {{ 'danger' if target.danger else '' }}" data-open-dialog="status-dialog-{{ target.status }}" {% if execution_active or row.status == target.status %}disabled{% endif %}>
+      <strong>{{ target.label }}</strong>
+      <small>{{ target.status }}{% if row.status == target.status %} · 当前状态{% endif %}</small>
+    </button>
+    <dialog id="status-dialog-{{ target.status }}" class="status-dialog">
+      <form method="post" action="/manga/{{ row.manga_id }}/status/{{ target.status }}" class="status-dialog-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="row_version" value="{{ row.row_version }}">
+        <div class="dialog-head"><div><p class="eyebrow">人工状态调整</p><h2>{{ target.label }}</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+        <p>{{ target.description }}</p>
+        <dl class="transition-preview"><div><dt>当前状态</dt><dd>{{ row.status }} / {{ row.status|status_label }}</dd></div><div><dt>目标状态</dt><dd>{{ target.status }} / {{ target.status|status_label }}</dd></div></dl>
+        {% if target.status in ['download_pending', 'downloaded'] %}
+        <label>下载方式（必填）<select name="download_method" required><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}" {% if row.download_method == method %}selected{% endif %}>{{ method }}</option>{% endfor %}</select></label>
+        {% endif %}
+        {% if target.status == 'downloaded' %}
+        <label>文件名（必填）<input name="artifact_filename" value="{{ row.artifact_filename or '' }}" placeholder="已存在于当前 artifact_location 的文件名" required></label>
+        <p class="field-help">当前位置：<span class="mono">{{ row.artifact_location or '未登记' }}</span>。服务器会检查文件真实存在。</p>
+        {% endif %}
+        {% if target.status in ['uploaded', 'completed'] %}
+        <label>LANraragi archive ID（必填）<input name="archive_id" value="{{ row.lrr_archive_id or '' }}" pattern="[0-9A-Fa-f]{40}" maxlength="40" placeholder="40 位十六进制 archive ID" required></label>
+        {% endif %}
+        {% if target.status == 'outdated' %}
+        <label>替代档案 ID（必填）<input name="superseded_by_id" value="{{ row.superseded_by_id or '' }}" placeholder="例如 123456/token" required></label>
+        {% endif %}
+        <label>操作原因{% if target.requires_reason %}（必填）{% else %}（可选）{% endif %}<textarea name="reason" rows="3" {% if target.requires_reason %}required{% endif %}></textarea></label>
+        {% if target.danger %}<div class="alert warning">这是高影响操作，请核对目标状态和必填信息后再确认。</div>{% endif %}
+        <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认修改</button></div>
+      </form>
+    </dialog>
+    {% endfor %}
+  </div>
 </section>
 <section class="detail-grid">
   <article class="panel"><div class="section-head"><div><p class="eyebrow">归档产物</p><h2>文件信息</h2></div></div><dl class="facts two"><div><dt>位置</dt><dd>{{ row.artifact_location or '—' }}</dd></div><div><dt>文件名</dt><dd class="mono break">{{ row.artifact_filename or '—' }}</dd></div><div><dt>类型/代次</dt><dd>{{ row.artifact_kind or '—' }} / {{ row.artifact_generation or '—' }}</dd></div><div><dt>大小</dt><dd>{{ row.artifact_size|filesize }}</dd></div><div><dt>SHA1</dt><dd class="mono break">{{ row.artifact_sha1 or '—' }}</dd></div><div><dt>LANraragi ID</dt><dd class="mono break">{{ row.lrr_archive_id or '—' }}</dd></div></dl></article>

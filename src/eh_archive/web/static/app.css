@@ -143,6 +143,26 @@ tbody tr:hover { background: rgb(23 107 135 / 3.5%); }
 .action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .75rem; }
 .action-card { display: grid; gap: .45rem; padding: .85rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-soft); }
 .action-card small { color: var(--muted); }
+.status-action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: .65rem; }
+.status-action-button { min-height: 64px; display: grid; justify-items: start; align-content: center; text-align: left; }
+.status-action-button small { color: var(--muted); font-family: "Cascadia Code", Consolas, monospace; }
+.status-action-button.danger { color: var(--red); border-color: #e6aaa4; }
+.status-action-button:disabled { cursor: not-allowed; opacity: .5; }
+.status-dialog {
+  width: min(600px, calc(100% - 2rem)); max-height: calc(100vh - 2rem); padding: 0;
+  color: var(--text); border: 1px solid var(--line); border-radius: 14px; background: var(--surface);
+  box-shadow: 0 25px 80px rgb(8 25 36 / 30%);
+}
+.status-dialog::backdrop { background: rgb(8 25 36 / 58%); backdrop-filter: blur(2px); }
+.status-dialog-form { display: grid; gap: 1rem; padding: 1.25rem; }
+.dialog-head { display: flex; justify-content: space-between; gap: 1rem; align-items: start; }
+.dialog-head h2 { font-size: 1.25rem; }
+.dialog-close { min-width: 36px; padding: 0; font-size: 1.4rem; line-height: 1; }
+.transition-preview { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin: 0; padding: .8rem; border-radius: 8px; background: var(--surface-soft); }
+.transition-preview dt { color: var(--muted); font-size: .72rem; }
+.transition-preview dd { margin: .2rem 0 0; font-family: "Cascadia Code", Consolas, monospace; overflow-wrap: anywhere; }
+.field-help { margin: -.5rem 0 0; color: var(--muted); font-size: .78rem; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: .75rem; padding-top: .25rem; }
 
 .timeline { position: relative; display: grid; margin-left: .3rem; }
 .timeline::before { content: ""; position: absolute; top: .5rem; bottom: .5rem; left: 5px; width: 1px; background: var(--line); }

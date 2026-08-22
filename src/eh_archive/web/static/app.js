@@ -14,3 +14,27 @@ document.addEventListener("htmx:beforeSwap", (event) => {
     event.detail.target = document.body;
   }
 });
+
+document.addEventListener("click", (event) => {
+  const opener = event.target.closest("[data-open-dialog]");
+  if (opener) {
+    const dialog = document.getElementById(opener.dataset.openDialog);
+    if (dialog instanceof HTMLDialogElement) dialog.showModal();
+    return;
+  }
+
+  const closer = event.target.closest("[data-close-dialog]");
+  if (closer) closer.closest("dialog")?.close();
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target instanceof HTMLDialogElement) {
+    const bounds = event.target.getBoundingClientRect();
+    const inside =
+      event.clientX >= bounds.left &&
+      event.clientX <= bounds.right &&
+      event.clientY >= bounds.top &&
+      event.clientY <= bounds.bottom;
+    if (!inside) event.target.close();
+  }
+});

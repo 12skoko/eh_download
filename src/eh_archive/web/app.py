@@ -27,6 +27,7 @@ from .auth import (
 from .services import (
     COMPONENT_LABELS,
     CONTROL_COMPONENTS,
+    MANUAL_STATUS_TARGETS,
     STATUS_LABELS,
     InvalidRequest,
     WebService,
@@ -120,6 +121,14 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
         row_version: int
         reason: str | None = None
         archive_id: str | None = None
+
+    class StatusOverrideUpdate(BaseModel):
+        row_version: int
+        reason: str | None = None
+        download_method: str | None = None
+        artifact_filename: str | None = None
+        archive_id: str | None = None
+        superseded_by_id: str | None = None
 
     status_query = Query(default=[])
 
@@ -403,6 +412,28 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             "action-completed",
         )
 
+    @app.post("/manga/{manga_id:path}/status/{target_status}")
+    async def override_manga_status_page(request: Request, manga_id: str, target_status: str):
+        form = await _validated_form(request)
+        return _page_update(
+            request,
+            templates,
+            database,
+            manga_id,
+            lambda service: service.override_status(
+                manga_id,
+                target_status=target_status,
+                row_version=int(str(form.get("row_version", ""))),
+                reason=_optional_text(form.get("reason")),
+                download_method=_optional_text(form.get("download_method")),
+                artifact_filename=_optional_text(form.get("artifact_filename")),
+                archive_id=_optional_text(form.get("archive_id")),
+                superseded_by_id=_optional_text(form.get("superseded_by_id")),
+            ),
+            "status-updated",
+            app_config=app_config,
+        )
+
     @app.post("/control/{component}")
     async def control_page(request: Request, component: str):
         form = await _validated_form(request)
@@ -574,6 +605,29 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             ),
         )
 
+    @app.post("/api/manga/{manga_id:path}/status/{target_status}")
+    def api_override_manga_status(
+        request: Request,
+        manga_id: str,
+        target_status: str,
+        payload: StatusOverrideUpdate,
+    ):
+        return _api_update(
+            database,
+            request,
+            lambda service: service.override_status(
+                manga_id,
+                target_status=target_status,
+                row_version=payload.row_version,
+                reason=payload.reason,
+                download_method=payload.download_method,
+                artifact_filename=payload.artifact_filename,
+                archive_id=payload.archive_id,
+                superseded_by_id=payload.superseded_by_id,
+            ),
+            app_config=app_config,
+        )
+
     control_body = Body()
 
     @app.put("/api/control/{component}")
@@ -611,6 +665,7 @@ def _context(request, **values):
         "control_components": CONTROL_COMPONENTS,
         "supervisor_modules": SUPERVISOR_MODULES,
         "allowed_actions": allowed_actions,
+        "manual_status_targets": MANUAL_STATUS_TARGETS,
         "now": datetime.now(UTC),
         **values,
     }
@@ -630,22 +685,33 @@ def _actor(request) -> str:
     return f"web:{request.state.identity.username}"
 
 
-def _page_update(request, templates, database, manga_id, callback, notice):
+def _page_update(
+    request,
+    templates,
+    database,
+    manga_id,
+    callback,
+    notice,
+    *,
+    app_config=None,
+):
     try:
         with database.session() as session:
-            callback(WebService(session, actor=_actor(request)))
+            callback(WebService(session, actor=_actor(request), app_config=app_config))
     except (ValueError, WebServiceError) as exc:
         error = exc if isinstance(exc, WebServiceError) else InvalidRequest("表单数据无效")
         return _error_response(request, templates, error)
     return _redirect_response(request, f"/manga/{manga_id}?notice={notice}")
 
 
-def _api_update(database, request, callback):
+def _api_update(database, request, callback, *, app_config=None):
     from fastapi import HTTPException
 
     try:
         with database.session() as session:
-            return serialize_manga(callback(WebService(session, actor=_actor(request))))
+            return serialize_manga(
+                callback(WebService(session, actor=_actor(request), app_config=app_config))
+            )
     except WebServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 

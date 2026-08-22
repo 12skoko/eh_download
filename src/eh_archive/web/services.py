@@ -5,15 +5,24 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import and_, desc, func, inspect, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
-from ..config.loader import SUPERVISOR_MODULES
-from ..db.models import EventLog, JobAttempt, MangaRecord, SystemControl, SystemHealth
+from ..config.loader import SUPERVISOR_MODULES, AppConfig
+from ..db.models import (
+    DOWNLOAD_METHOD_VALUES,
+    EventLog,
+    JobAttempt,
+    MangaRecord,
+    SystemControl,
+    SystemHealth,
+)
 from ..db.repository import utcnow
 from ..domain.states import Status, can_transition, transition_target
+from ..services.paths import ArtifactPathService, UnsafePathError
 
 CONTROL_COMPONENTS = ("supervisor", *SUPERVISOR_MODULES)
 
@@ -63,6 +72,84 @@ ACTION_LABELS = {
     "upload": "恢复上传",
     "confirm-uploaded": "确认已上传",
 }
+
+MANUAL_STATUS_TARGETS = (
+    {
+        "status": Status.DISCOVERED.value,
+        "label": "退回已发现",
+        "description": "停止当前流程并退回已发现状态；不会自动进入下载队列。",
+    },
+    {
+        "status": Status.DOWNLOAD_PENDING.value,
+        "label": "进入下载队列",
+        "description": "保存指定下载方式，等待 Supervisor 安排下载。",
+    },
+    {
+        "status": Status.DOWNLOADED.value,
+        "label": "进入校验队列",
+        "description": "登记已有档案，等待 Supervisor 安排校验。",
+    },
+    {
+        "status": Status.UPLOAD_PENDING.value,
+        "label": "进入上传队列",
+        "description": "要求已有经过校验的本地档案，等待 Supervisor 安排上传。",
+    },
+    {
+        "status": Status.UPLOADED.value,
+        "label": "确认已上传",
+        "description": "登记 LANraragi archive ID，随后可由 cleanup 模块继续处理。",
+    },
+    {
+        "status": Status.COMPLETED.value,
+        "label": "确认已完成",
+        "description": "人工确认整个流程完成；不会执行 cleanup 或删除本地文件。",
+    },
+    {
+        "status": Status.MANUAL_REVIEW.value,
+        "label": "转人工复核",
+        "description": "停止自动领取，保留记录供人工检查。",
+    },
+    {
+        "status": Status.SKIPPED.value,
+        "label": "标记跳过",
+        "description": "从自动流程中跳过这条档案。",
+    },
+    {
+        "status": Status.UNAVAILABLE.value,
+        "label": "标记不可用",
+        "description": "标记来源或档案不可用，必须填写原因。",
+        "requires_reason": True,
+    },
+    {
+        "status": Status.QUARANTINED.value,
+        "label": "转入隔离",
+        "description": "标记档案需要隔离处理，必须填写原因。",
+        "requires_reason": True,
+    },
+    {
+        "status": Status.OUTDATED.value,
+        "label": "标记过时",
+        "description": "关联替代档案并进入删除队列；delete 模块可能随后执行实际删除。",
+        "danger": True,
+    },
+    {
+        "status": Status.DELETED.value,
+        "label": "确认已删除",
+        "description": "只确认外部删除事实，不会在此操作中删除任何文件。",
+        "requires_reason": True,
+        "danger": True,
+    },
+)
+
+MANUAL_STATUS_VALUES = frozenset(target["status"] for target in MANUAL_STATUS_TARGETS)
+REPLACEMENT_READY_STATUSES = frozenset(
+    {
+        Status.UPLOAD_PENDING.value,
+        Status.UPLOADING.value,
+        Status.UPLOADED.value,
+        Status.COMPLETED.value,
+    }
+)
 
 _ACTION_EVENTS: dict[str, dict[str, str]] = {
     "retry": {
@@ -129,9 +216,16 @@ class MangaPage:
 
 
 class WebService:
-    def __init__(self, session: Session, *, actor: str) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        actor: str,
+        app_config: AppConfig | None = None,
+    ) -> None:
         self.session = session
         self.actor = actor
+        self.app_config = app_config
 
     def add_manga(
         self,
@@ -243,6 +337,145 @@ class WebService:
             },
         )
         return row
+
+    def override_status(
+        self,
+        manga_id: str,
+        *,
+        target_status: str,
+        row_version: int,
+        reason: str | None = None,
+        download_method: str | None = None,
+        artifact_filename: str | None = None,
+        archive_id: str | None = None,
+        superseded_by_id: str | None = None,
+    ) -> MangaRecord:
+        """Apply an explicit, audited administrator status override."""
+
+        row = self._manga(manga_id)
+        self._require_version(row, row_version)
+        if target_status not in MANUAL_STATUS_VALUES:
+            raise InvalidRequest("这个状态不能通过人工控制设置")
+        if row.status == target_status:
+            raise InvalidRequest("档案已经处于目标状态")
+        if row.active_attempt_id is not None or row.lease_owner or row.lease_token:
+            raise Conflict("档案仍有活动任务或租约，不能人工修改状态")
+
+        clean_reason = reason.strip() if reason and reason.strip() else None
+        if (
+            target_status
+            in {
+                Status.UNAVAILABLE.value,
+                Status.QUARANTINED.value,
+                Status.DELETED.value,
+            }
+            and not clean_reason
+        ):
+            raise InvalidRequest("这个状态必须填写操作原因")
+
+        clean_method = download_method.strip() if download_method else None
+        previous_method = row.download_method
+        if target_status in {Status.DOWNLOAD_PENDING.value, Status.DOWNLOADED.value}:
+            if clean_method not in DOWNLOAD_METHOD_VALUES:
+                raise InvalidRequest("必须选择有效的下载方式")
+            row.download_method = clean_method
+            if clean_method != previous_method:
+                row.external_download_id = None
+
+        clean_filename = artifact_filename.strip() if artifact_filename else None
+        artifact_path = None
+        if target_status == Status.DOWNLOADED.value:
+            if not clean_filename:
+                raise InvalidRequest("进入已下载状态必须填写文件名")
+            artifact_path = self._require_artifact(row, clean_filename)
+            try:
+                artifact_is_directory = artifact_path.is_dir()
+                artifact_size = artifact_path.stat().st_size if artifact_path.is_file() else None
+            except OSError as exc:
+                raise InvalidRequest("无法读取本地档案信息") from exc
+            row.artifact_filename = clean_filename
+            row.artifact_kind = (
+                "directory"
+                if artifact_is_directory
+                else "zip"
+                if artifact_path.suffix.casefold() == ".zip"
+                else "file"
+            )
+            row.artifact_size = artifact_size
+            row.artifact_sha1 = None
+            row.artifact_checked_at = None
+        elif target_status == Status.UPLOAD_PENDING.value:
+            artifact_path = self._require_artifact(row, row.artifact_filename)
+            if not artifact_path.is_file() or not row.artifact_sha1 or row.artifact_size is None:
+                raise InvalidRequest("本地档案尚未完成校验，请先进入已下载状态重新校验")
+
+        confirmed_id = archive_id.strip().lower() if archive_id else None
+        if target_status in {Status.UPLOADED.value, Status.COMPLETED.value}:
+            if not confirmed_id or not re.fullmatch(r"[0-9a-f]{40}", confirmed_id):
+                raise InvalidRequest("archive ID 必须是 40 位十六进制字符串")
+            row.lrr_archive_id = confirmed_id
+
+        replacement_id = superseded_by_id.strip() if superseded_by_id else None
+        if target_status == Status.OUTDATED.value:
+            if not replacement_id:
+                raise InvalidRequest("标记过时必须填写替代档案 ID")
+            if replacement_id == row.manga_id:
+                raise InvalidRequest("替代档案不能是当前档案")
+            replacement = self.session.get(MangaRecord, replacement_id)
+            if replacement is None:
+                raise InvalidRequest("替代档案不存在")
+            if replacement.status not in REPLACEMENT_READY_STATUSES:
+                raise InvalidRequest("替代档案尚未进入上传阶段")
+            row.superseded_by_id = replacement_id
+
+        previous_status = row.status
+        if target_status == Status.DISCOVERED.value:
+            row.screen_pending = False
+            row.screen_group_id = None
+        row.status = target_status
+        row.defer_until = None
+        row.next_retry_at = None
+        row.queue_source = "manual"
+        row.status_updated_at = row.updated_at = utcnow()
+        row.row_version += 1
+        detail: dict[str, Any] = {
+            "reason": clean_reason,
+            "download_method": row.download_method,
+            "artifact_location": row.artifact_location,
+            "artifact_filename": row.artifact_filename,
+            "archive_id": confirmed_id,
+            "superseded_by_id": replacement_id,
+        }
+        if previous_method != row.download_method:
+            detail["previous_download_method"] = previous_method
+        self._event(
+            row,
+            "status_override",
+            from_status=previous_status,
+            to_status=target_status,
+            detail={key: value for key, value in detail.items() if value is not None},
+        )
+        return row
+
+    def _require_artifact(self, row: MangaRecord, filename: str | None) -> Path:
+        if self.app_config is None:
+            raise InvalidRequest("Web 未加载存储路径配置")
+        if not row.artifact_location:
+            raise InvalidRequest("档案缺少 artifact_location，不能验证文件")
+        if not filename:
+            raise InvalidRequest("档案缺少文件名")
+        paths = ArtifactPathService(self.app_config)
+        try:
+            path = (
+                paths.torrent_registered(row.manga_id, filename)
+                if row.artifact_location == "torrent_download"
+                else paths.validate_registered(row.artifact_location, filename)
+            )
+        except (KeyError, OSError, UnsafePathError, ValueError) as exc:
+            raise InvalidRequest("档案文件名或存储位置无效") from exc
+        if not path.exists() or not (path.is_file() or path.is_dir()):
+            raise InvalidRequest(f"找不到本地档案：{row.artifact_location}/{filename}")
+        return path
 
     def set_control(
         self,

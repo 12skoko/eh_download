@@ -502,6 +502,7 @@ Authorization: Bearer <web_secret>
 | POST | `/api/manga` | 手工添加 URL |
 | PATCH | `/api/manga/{manga_id}/remark` | 更新备注 |
 | PATCH | `/api/manga/{manga_id}/priority` | 更新优先级 |
+| POST | `/api/manga/{manga_id}/status/{target_status}` | 经过字段校验的人工状态调整 |
 | POST | `/api/manga/{manga_id}/actions/retry` | 重试、恢复或覆盖跳过 |
 | POST | `/api/manga/{manga_id}/actions/cancel` | 请求取消 |
 | POST | `/api/manga/{manga_id}/actions/validate` | 从已下载产物重新校验 |
@@ -533,7 +534,9 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
   -Headers $headers -ContentType 'application/json' -Body $body
 ```
 
-维护结束时把 `state` 改为 `running`。上传结果不确定且档案处于 `manual_review` 时，只能在 LANraragi 确认后使用 40 位 SHA-1 archive ID 调用 `archive-confirmation`；人工操作原因均为可选，但建议在异常处理时填写。
+维护结束时把 `state` 改为 `running`。详情页的人工控制对所有可设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`uploading`、`cancel_requested`、`deferred` 和 `cancelled` 不作为人工目标状态。`download_pending` 必须指定 `download_method`；`downloaded` 还必须填写服务器上真实存在的 `artifact_filename`；`uploaded` 和 `completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定已进入上传阶段的替代档案；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
+
+旧的 `/actions/*` 和 `/archive-confirmation` API 为兼容既有脚本继续保留。新的管理界面使用 `/status/{target_status}`；它只修改数据库状态和关联字段，不在 Web 请求中直接运行子模块。Supervisor 后续根据 `download_pending`、`downloaded`、`upload_pending`、`uploaded` 和 `outdated` 等状态安排相应模块。
 
 数据库升级会自动执行 `CREATE EXTENSION IF NOT EXISTS pg_trgm`，并为几十万条记录创建标题搜索和队列索引。正常情况下不需要单独在 Docker PostgreSQL 中启用扩展；只有 migration 账号缺少数据库 `CREATE` 权限时，才需要由 PostgreSQL 管理员提前启用。
 
@@ -608,8 +611,8 @@ python scripts/reconcile_migration.py \
 - 先看 `/health`，再看 `/api/manga/{manga_id}` 的 `attempts` 和 `events`。失败会有 `error_code`、下次重试时间和最后一次操作。
 - 维护前先暂停 `all`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；强制终止后应人工核对数据库中的过期租约、产物和外部任务，Supervisor 不会自动接管。
 - 子模块遇到严重公共故障时会返回严重错误：E 站 Cookie 失效、代理不可达、关键页面结构失效、qBittorrent/LANraragi 不可达或认证失败、工作目录无法读写、磁盘已满以及数据库失联。Supervisor 会暂停出错模块并进入排空状态，不再启动任何新子模块；已经运行的其他子模块自然结束后，Supervisor 释放自己的租约并以非零状态退出。单条漫画失败、种子失败后回退 direct、E 站单次超时/SSL 中断及 HTTP 429/5xx 仍按条目错误或临时错误处理，不触发排空停机。若使用 systemd、Docker 等自动重启策略，需要避免在非零退出后立即重启，否则未暂停的模块会在新 Supervisor 中继续运行。
-- `manual_review` 不是自动重试状态：检查 EH 页面、文件、LANraragi metadata 或重复上传后，用 Web action 或人工 archive confirmation 明确恢复。
-- 看到 `qBittorrent no longer reports...` 或 qBittorrent `error`/`missingFiles` 时，先人工检查任务和磁盘；需要切换 fallback 时，在 qBittorrent 管理界面给任务添加精确的 `failed` 标签。如果记录已经进入 `manual_review`，先用 Web 的 retry/resume action 恢复下载流程，程序才会再次读取这个标签。未标记 `failed` 的 `stalledDL` 在超过 `torrent_stall_seconds` 后会自动删除任务并 fallback，未超过阈值时继续等待。
+- `manual_review` 不是自动重试状态：检查 EH 页面、本地文件、LANraragi metadata 或重复上传后，在详情页明确选择要进入的关键状态。
+- 看到 `qBittorrent no longer reports...` 或 qBittorrent `error`/`missingFiles` 时，先人工检查任务和磁盘；需要切换 fallback 时，在 qBittorrent 管理界面给任务添加精确的 `failed` 标签。如果记录已经进入 `manual_review`，在 Web 中选择“进入下载队列”并确认下载方式，程序才会再次读取这个标签。未标记 `failed` 的 `stalledDL` 在超过 `torrent_stall_seconds` 后会自动删除任务并 fallback，未超过阈值时继续等待。
 - LANraragi 返回 401/403 通常是 Authorization 错误；415 会把产物移到 quarantine；409 或不确定的 5xx 结果必须人工核对 archive ID。
 - `db ping` 正常但没有新档案时，检查 `crawl.toml` 的 `[urls]`、browse Cookie、代理、分类/关键词过滤和观察期。
 - 如果提示 `qbittorrent-api is missing`，确认当前 Conda/venv 已执行 `python -m pip install -e .`；aria2 仍需单独安装 `.[aria2]`。
