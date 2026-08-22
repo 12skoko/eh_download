@@ -19,6 +19,10 @@ def upgrade(database: Database) -> None:
     from alembic.config import Config
 
     alembic_config = Config(str(config_path))
-    with database.engine.begin() as connection:
+    # Let Alembic own the migration transaction.  Passing a connection that is
+    # already inside engine.begin() marks it as an external transaction, which
+    # prevents PostgreSQL migrations from entering an autocommit block for
+    # operations such as CREATE INDEX CONCURRENTLY.
+    with database.engine.connect() as connection:
         alembic_config.attributes["connection"] = connection
         command.upgrade(alembic_config, "head")

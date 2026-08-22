@@ -27,7 +27,11 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     existing_connection = config.attributes.get("connection")
     if existing_connection is not None:
-        context.configure(connection=existing_connection, target_metadata=target_metadata)
+        context.configure(
+            connection=existing_connection,
+            target_metadata=target_metadata,
+            transaction_per_migration=True,
+        )
         with context.begin_transaction():
             context.run_migrations()
         return
@@ -37,7 +41,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            transaction_per_migration=True,
+        )
         with context.begin_transaction():
             context.run_migrations()
 
