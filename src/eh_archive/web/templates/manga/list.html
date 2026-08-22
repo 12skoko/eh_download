@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}档案队列 · EH Archive{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">档案管理</p><h1>档案队列</h1><p class="muted">游标分页适配几十万条记录；每页最多 100 条。</p></div></div>
+<form class="filter-panel" method="get" action="/manga">
+  <label class="grow">搜索<input name="q" value="{{ q }}" placeholder="标题或 manga ID"></label>
+  <label>来源<select name="queue_source"><option value="">全部</option><option value="automatic" {{ 'selected' if queue_source == 'automatic' }}>自动</option><option value="manual" {{ 'selected' if queue_source == 'manual' }}>人工</option></select></label>
+  <label>错误<select name="has_error"><option value="">全部</option><option value="yes" {{ 'selected' if has_error == 'yes' }}>有错误</option><option value="no" {{ 'selected' if has_error == 'no' }}>无错误</option></select></label>
+  <label>每页<select name="limit"><option {{ 'selected' if limit == 25 }}>25</option><option {{ 'selected' if limit == 50 }}>50</option><option {{ 'selected' if limit == 100 }}>100</option></select></label>
+  <button class="primary" type="submit">筛选</button>
+  <div class="status-filter">
+    {% for status, label in status_labels.items() %}<label><input type="checkbox" name="status" value="{{ status }}" {{ 'checked' if status in selected_statuses }}><span>{{ label }}</span></label>{% endfor %}
+  </div>
+</form>
+<section class="panel table-panel">
+  <div class="table-wrap"><table class="queue-table"><thead><tr><th>档案</th><th>状态</th><th>优先级</th><th>方式</th><th>当前错误</th><th>下次重试</th><th>更新时间</th></tr></thead><tbody>
+  {% for row in page.rows %}<tr>
+    <td class="title-cell"><a href="/manga/{{ row.manga_id }}"><strong>{{ row.name or row.real_name or row.manga_id }}</strong><small class="mono">{{ row.manga_id }}</small></a></td>
+    <td><span class="badge status-{{ row.status }}">{{ row.status|status_label }}</span></td><td>{{ row.priority }}</td><td>{{ row.download_method or '—' }}</td>
+    <td>{% if row.last_error_code %}<span class="error-code" title="{{ row.last_error_detail or '' }}">{{ row.last_error_code }}</span>{% else %}—{% endif %}</td><td>{{ row.next_retry_at|datetime }}</td><td>{{ row.updated_at|datetime }}</td>
+  </tr>{% else %}<tr><td colspan="7" class="empty">没有符合条件的档案</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% if page.next_cursor %}<div class="pagination"><a class="button primary" href="/manga?cursor={{ page.next_cursor }}&q={{ q|urlencode }}&queue_source={{ queue_source }}&has_error={{ has_error }}&limit={{ limit }}{% for status in selected_statuses %}&status={{ status }}{% endfor %}">下一页</a></div>{% endif %}
+{% endblock %}

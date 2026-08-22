@@ -2,8 +2,14 @@
 
 `GET /health` reports PostgreSQL reachability, Supervisor heartbeat, component
 pause state and status counts. A component can be paused with
-`PUT /api/control/{component}`; setting `all` to `paused` prevents new task
-claims while in-flight work finishes at its next safe boundary.
+`PUT /api/control/{component}`; setting `supervisor` to `paused` prevents new
+task claims. Setting it to `draining` waits for in-flight work to finish and
+then stops the Supervisor cleanly.
+
+The Supervisor periodically checks qBittorrent, LANraragi and every configured
+storage root, then persists the latest result in `system_health`. The Web
+process only reads these snapshots. A snapshot older than three check intervals
+is displayed as stale.
 
 Every task attempt has a lease token and artifact generation. A process that
 loses its lease cannot update the manga row or replace the current artifact.

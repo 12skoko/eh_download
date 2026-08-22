@@ -1,4 +1,12 @@
-from .models import Base, EventLog, JobAttempt, MangaInfoRecord, MangaRecord, SystemControl
+from .models import (
+    Base,
+    EventLog,
+    JobAttempt,
+    MangaInfoRecord,
+    MangaRecord,
+    SystemControl,
+    SystemHealth,
+)
 from .repository import ArchiveRepository, ClaimedAttempt, ScreenDecision
 from .session import Database, create_database
 
@@ -13,5 +21,6 @@ __all__ = [
     "MangaRecord",
     "ScreenDecision",
     "SystemControl",
+    "SystemHealth",
     "create_database",
 ]

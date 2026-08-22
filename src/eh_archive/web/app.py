@@ -2,20 +2,47 @@ from __future__ import annotations
 
 import argparse
 import re
-import shutil
+import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
-from sqlalchemy import desc, func, select
+from fastapi import Request
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..config import load_config
+from ..config.loader import SUPERVISOR_MODULES
 from ..db import Database
-from ..db.models import EventLog, JobAttempt, MangaRecord, SystemControl
-from ..db.repository import utcnow
-from ..domain.states import Status
+from ..db.models import MangaRecord, SystemControl, SystemHealth
 from ..logging import configure_logging
+from .auth import (
+    SESSION_COOKIE,
+    SESSION_MAX_AGE_SECONDS,
+    SessionSigner,
+    WebIdentity,
+    valid_password_hash,
+)
+from .services import (
+    COMPONENT_LABELS,
+    CONTROL_COMPONENTS,
+    STATUS_LABELS,
+    InvalidRequest,
+    WebService,
+    WebServiceError,
+    allowed_actions,
+    dashboard_data,
+    list_events,
+    list_manga,
+    manga_detail,
+    safe_detail,
+    serialize_manga,
+    serialize_model,
+)
+
+TEMPLATE_DIR = Path(__file__).with_name("templates")
+STATIC_DIR = Path(__file__).with_name("static")
 
 
 def _gallery_id(value: str) -> str | None:
@@ -37,32 +64,51 @@ def _gallery_id(value: str) -> str | None:
 
 def create_app(database: Database | None = None, *, config_dir: str | Path = "config"):
     try:
-        from fastapi import Body, FastAPI, HTTPException
+        from fastapi import Body, FastAPI, HTTPException, Query
+        from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+        from fastapi.staticfiles import StaticFiles
+        from fastapi.templating import Jinja2Templates
         from pydantic import BaseModel, Field
     except ImportError as exc:
         raise RuntimeError("Install eh-archive to use the Web process") from exc
-    app_config, _, _, secrets_config = load_config(config_dir)
+
+    app_config, supervisor_config, _, secrets_config = load_config(config_dir)
     database = database or Database(app_config.database_url)
+    auth_enabled = bool(secrets_config.web_password_hash)
+    if auth_enabled and not valid_password_hash(secrets_config.web_password_hash):
+        raise RuntimeError("web_password_hash is invalid; generate it with eharchive web-password")
+    if auth_enabled and not secrets_config.web_secret:
+        raise RuntimeError("web_secret is required when web_password_hash is configured")
+    if not auth_enabled and not _is_loopback(app_config.web_host):
+        raise RuntimeError(
+            "Web login must be configured before listening outside localhost; "
+            "set web_username, web_password_hash and web_secret in secrets.toml"
+        )
+    signer = SessionSigner(secrets_config.web_secret) if auth_enabled else None
+
     app = FastAPI(title="EH Archive", version="6.0.0")
-
-    @app.middleware("http")
-    async def require_auth(request, call_next):
-        secret = secrets_config.web_secret
-        if secret and request.method not in {"GET", "HEAD", "OPTIONS"}:
-            authorization = request.headers.get("authorization", "")
-            if authorization != f"Bearer {secret}":
-                from fastapi.responses import JSONResponse
-
-                return JSONResponse({"detail": "authentication required"}, status_code=401)
-        return await call_next(request)
+    templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+    templates.env.filters["datetime"] = _format_datetime
+    templates.env.filters["filesize"] = _format_filesize
+    templates.env.filters["status_label"] = lambda value: STATUS_LABELS.get(value, value)
+    templates.env.filters["component_label"] = lambda value: COMPONENT_LABELS.get(value, value)
+    templates.env.filters["safe_detail"] = safe_detail
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.state.database = database
+    app.state.auth_enabled = auth_enabled
 
     class ManualManga(BaseModel):
         url: str
         priority: int = Field(default=100, ge=-100000, le=100000)
         remark: str | None = None
+        row_version: int | None = None
 
     class RemarkUpdate(BaseModel):
         remark: str | None = None
+        row_version: int
+
+    class PriorityUpdate(BaseModel):
+        priority: int = Field(ge=-100000, le=100000)
         row_version: int
 
     class ControlUpdate(BaseModel):
@@ -75,463 +121,613 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
         reason: str | None = None
         archive_id: str | None = None
 
-    class ArchiveConfirmation(BaseModel):
-        archive_id: str
-        row_version: int
-        reason: str
+    status_query = Query(default=[])
 
-    @app.get(
-        "/", response_class=__import__("fastapi.responses", fromlist=["HTMLResponse"]).HTMLResponse
-    )
-    def dashboard():
-        with database.session() as session:
-            rows = list(
-                session.scalars(
-                    select(MangaRecord)
-                    .order_by(desc(MangaRecord.priority), MangaRecord.created_at)
-                    .limit(50)
-                )
+    @app.middleware("http")
+    async def authenticate(request, call_next):
+        path = request.url.path
+        public = path == "/login" or path == "/health/live" or path.startswith("/static/")
+        if public or not auth_enabled:
+            request.state.identity = WebIdentity("local", "local", int(time.time()) + 3600)
+            request.state.auth_via_bearer = False
+            return await call_next(request)
+
+        identity = None
+        via_bearer = False
+        authorization = request.headers.get("authorization", "")
+        if secrets_config.web_secret and authorization == f"Bearer {secrets_config.web_secret}":
+            identity = WebIdentity("api", "", int(time.time()) + 60)
+            via_bearer = True
+        elif signer is not None:
+            identity = signer.verify(request.cookies.get(SESSION_COOKIE))
+        if identity is None:
+            if path.startswith("/api/") or path == "/health":
+                return JSONResponse({"detail": "authentication required"}, status_code=401)
+            next_path = request.url.path + ("?" + request.url.query if request.url.query else "")
+            return RedirectResponse(f"/login?next={quote(next_path, safe='/?=&')}", status_code=303)
+        request.state.identity = identity
+        request.state.auth_via_bearer = via_bearer
+        if (
+            path.startswith("/api/")
+            and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and not via_bearer
+            and request.headers.get("x-csrf-token") != identity.csrf_token
+        ):
+            return JSONResponse({"detail": "CSRF validation failed"}, status_code=403)
+        return await call_next(request)
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_page(request: Request, next: str = "/", error: str | None = None):
+        if auth_enabled and signer and signer.verify(request.cookies.get(SESSION_COOKIE)):
+            return RedirectResponse(_safe_next(next), status_code=303)
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={"next": _safe_next(next), "error": error, "auth_enabled": auth_enabled},
+        )
+
+    @app.post("/login")
+    async def login(request: Request):
+        form = await request.form()
+        username = str(form.get("username", ""))
+        password = str(form.get("password", ""))
+        next_path = _safe_next(str(form.get("next", "/")))
+        from .auth import verify_password
+
+        valid = (
+            auth_enabled
+            and username == secrets_config.web_username
+            and verify_password(password, secrets_config.web_password_hash)
+        )
+        if not valid:
+            return templates.TemplateResponse(
+                request=request,
+                name="login.html",
+                context={"next": next_path, "error": "用户名或密码错误", "auth_enabled": True},
+                status_code=401,
             )
-        from html import escape
+        response = RedirectResponse(next_path, status_code=303)
+        response.set_cookie(
+            SESSION_COOKIE,
+            signer.create(username),
+            max_age=SESSION_MAX_AGE_SECONDS,
+            httponly=True,
+            secure=False,
+            samesite="lax",
+            path="/",
+        )
+        return response
 
-        body = "".join(
-            f"<tr><td><a href='/api/manga/{escape(row.manga_id)}'>{escape(row.manga_id)}</a></td>"
-            f"<td>{escape(row.name)}</td><td>{escape(row.status)}</td><td>{row.priority}</td></tr>"
-            for row in rows
+    @app.post("/logout")
+    async def logout(request: Request):
+        await _validated_form(request)
+        response = _redirect_response(request, "/login")
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return response
+
+    @app.get("/health/live")
+    def liveness():
+        return {"ok": True}
+
+    @app.get("/", response_class=HTMLResponse)
+    def dashboard(request: Request):
+        with database.session() as session:
+            data = dashboard_data(session)
+        health_states = {
+            component: _health_status(item, supervisor_config.health_check_interval_seconds)
+            for component, item in data["health"].items()
+        }
+        supervisor_state = _supervisor_status(
+            data["controls"].get("supervisor"), supervisor_config.poll_seconds
         )
-        return (
-            "<!doctype html><html><head><meta charset='utf-8'><title>EH Archive</title>"
-            "<style>body{font:14px system-ui;margin:2rem}table{border-collapse:collapse;width:100%}"
-            "td,th{border-bottom:1px solid #ddd;padding:.5rem;text-align:left}</style></head>"
-            "<body><h1>EH Archive</h1><p><a href='/health'>Health</a> | <a href='/docs'>API docs</a></p>"
-            f"<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th></tr></thead><tbody>{body}</tbody></table>"
-            "</body></html>"
+        return templates.TemplateResponse(
+            request=request,
+            name="dashboard.html",
+            context=_context(
+                request,
+                **data,
+                health_states=health_states,
+                supervisor_state=supervisor_state,
+            ),
         )
+
+    @app.get("/manga", response_class=HTMLResponse)
+    def manga_queue(
+        request: Request,
+        status: list[str] = status_query,
+        q: str | None = None,
+        queue_source: str | None = None,
+        has_error: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ):
+        error_filter = None if has_error not in {"yes", "no"} else has_error == "yes"
+        try:
+            with database.session() as session:
+                page = list_manga(
+                    session,
+                    statuses=status,
+                    query_text=q,
+                    queue_source=queue_source,
+                    has_error=error_filter,
+                    limit=limit,
+                    cursor=cursor,
+                )
+        except WebServiceError as exc:
+            return _error_response(request, templates, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="manga/list.html",
+            context=_context(
+                request,
+                page=page,
+                selected_statuses=status,
+                q=q or "",
+                queue_source=queue_source or "",
+                has_error=has_error or "",
+                limit=limit,
+            ),
+        )
+
+    @app.post("/manga/add")
+    async def add_manga_page(request: Request):
+        form = await _validated_form(request)
+        url = str(form.get("url", "")).strip()
+        manga_id = _gallery_id(url)
+        if manga_id is None:
+            return _error_response(
+                request, templates, InvalidRequest("URL 中没有有效的 EH 画廊 ID")
+            )
+        try:
+            with database.session() as session:
+                row = WebService(session, actor=_actor(request)).add_manga(
+                    url=url,
+                    manga_id=manga_id,
+                    priority=int(str(form.get("priority", "100"))),
+                    remark=_optional_text(form.get("remark")),
+                    row_version=_optional_int(form.get("row_version")),
+                )
+        except (ValueError, WebServiceError) as exc:
+            error = exc if isinstance(exc, WebServiceError) else InvalidRequest("优先级必须是整数")
+            return _error_response(request, templates, error)
+        return _redirect_response(request, f"/manga/{row.manga_id}?notice=added")
+
+    @app.get("/review", response_class=HTMLResponse)
+    def review_page(
+        request: Request,
+        status: str = "manual_review",
+        cursor: str | None = None,
+    ):
+        if status not in {"manual_review", "quarantined"}:
+            status = "manual_review"
+        with database.session() as session:
+            page = list_manga(session, statuses=[status], limit=50, cursor=cursor)
+        return templates.TemplateResponse(
+            request=request,
+            name="review.html",
+            context=_context(request, page=page, selected_status=status),
+        )
+
+    @app.get("/events", response_class=HTMLResponse)
+    def events_page(
+        request: Request,
+        manga_id: str | None = None,
+        component: str | None = None,
+        operation: str | None = None,
+        error_only: bool = False,
+        limit: int = 100,
+    ):
+        with database.session() as session:
+            events = list_events(
+                session,
+                manga_id=manga_id,
+                component=component,
+                operation=operation,
+                error_only=error_only,
+                limit=limit,
+            )
+        return templates.TemplateResponse(
+            request=request,
+            name="events.html",
+            context=_context(
+                request,
+                events=events,
+                manga_id=manga_id or "",
+                component=component or "",
+                operation=operation or "",
+                error_only=error_only,
+                limit=limit,
+            ),
+        )
+
+    @app.get("/manga/{manga_id:path}", response_class=HTMLResponse)
+    def manga_page(request: Request, manga_id: str, notice: str | None = None):
+        try:
+            with database.session() as session:
+                detail = manga_detail(session, manga_id)
+        except WebServiceError as exc:
+            return _error_response(request, templates, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="manga/detail.html",
+            context=_context(request, **detail, notice=notice),
+        )
+
+    @app.post("/manga/{manga_id:path}/remark")
+    async def update_remark_page(request: Request, manga_id: str):
+        form = await _validated_form(request)
+        return _page_update(
+            request,
+            templates,
+            database,
+            manga_id,
+            lambda service: service.update_remark(
+                manga_id,
+                remark=_optional_text(form.get("remark")),
+                row_version=int(str(form.get("row_version", ""))),
+            ),
+            "remark-updated",
+        )
+
+    @app.post("/manga/{manga_id:path}/priority")
+    async def update_priority_page(request: Request, manga_id: str):
+        form = await _validated_form(request)
+        return _page_update(
+            request,
+            templates,
+            database,
+            manga_id,
+            lambda service: service.update_priority(
+                manga_id,
+                priority=int(str(form.get("priority", ""))),
+                row_version=int(str(form.get("row_version", ""))),
+            ),
+            "priority-updated",
+        )
+
+    @app.post("/manga/{manga_id:path}/actions/{action}")
+    async def manga_action_page(request: Request, manga_id: str, action: str):
+        form = await _validated_form(request)
+        return _page_update(
+            request,
+            templates,
+            database,
+            manga_id,
+            lambda service: service.action(
+                manga_id,
+                action,
+                row_version=int(str(form.get("row_version", ""))),
+                reason=_optional_text(form.get("reason")),
+                archive_id=_optional_text(form.get("archive_id")),
+            ),
+            "action-completed",
+        )
+
+    @app.post("/control/{component}")
+    async def control_page(request: Request, component: str):
+        form = await _validated_form(request)
+        try:
+            with database.session() as session:
+                WebService(session, actor=_actor(request)).set_control(
+                    component,
+                    state=str(form.get("state", "")),
+                    reason=_optional_text(form.get("reason")),
+                    row_version=_optional_int(form.get("row_version")),
+                )
+        except WebServiceError as exc:
+            return _error_response(request, templates, exc)
+        return _redirect_response(request, "/?notice=control-updated")
 
     @app.get("/health")
     def health():
         try:
             database.ping()
-            db_ok = True
-        except (SQLAlchemyError, OSError) as exc:
-            db_ok = False
-            error = type(exc).__name__
-        controls, counts = {}, {}
-        if db_ok:
-            try:
-                with database.session() as session:
-                    controls = {
-                        row.component: {"state": row.state, "heartbeat_at": row.heartbeat_at}
-                        for row in session.scalars(select(SystemControl))
+            with database.session() as session:
+                controls = {
+                    row.component: {
+                        "state": row.state,
+                        "reason": row.reason,
+                        "heartbeat_at": row.heartbeat_at,
+                        "row_version": row.row_version,
                     }
-                    counts = dict(
-                        session.execute(
-                            select(MangaRecord.status, func.count()).group_by(MangaRecord.status)
-                        ).all()
-                    )
-            except SQLAlchemyError as exc:
-                db_ok = False
-                error = type(exc).__name__
-        storage = {}
-        for location, root in app_config.roots.items():
-            try:
-                root.mkdir(parents=True, exist_ok=True)
-                usage = shutil.disk_usage(root)
-                storage[location] = {
-                    "readable": root.is_dir(),
-                    "writable": root.is_dir(),
-                    "free_bytes": usage.free,
-                    "total_bytes": usage.total,
+                    for row in session.scalars(select(SystemControl))
                 }
-            except OSError:
-                storage[location] = {"readable": False, "writable": False}
-        return {
-            "ok": db_ok,
-            "database": db_ok,
-            "error": error if not db_ok else None,
-            "components": controls,
-            "counts": counts,
-            "storage": storage,
-            "qbittorrent": {"configured": bool(app_config.qbittorrent_url)},
-            "lanraragi": {"configured": bool(app_config.lanraragi_url)},
-        }
+                snapshots = {
+                    row.component: {
+                        "status": _health_status(
+                            row, supervisor_config.health_check_interval_seconds
+                        ),
+                        "reported_status": row.status,
+                        "checked_at": row.checked_at,
+                        "latency_ms": row.latency_ms,
+                        "error_code": row.error_code,
+                        "message": row.message,
+                        "detail": safe_detail(row.detail),
+                    }
+                    for row in session.scalars(select(SystemHealth))
+                }
+                counts = dashboard_data(session)["counts"]
+            return {
+                "ok": True,
+                "database": True,
+                "components": controls,
+                "health": snapshots,
+                "counts": counts,
+            }
+        except (SQLAlchemyError, OSError) as exc:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "database": False,
+                    "error": type(exc).__name__,
+                    "components": {},
+                    "health": {},
+                    "counts": {},
+                },
+                status_code=503,
+            )
 
     @app.get("/api/manga")
-    def list_manga(status: str | None = None, limit: int = 100, offset: int = 0):
-        limit = max(1, min(limit, 500))
-        with database.session() as session:
-            query = (
-                select(MangaRecord)
-                .order_by(desc(MangaRecord.priority), MangaRecord.created_at)
-                .offset(offset)
-                .limit(limit)
-            )
-            if status:
-                try:
-                    Status(status)
-                except ValueError as exc:
-                    raise HTTPException(400, "invalid status") from exc
-                query = query.where(MangaRecord.status == status)
-            rows = list(session.scalars(query))
-            return [_serialize(row) for row in rows]
+    def api_list_manga(
+        status: str | None = None,
+        q: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+        offset: int = 0,
+    ):
+        try:
+            with database.session() as session:
+                page = list_manga(
+                    session,
+                    statuses=[status] if status else None,
+                    query_text=q,
+                    limit=limit,
+                    cursor=cursor,
+                    offset=offset,
+                )
+                return [serialize_manga(row) for row in page.rows]
+        except WebServiceError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
 
     @app.get("/api/manga/{manga_id:path}")
-    def get_manga(manga_id: str):
-        with database.session() as session:
-            row = session.get(MangaRecord, manga_id)
-            if row is None:
-                raise HTTPException(404, "manga not found")
-            attempts = list(
-                session.scalars(
-                    select(JobAttempt)
-                    .where(JobAttempt.manga_id == manga_id)
-                    .order_by(desc(JobAttempt.started_at))
-                )
-            )
-            events = list(
-                session.scalars(
-                    select(EventLog)
-                    .where(EventLog.manga_id == manga_id)
-                    .order_by(desc(EventLog.created_at))
-                    .limit(100)
-                )
-            )
-            value = _serialize(row)
-            value["info"] = _serialize(row.info) if row.info else None
-            value["attempts"] = [
-                {
-                    "id": item.id,
-                    "operation": item.operation,
-                    "status": item.status,
-                    "started_at": item.started_at,
-                    "finished_at": item.finished_at,
-                    "error_code": item.error_code,
-                }
-                for item in attempts
-            ]
-            value["events"] = [
-                {
-                    "id": event.id,
-                    "event_type": event.event_type,
-                    "operation": event.operation,
-                    "from_status": event.from_status,
-                    "to_status": event.to_status,
-                    "error_code": event.error_code,
-                    "detail": event.detail,
-                    "created_at": event.created_at,
-                }
-                for event in events
-            ]
-            return value
+    def api_get_manga(manga_id: str):
+        try:
+            with database.session() as session:
+                detail = manga_detail(session, manga_id)
+                value = serialize_manga(detail["row"])
+                value["info"] = serialize_model(detail["row"].info) if detail["row"].info else None
+                value["attempts"] = [
+                    {**serialize_model(item), "detail": safe_detail(item.detail)}
+                    for item in detail["attempts"]
+                ]
+                value["events"] = [
+                    {**serialize_model(item), "detail": safe_detail(item.detail)}
+                    for item in detail["events"]
+                ]
+                return value
+        except WebServiceError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
 
     @app.post("/api/manga", status_code=201)
-    def add_manga(payload: ManualManga):
+    def api_add_manga(request: Request, payload: ManualManga):
         manga_id = _gallery_id(payload.url)
         if manga_id is None:
             raise HTTPException(400, "URL does not contain an EH gallery id")
-        with database.session() as session:
-            row = session.get(MangaRecord, manga_id)
-            if row is None:
-                row = MangaRecord(
+        try:
+            with database.session() as session:
+                row = WebService(session, actor=_actor(request)).add_manga(
+                    url=payload.url,
                     manga_id=manga_id,
-                    name=manga_id,
-                    link=payload.url,
-                    queue_source="manual",
                     priority=payload.priority,
-                    status=Status.DOWNLOAD_PENDING.value,
                     remark=payload.remark,
+                    row_version=payload.row_version,
                 )
-                session.add(row)
-                session.flush()
-                session.add(
-                    EventLog(
-                        manga_id=manga_id,
-                        component="web",
-                        event_type="manual",
-                        operation="add",
-                        to_status=row.status,
-                        actor="web",
-                        detail={"url": payload.url},
-                    )
-                )
-            else:
-                previous = row.status
-                row.priority = payload.priority
-                row.remark = payload.remark
-                if row.status in {
-                    Status.SKIPPED.value,
-                    Status.UNAVAILABLE.value,
-                    Status.MANUAL_REVIEW.value,
-                }:
-                    row.status = Status.DOWNLOAD_PENDING.value
-                    row.status_updated_at = utcnow()
-                row.updated_at = utcnow()
-                row.row_version += 1
-                session.add(
-                    EventLog(
-                        manga_id=manga_id,
-                        component="web",
-                        event_type="manual",
-                        operation="add",
-                        actor="web",
-                        from_status=previous,
-                        to_status=row.status,
-                        detail={"priority": payload.priority, "reason": payload.remark},
-                    )
-                )
-            return _serialize(row)
+                return serialize_manga(row)
+        except WebServiceError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
 
     @app.patch("/api/manga/{manga_id:path}/remark")
-    def update_remark(manga_id: str, payload: RemarkUpdate):
-        with database.session() as session:
-            row = session.get(MangaRecord, manga_id)
-            if row is None:
-                raise HTTPException(404, "manga not found")
-            if row.row_version != payload.row_version:
-                raise HTTPException(409, "row version conflict")
-            row.remark = payload.remark
-            row.row_version += 1
-            session.add(
-                EventLog(
-                    manga_id=manga_id,
-                    component="web",
-                    event_type="manual",
-                    operation="remark",
-                    actor="web",
-                    detail={"changed": True},
-                )
-            )
-            return _serialize(row)
+    def api_update_remark(request: Request, manga_id: str, payload: RemarkUpdate):
+        return _api_update(
+            database,
+            request,
+            lambda service: service.update_remark(
+                manga_id, remark=payload.remark, row_version=payload.row_version
+            ),
+        )
+
+    @app.patch("/api/manga/{manga_id:path}/priority")
+    def api_update_priority(request: Request, manga_id: str, payload: PriorityUpdate):
+        return _api_update(
+            database,
+            request,
+            lambda service: service.update_priority(
+                manga_id, priority=payload.priority, row_version=payload.row_version
+            ),
+        )
 
     @app.post("/api/manga/{manga_id:path}/actions/{action}")
-    def action(manga_id: str, action: str, payload: ActionUpdate):
-        with database.session() as session:
-            row = session.get(MangaRecord, manga_id)
-            if row is None:
-                raise HTTPException(404, "manga not found")
-            if row.row_version != payload.row_version:
-                raise HTTPException(409, "row version conflict")
-            event_map = {
-                "retry": {
-                    Status.UNAVAILABLE.value: "retry",
-                    Status.SKIPPED.value: "override",
-                    Status.QUARANTINED.value: "redownload",
-                    Status.CANCELLED.value: "resume",
-                    Status.MANUAL_REVIEW.value: "resume_download",
-                },
-                "skip": {Status.DISCOVERED.value: "skip"},
-                "cancel": {
-                    status.value: "cancel"
-                    for status in (
-                        Status.DISCOVERED,
-                        Status.DEFERRED,
-                        Status.DOWNLOAD_PENDING,
-                        Status.DOWNLOADING,
-                        Status.DOWNLOADED,
-                        Status.VALIDATING,
-                        Status.PREPARING,
-                        Status.UPLOAD_PENDING,
-                        Status.UPLOADED,
-                        Status.SKIPPED,
-                        Status.UNAVAILABLE,
-                        Status.QUARANTINED,
-                        Status.MANUAL_REVIEW,
-                    )
-                },
-                "resume": {
-                    Status.MANUAL_REVIEW.value: "resume_download",
-                    Status.CANCELLED.value: "resume",
-                },
-                "validate": {
-                    Status.DOWNLOADED.value: "validate",
-                    Status.MANUAL_REVIEW.value: "resume_validate",
-                    Status.CANCELLED.value: "resume_validate",
-                },
-                "upload": {
-                    Status.VALIDATING.value: "upload",
-                    Status.MANUAL_REVIEW.value: "resume_upload",
-                    Status.CANCELLED.value: "resume_upload",
-                },
-                "confirm-uploaded": {Status.MANUAL_REVIEW.value: "confirm_uploaded"},
-            }
-            event = event_map.get(action, {}).get(row.status)
-            if event is None:
-                raise HTTPException(400, "unsupported action for current status")
-            archive_id = None
-            if action == "confirm-uploaded":
-                if not payload.archive_id or not re.fullmatch(
-                    r"[0-9a-fA-F]{40}", payload.archive_id
-                ):
-                    raise HTTPException(
-                        400, "archive_id must be a 40-character SHA1 for confirmation"
-                    )
-                archive_id = payload.archive_id.lower()
-            from ..domain.states import can_transition, transition_target
-
-            if not can_transition(row.status, event):
-                raise HTTPException(409, f"action is not valid from {row.status}")
-            old = row.status
-            row.status = transition_target(row.status, event).value
-            if archive_id is not None:
-                row.lrr_archive_id = archive_id
-            row.status_updated_at = row.updated_at = utcnow()
-            row.queue_source = "manual"
-            row.row_version += 1
-            session.add(
-                EventLog(
-                    manga_id=manga_id,
-                    component="web",
-                    event_type="manual",
-                    operation=action,
-                    from_status=old,
-                    to_status=row.status,
-                    actor="web",
-                    detail={
-                        **({"reason": payload.reason} if payload.reason else {}),
-                        **({"archive_id": archive_id} if archive_id else {}),
-                    },
-                )
-            )
-            return _serialize(row)
+    def api_action(request: Request, manga_id: str, action: str, payload: ActionUpdate):
+        return _api_update(
+            database,
+            request,
+            lambda service: service.action(
+                manga_id,
+                action,
+                row_version=payload.row_version,
+                reason=payload.reason,
+                archive_id=payload.archive_id,
+            ),
+        )
 
     @app.post("/api/manga/{manga_id:path}/archive-confirmation")
-    def confirm_archive(manga_id: str, payload: ArchiveConfirmation):
-        if not re.fullmatch(r"[0-9a-fA-F]{40}", payload.archive_id):
-            raise HTTPException(400, "archive_id must be a 40-character SHA1")
-        with database.session() as session:
-            row = session.get(MangaRecord, manga_id)
-            if row is None:
-                raise HTTPException(404, "manga not found")
-            if row.row_version != payload.row_version:
-                raise HTTPException(409, "row version conflict")
-            if row.status != Status.MANUAL_REVIEW.value:
-                raise HTTPException(409, "archive confirmation requires manual_review")
-            from ..domain.states import transition_target
-
-            old = row.status
-            row.lrr_archive_id = payload.archive_id.lower()
-            row.status = transition_target(row.status, "confirm_uploaded").value
-            row.status_updated_at = row.updated_at = utcnow()
-            row.queue_source = "manual"
-            row.row_version += 1
-            session.add(
-                EventLog(
-                    manga_id=manga_id,
-                    component="web",
-                    event_type="manual",
-                    operation="confirm_uploaded",
-                    from_status=old,
-                    to_status=row.status,
-                    actor="web",
-                    detail={"reason": payload.reason, "archive_id": payload.archive_id.lower()},
-                )
-            )
-            return _serialize(row)
+    def api_confirm_archive(request: Request, manga_id: str, payload: ActionUpdate):
+        return _api_update(
+            database,
+            request,
+            lambda service: service.action(
+                manga_id,
+                "confirm-uploaded",
+                row_version=payload.row_version,
+                reason=payload.reason,
+                archive_id=payload.archive_id,
+            ),
+        )
 
     control_body = Body()
 
     @app.put("/api/control/{component}")
-    def control(component: str, payload=control_body):
+    def api_control(request: Request, component: str, payload=control_body):
         try:
-            payload = ControlUpdate(**payload)
+            value = ControlUpdate(**payload)
+            with database.session() as session:
+                row = WebService(session, actor=_actor(request)).set_control(
+                    component,
+                    state=value.state,
+                    reason=value.reason,
+                    row_version=value.row_version,
+                )
+                return {
+                    "component": row.component,
+                    "state": row.state,
+                    "reason": row.reason,
+                    "row_version": row.row_version,
+                }
+        except WebServiceError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
         except (TypeError, ValueError) as exc:
             raise HTTPException(422, f"invalid control payload: {exc}") from exc
-        if component == "all":
-            raise HTTPException(400, "component all was replaced by supervisor")
-        allowed_states = (
-            {"running", "paused", "draining"}
-            if component == "supervisor"
-            else {"running", "paused"}
-        )
-        if payload.state not in allowed_states:
-            allowed = ", ".join(sorted(allowed_states))
-            raise HTTPException(400, f"state for {component} must be one of: {allowed}")
-        with database.session() as session:
-            row = session.get(SystemControl, component)
-            if row is None:
-                row = SystemControl(
-                    component=component,
-                    state=payload.state,
-                    reason=payload.reason,
-                    updated_by="web",
-                )
-                session.add(row)
-            else:
-                if payload.row_version is not None and row.row_version != payload.row_version:
-                    raise HTTPException(409, "row version conflict")
-                row.state, row.reason, row.updated_by, row.row_version = (
-                    payload.state,
-                    payload.reason,
-                    "web",
-                    row.row_version + 1,
-                )
-            session.add(
-                EventLog(
-                    component="web",
-                    event_type="manual",
-                    operation="control",
-                    actor="web",
-                    detail={
-                        "component": component,
-                        "state": payload.state,
-                        "reason": payload.reason,
-                    },
-                )
-            )
-            return {
-                "component": row.component,
-                "state": row.state,
-                "reason": row.reason,
-                "row_version": row.row_version,
-            }
 
     return app
+
+
+def _context(request, **values):
+    identity = getattr(request.state, "identity", WebIdentity("local", "local", 0))
+    return {
+        "identity": identity,
+        "csrf_token": identity.csrf_token,
+        "status_labels": STATUS_LABELS,
+        "component_labels": COMPONENT_LABELS,
+        "control_components": CONTROL_COMPONENTS,
+        "supervisor_modules": SUPERVISOR_MODULES,
+        "allowed_actions": allowed_actions,
+        "now": datetime.now(UTC),
+        **values,
+    }
+
+
+async def _validated_form(request):
+    form = await request.form()
+    identity = getattr(request.state, "identity", None)
+    if identity is None or str(form.get("csrf_token", "")) != identity.csrf_token:
+        from fastapi import HTTPException
+
+        raise HTTPException(403, "CSRF validation failed")
+    return form
+
+
+def _actor(request) -> str:
+    return f"web:{request.state.identity.username}"
+
+
+def _page_update(request, templates, database, manga_id, callback, notice):
+    try:
+        with database.session() as session:
+            callback(WebService(session, actor=_actor(request)))
+    except (ValueError, WebServiceError) as exc:
+        error = exc if isinstance(exc, WebServiceError) else InvalidRequest("表单数据无效")
+        return _error_response(request, templates, error)
+    return _redirect_response(request, f"/manga/{manga_id}?notice={notice}")
+
+
+def _api_update(database, request, callback):
+    from fastapi import HTTPException
+
+    try:
+        with database.session() as session:
+            return serialize_manga(callback(WebService(session, actor=_actor(request))))
+    except WebServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+def _error_response(request, templates, exc: WebServiceError):
+    return templates.TemplateResponse(
+        request=request,
+        name="error.html",
+        context=_context(request, message=str(exc), status_code=exc.status_code),
+        status_code=exc.status_code,
+    )
+
+
+def _optional_text(value) -> str | None:
+    text_value = str(value).strip() if value is not None else ""
+    return text_value or None
+
+
+def _optional_int(value) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return int(str(value))
+
+
+def _safe_next(value: str) -> str:
+    return value if value.startswith("/") and not value.startswith("//") else "/"
+
+
+def _redirect_response(request, location: str):
+    responses = __import__("fastapi.responses", fromlist=["Response", "RedirectResponse"])
+    if request.headers.get("HX-Request") == "true":
+        return responses.Response(status_code=204, headers={"HX-Redirect": location})
+    return responses.RedirectResponse(location, status_code=303)
+
+
+def _is_loopback(host: str) -> bool:
+    return host.casefold() in {"127.0.0.1", "localhost", "::1"}
+
+
+def _health_status(row: SystemHealth, interval_seconds: float) -> str:
+    age = _age_seconds(row.checked_at)
+    return "stale" if age > max(interval_seconds * 3, 180) else row.status
+
+
+def _supervisor_status(row: SystemControl | None, poll_seconds: float) -> str:
+    if row is None or row.heartbeat_at is None:
+        return "unknown"
+    age = _age_seconds(row.heartbeat_at)
+    return "stale" if age > max(poll_seconds * 6, 30) else row.state
+
+
+def _age_seconds(value: datetime) -> float:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - value).total_seconds()
+
+
+def _format_datetime(value) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, datetime):
+        return value.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    return str(value)
+
+
+def _format_filesize(value) -> str:
+    if value is None:
+        return "—"
+    size = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(size) < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return str(value)
 
 
 def _serialize(row):
     if row is None:
         return None
-    if hasattr(row, "manga_id"):
-        return {
-            key: getattr(row, key)
-            for key in (
-                "manga_id",
-                "name",
-                "real_name",
-                "link",
-                "torrent_link",
-                "posted_at",
-                "category",
-                "tags_raw",
-                "pages",
-                "rating",
-                "uploader",
-                "remark",
-                "queue_source",
-                "status",
-                "screen_pending",
-                "screen_group_id",
-                "priority",
-                "download_method",
-                "defer_until",
-                "attempt_count",
-                "next_retry_at",
-                "external_download_id",
-                "artifact_location",
-                "artifact_filename",
-                "artifact_kind",
-                "artifact_generation",
-                "artifact_size",
-                "artifact_sha1",
-                "artifact_checked_at",
-                "lrr_archive_id",
-                "row_version",
-                "created_at",
-                "updated_at",
-            )
-            if hasattr(row, key)
-        }
-    return {column.name: getattr(row, column.name) for column in row.__table__.columns}
+    if isinstance(row, MangaRecord):
+        return serialize_manga(row)
+    return serialize_model(row)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -551,3 +747,7 @@ def main(argv: list[str] | None = None) -> int:
 
     uvicorn.run(application, host=app_config.web_host, port=app_config.web_port)
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -73,6 +73,8 @@ class Supervisor:
         self.exit_code = 0
         self.failed_operations: set[str] = set()
         self.last_collect = 0.0
+        self.last_health_check = 0.0
+        self.health_checks_enabled = True
         self.maintenance_active = False
         self.maintenance_idle_logged = False
         self.maintenance_next_probe_at = 0.0
@@ -96,6 +98,7 @@ class Supervisor:
             return
         if not heartbeat_done:
             self._heartbeat()
+        self._maybe_refresh_health()
         self._reap_children()
         if self.draining:
             return
@@ -273,6 +276,29 @@ class Supervisor:
         with self.database.session() as session:
             own_control = session.get(SystemControl, component)
             return bool(own_control and own_control.state == "paused")
+
+    def _maybe_refresh_health(self) -> None:
+        if not getattr(self, "health_checks_enabled", False):
+            return
+        now = time.monotonic()
+        if now - self.last_health_check < self.config.health_check_interval_seconds:
+            return
+        from .health import refresh_health_snapshots
+
+        try:
+            results = refresh_health_snapshots(
+                self.database,
+                self.app,
+                self.config,
+                self.secrets,
+            )
+        except Exception:
+            log.exception("failed to persist health snapshots")
+            return
+        self.last_health_check = now
+        unavailable = [result.component for result in results if result.status == "unavailable"]
+        if unavailable:
+            log.warning("health checks unavailable: components=%s", ",".join(unavailable))
 
     def _heartbeat(self) -> None:
         from sqlalchemy import select

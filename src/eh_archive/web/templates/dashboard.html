@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}系统总览 · EH Archive{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><p class="eyebrow">运行控制</p><h1>系统总览</h1><p class="muted">数据库版本 {{ migration_version or '未知' }}</p></div>
+  <a class="button secondary" href="/health">查看健康 JSON</a>
+</div>
+
+<section class="hero-grid">
+  {% set supervisor = controls.get('supervisor') %}
+  <article class="panel supervisor-panel">
+    <div class="panel-head"><div><p class="eyebrow">调度器</p><h2>Supervisor</h2></div><span class="badge {{ supervisor_state }}">{{ supervisor_state }}</span></div>
+    <dl class="facts">
+      <div><dt>最后心跳</dt><dd>{{ supervisor.heartbeat_at|datetime if supervisor else '—' }}</dd></div>
+      <div><dt>暂停原因</dt><dd>{{ supervisor.reason or '—' if supervisor else '—' }}</dd></div>
+      <div><dt>租约持有者</dt><dd class="mono truncate">{{ supervisor.lease_owner or '—' if supervisor else '—' }}</dd></div>
+    </dl>
+    <form method="post" action="/control/supervisor" class="inline-control">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}">
+      <input name="reason" placeholder="原因（可选）">
+      <button name="state" value="running" type="submit">运行</button>
+      <button name="state" value="paused" type="submit">暂停</button>
+      <button class="warning-button" name="state" value="draining" type="submit" hx-confirm="停止领取新任务并等待当前任务结束？">排空</button>
+    </form>
+  </article>
+  <article class="panel add-panel">
+    <div class="panel-head"><div><p class="eyebrow">人工队列</p><h2>添加画廊</h2></div></div>
+    <form method="post" action="/manga/add" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>EH/ExHentai URL<input name="url" type="url" placeholder="https://exhentai.org/g/..." required></label>
+      <div class="form-row"><label>优先级<input name="priority" type="number" value="100"></label><label>备注<input name="remark" placeholder="可选"></label></div>
+      <button class="primary" type="submit">加入下载队列</button>
+    </form>
+  </article>
+</section>
+
+<section aria-labelledby="counts-title">
+  <div class="section-head"><div><p class="eyebrow">队列规模</p><h2 id="counts-title">状态概览</h2></div></div>
+  <div class="metric-grid">
+    {% for status, label in status_labels.items() %}
+      {% if counts.get(status, 0) %}
+      <a class="metric-card status-{{ status }}" href="/manga?status={{ status }}"><span>{{ label }}</span><strong>{{ counts.get(status, 0) }}</strong><small>{{ status }}</small></a>
+      {% endif %}
+    {% endfor %}
+  </div>
+</section>
+
+<section class="two-column">
+  <article class="panel">
+    <div class="section-head"><div><p class="eyebrow">依赖服务</p><h2>健康状态</h2></div></div>
+    <div class="health-list">
+      {% for component, item in health.items() %}
+      {% set state = health_states.get(component, 'unknown') %}<div class="health-row"><span class="health-dot {{ state }}"></span><div><strong>{{ component|component_label }}</strong><small>{{ item.message or '等待首次检查' }}</small></div><div class="health-meta"><span class="badge {{ state }}">{{ state }}</span><small>{{ item.checked_at|datetime }}</small></div></div>
+      {% else %}<div class="empty">等待 Supervisor 写入首次健康快照。</div>{% endfor %}
+    </div>
+  </article>
+  <article class="panel">
+    <div class="section-head"><div><p class="eyebrow">组件开关</p><h2>任务组件</h2></div></div>
+    <div class="component-list">
+      {% for component in supervisor_modules %}
+        {% set control = controls.get(component) %}
+        <form method="post" action="/control/{{ component }}" class="component-row">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="row_version" value="{{ control.row_version if control else '' }}">
+          <div><strong>{{ component|component_label }}</strong><small>{{ control.reason or component if control else component }}</small></div>
+          <span class="badge {{ control.state if control else 'running' }}">{{ control.state if control else 'running' }}</span>
+          <input name="reason" placeholder="原因（可选）">
+          {% if control and control.state == 'paused' %}<button name="state" value="running">恢复</button>{% else %}<button name="state" value="paused">暂停</button>{% endif %}
+        </form>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="two-column">
+  <article class="panel table-panel"><div class="section-head"><div><p class="eyebrow">执行中</p><h2>当前任务</h2></div></div>
+    <div class="table-wrap"><table><thead><tr><th>档案</th><th>操作</th><th>开始时间</th></tr></thead><tbody>
+    {% for attempt in running %}<tr><td><a class="mono" href="/manga/{{ attempt.manga_id }}">{{ attempt.manga_id or '系统任务' }}</a></td><td>{{ attempt.operation }}</td><td>{{ attempt.started_at|datetime }}</td></tr>{% else %}<tr><td colspan="3" class="empty">当前没有运行中的任务</td></tr>{% endfor %}
+    </tbody></table></div>
+  </article>
+  <article class="panel table-panel"><div class="section-head"><div><p class="eyebrow">需要关注</p><h2>最近错误</h2></div><a href="/manga?has_error=yes">全部</a></div>
+    <div class="table-wrap"><table><thead><tr><th>档案</th><th>错误</th><th>时间</th></tr></thead><tbody>
+    {% for row in recent_errors %}<tr><td><a href="/manga/{{ row.manga_id }}">{{ row.name or row.manga_id }}</a></td><td><span class="error-code">{{ row.last_error_code }}</span></td><td>{{ row.last_error_at|datetime }}</td></tr>{% else %}<tr><td colspan="3" class="empty">没有错误记录</td></tr>{% endfor %}
+    </tbody></table></div>
+  </article>
+</section>
+{% endblock %}

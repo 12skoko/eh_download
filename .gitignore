@@ -35,6 +35,8 @@ build/
 .codex-pytest-*/
 sample/
 /tools/
+AGENTS.md
+
 
 db.text.json
 config.py

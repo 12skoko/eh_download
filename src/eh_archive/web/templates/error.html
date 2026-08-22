@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block title %}操作失败 · EH Archive{% endblock %}{% block content %}<section class="error-page panel"><p class="eyebrow">HTTP {{ status_code }}</p><h1>操作没有完成</h1><p>{{ message }}</p>{% if status_code == 409 %}<p class="muted">Supervisor 或另一个页面可能已经修改了这条记录。请返回详情页刷新后重新确认。</p>{% endif %}<button onclick="history.back()">返回上一页</button></section>{% endblock %}

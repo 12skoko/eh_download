@@ -139,6 +139,8 @@ Copy-Item 'config\secrets.sample.toml' 'config\secrets.toml'
 ```toml
 database_url = "postgresql+psycopg://user:password@127.0.0.1:5432/eh_archive"
 web_secret = "change-this-long-random-secret"
+web_username = "admin"
+web_password_hash = "scrypt$使用下面的命令生成"
 
 [accounts.default]
 # 可直接粘贴浏览器复制的 Cookie 字符串
@@ -159,7 +161,16 @@ password = "qbit 密码"
 Authorization = "Bearer LANraragi_API_Token"
 ```
 
-数据库连接字符串的优先级为：`EHARCHIVE_DATABASE_URL` 环境变量、`secrets.toml`、`app.toml`。Web 密钥的优先级为 `EHARCHIVE_WEB_SECRET` 环境变量、`secrets.toml`。PowerShell 临时设置方式：
+使用项目命令生成密码哈希，复制整行输出到 `web_password_hash`：
+
+```powershell
+eharchive web-password
+```
+
+当 `web_host` 不是本机地址时，程序要求同时配置 `web_secret` 和
+`web_password_hash`，防止意外把无认证的管理接口开放到局域网。
+
+数据库连接字符串的优先级为：`EHARCHIVE_DATABASE_URL` 环境变量、`secrets.toml`、`app.toml`。Web 配置还支持 `EHARCHIVE_WEB_SECRET`、`EHARCHIVE_WEB_USERNAME` 和 `EHARCHIVE_WEB_PASSWORD_HASH` 环境变量。PowerShell 临时设置方式：
 
 ```powershell
 $env:EHARCHIVE_DATABASE_URL = 'postgresql+psycopg://user:password@127.0.0.1:5432/eh_archive'
@@ -344,13 +355,16 @@ eharchive-supervisor --config-dir config
 .\.venv\Scripts\eharchive-supervisor.exe --config-dir config
 ```
 
-浏览器访问：
+局域网部署在 `app.toml` 设置 `web_host = "0.0.0.0"`，浏览器访问：
 
-- `http://127.0.0.1:8787/`：最近档案的简单列表；
-- `http://127.0.0.1:8787/docs`：FastAPI Swagger API 文档；
-- `http://127.0.0.1:8787/health`：数据库、组件、存储目录和状态计数健康信息。
+- `http://服务器局域网IP:8787/`：中文管理控制台；
+- `/manga`：档案队列和搜索；
+- `/review`：人工复核和隔离工作台；
+- `/events`：事件与错误；
+- `/docs`：FastAPI Swagger API 文档；
+- `/health`：数据库、组件、健康快照和状态计数 JSON。
 
-生产环境请用 Windows Task Scheduler/NSSM/WinSW 或 Linux systemd 托管这两个常驻进程，并保证二者使用同一个配置目录和 PostgreSQL URL。升级程序前先将 Web 和 Supervisor 停止或把 `all` 组件暂停。
+生产环境请用 Windows Task Scheduler/NSSM/WinSW 或 Linux systemd 托管这两个常驻进程，并保证二者使用同一个配置目录和 PostgreSQL URL。升级程序前先停止 Web，并把 `supervisor` 控制状态设为 `paused` 或 `draining`。
 
 ## 7. 采集、下载和上传
 
@@ -472,13 +486,13 @@ aria2 必须由外部进程运行；EH Archive 只提交、轮询和清理任务
 
 ## 9. Web/API 控制
 
-启用 `web_secret` 后，所有写请求都必须带：
+浏览器页面使用管理员登录和签名 session。PowerShell 或其他 API 客户端使用：
 
 ```text
 Authorization: Bearer <web_secret>
 ```
 
-GET 请求可用于健康检查和查询。常用接口：
+除 `/login`、`/static/*` 和最小存活探针 `/health/live` 外，查询和写入均需要认证。常用接口：
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
@@ -487,6 +501,7 @@ GET 请求可用于健康检查和查询。常用接口：
 | GET | `/api/manga/{manga_id}` | 档案、attempt 和最近事件 |
 | POST | `/api/manga` | 手工添加 URL |
 | PATCH | `/api/manga/{manga_id}/remark` | 更新备注 |
+| PATCH | `/api/manga/{manga_id}/priority` | 更新优先级 |
 | POST | `/api/manga/{manga_id}/actions/retry` | 重试、恢复或覆盖跳过 |
 | POST | `/api/manga/{manga_id}/actions/cancel` | 请求取消 |
 | POST | `/api/manga/{manga_id}/actions/validate` | 从已下载产物重新校验 |
@@ -510,15 +525,17 @@ Invoke-RestMethod -Method Post `
   -Headers $headers -ContentType 'application/json' -Body $body
 ```
 
-取消是两阶段操作：Web 先写入 `cancel_requested`，当前任务到达安全边界后 Supervisor 收尾为 `cancelled`。可暂停全部流程或单个组件：
+取消是两阶段操作：Web 先写入 `cancel_requested`，当前任务到达安全边界后 Supervisor 收尾为 `cancelled`。暂停全部新调度使用 `supervisor` 组件；其他组件可独立暂停：
 
 ```powershell
 $body = @{ state = 'paused'; reason = '维护存储' } | ConvertTo-Json
-Invoke-RestMethod -Method Put -Uri "$base/api/control/all" `
+Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
   -Headers $headers -ContentType 'application/json' -Body $body
 ```
 
-维护结束时把 `state` 改为 `running`。上传结果不确定且档案处于 `manual_review` 时，只能在 LANraragi 确认后使用 40 位 SHA-1 archive ID 调用 `archive-confirmation`；`reason` 是必填项。
+维护结束时把 `state` 改为 `running`。上传结果不确定且档案处于 `manual_review` 时，只能在 LANraragi 确认后使用 40 位 SHA-1 archive ID 调用 `archive-confirmation`；人工操作原因均为可选，但建议在异常处理时填写。
+
+数据库升级会自动执行 `CREATE EXTENSION IF NOT EXISTS pg_trgm`，并为几十万条记录创建标题搜索和队列索引。正常情况下不需要单独在 Docker PostgreSQL 中启用扩展；只有 migration 账号缺少数据库 `CREATE` 权限时，才需要由 PostgreSQL 管理员提前启用。
 
 ## 10. 从旧 MySQL 迁移
 

@@ -17,6 +17,8 @@ dependencies = [
   "beautifulsoup4>=4.12,<5",
   "lxml>=5,<7",
   "fastapi>=0.110,<1",
+  "jinja2>=3.1,<4",
+  "python-multipart>=0.0.20,<1",
   "anyio>=4,<5",
   "h11>=0.14,<1",
   "uvicorn[standard]>=0.29,<1",
@@ -37,6 +39,9 @@ eharchive-supervisor = "eh_archive.supervisor.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"eh_archive.web" = ["templates/*.html", "templates/manga/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

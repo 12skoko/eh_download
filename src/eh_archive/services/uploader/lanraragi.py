@@ -177,6 +177,19 @@ class LANraragiClient:
             value = None
         return int(response.status_code), value
 
+    def info(self) -> tuple[int, dict[str, Any] | None]:
+        response = self._request(
+            "get",
+            f"{self.base_url}/api/info",
+            headers=self.headers,
+            timeout=self.timeout,
+        )
+        try:
+            value = response.json()
+        except ValueError:
+            value = None
+        return int(response.status_code), value
+
     def delete(self, archive_id: str) -> UploadOutcome:
         response = self._request(
             "delete",

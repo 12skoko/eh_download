@@ -6,7 +6,7 @@ log_dir = "D:/eharchive-data/log"
 # LANraragi import path and are left in upload_pending for now. Set to 0 to
 # disable this reservation and use normal HTTP upload for every file.
 large_upload_threshold_bytes = 2147483648
-web_host = "127.0.0.1"
+web_host = "0.0.0.0"
 web_port = 8787
 qbittorrent_url = "http://127.0.0.1:8080"
 # Absolute path as seen by the qBittorrent host. It may differ from the local

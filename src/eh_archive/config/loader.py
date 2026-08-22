@@ -100,6 +100,7 @@ class SupervisorConfig:
     maintenance_end: clock_time | None = None
     maintenance_retry_seconds: float = 30.0
     maintenance_recovery_timeout_seconds: float = 900.0
+    health_check_interval_seconds: float = 60.0
     modules: dict[str, bool] = field(
         default_factory=lambda: {name: True for name in SUPERVISOR_MODULES}
     )
@@ -155,6 +156,8 @@ class SecretsConfig:
     qbittorrent: dict[str, Any] = field(default_factory=dict)
     lanraragi: dict[str, Any] = field(default_factory=dict)
     web_secret: str | None = None
+    web_username: str = "admin"
+    web_password_hash: str | None = None
 
     def cookies(self, role: SessionRole) -> dict[str, str]:
         value = self.accounts.get(role.account, {})
@@ -368,6 +371,9 @@ def load_config(
         maintenance_recovery_timeout_seconds=float(
             supervisor_raw.get("maintenance_recovery_timeout_seconds", 900)
         ),
+        health_check_interval_seconds=float(
+            supervisor_raw.get("health_check_interval_seconds", 60)
+        ),
         modules=_module_map(supervisor_raw.get("modules", {})),
         max_concurrency={
             **SupervisorConfig().max_concurrency,
@@ -395,6 +401,8 @@ def load_config(
         raise ValueError("maintenance_retry_seconds must not be negative")
     if supervisor.maintenance_recovery_timeout_seconds < 0:
         raise ValueError("maintenance_recovery_timeout_seconds must not be negative")
+    if supervisor.health_check_interval_seconds <= 0:
+        raise ValueError("health_check_interval_seconds must be greater than zero")
     crawl = CrawlConfig(
         urls={str(k): str(v) for k, v in dict(crawl_raw.get("urls", {})).items()},
         collect_tags=_string_tuple(crawl_raw.get("collect_tags", []), "collect_tags"),
@@ -424,5 +432,11 @@ def load_config(
         qbittorrent=dict(secrets_raw.get("qbittorrent", {})),
         lanraragi=dict(secrets_raw.get("lanraragi", {})),
         web_secret=os.getenv("EHARCHIVE_WEB_SECRET") or secrets_raw.get("web_secret"),
+        web_username=str(
+            os.getenv("EHARCHIVE_WEB_USERNAME") or secrets_raw.get("web_username") or "admin"
+        ),
+        web_password_hash=(
+            os.getenv("EHARCHIVE_WEB_PASSWORD_HASH") or secrets_raw.get("web_password_hash")
+        ),
     )
     return app, supervisor, crawl, secrets

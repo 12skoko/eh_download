@@ -30,6 +30,6 @@ Before production cutover:
 
 1. Run the scripts in `scripts/README.md` against a read-only MySQL account.
 2. Review migration, qBittorrent, LANraragi and filesystem reconciliation.
-3. Start Web/Supervisor with `all=paused`, then resume components one at a time.
+3. Start Web/Supervisor with `supervisor=paused`, then resume components one at a time.
 4. Keep the old MySQL database and program read-only until a complete cycle has
    been verified.

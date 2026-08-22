@@ -63,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     task.add_argument("--limit", type=int, default=None)
     sub.add_parser("supervisor")
     sub.add_parser("web")
+    sub.add_parser("web-password")
     picacg = sub.add_parser("picacg")
     picacg_sub = picacg.add_subparsers(dest="picacg_action", required=True)
     picacg_import = picacg_sub.add_parser("import")
@@ -78,6 +79,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "web-password":
+        from getpass import getpass
+
+        from .web.auth import hash_password
+
+        password = getpass("Web 管理员密码: ")
+        confirmation = getpass("再次输入密码: ")
+        if password != confirmation:
+            raise SystemExit("两次输入的密码不一致")
+        print(hash_password(password))
+        return 0
     app, _, crawl, secrets = load_config(args.config_dir)
     session_run_id = str(uuid.uuid4())
     component = args.command if args.command in {"supervisor", "web"} else "cli"

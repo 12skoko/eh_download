@@ -93,6 +93,9 @@ class QBittorrentClient:
         values = self._call("torrents_info", torrent_hashes=torrent_hash)
         return values[0] if values else None
 
+    def version(self) -> str:
+        return str(self._call("app_version"))
+
     def delete(self, torrent_hash: str, *, delete_files: bool = False) -> None:
         self._call("torrents_delete", torrent_hashes=torrent_hash, delete_files=delete_files)
 

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · EH Archive</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <div class="brand login-brand">
+      <span class="brand-mark">EH</span>
+      <span><strong>EH Archive</strong><small>局域网归档控制台</small></span>
+    </div>
+    <h1>管理员登录</h1>
+    <p class="muted">登录后可以查看运行状态并执行人工操作。</p>
+    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+    {% if not auth_enabled %}<div class="alert warning">当前仅允许本机无认证访问。</div>{% endif %}
+    <form method="post" action="/login" class="stack-form">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label>用户名<input name="username" autocomplete="username" required autofocus></label>
+      <label>密码<input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="primary wide" type="submit">登录</button>
+    </form>
+  </main>
+</body>
+</html>
