@@ -11,7 +11,7 @@ from ..domain.errors import EH_SITE_UNAVAILABLE_EXIT_CODE, ErrorClass, classify_
 from ..logging import RunReport, clean_report_value, configure_logging, get_logger
 from ..services.collector import CollectionResult, Collector
 
-log = get_logger(__name__)
+log = get_logger("collect")
 
 
 def _collect_item_line(item) -> str:

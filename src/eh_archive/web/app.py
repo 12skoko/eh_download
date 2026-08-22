@@ -37,7 +37,7 @@ def _gallery_id(value: str) -> str | None:
 
 def create_app(database: Database | None = None, *, config_dir: str | Path = "config"):
     try:
-        from fastapi import FastAPI, HTTPException
+        from fastapi import Body, FastAPI, HTTPException
         from pydantic import BaseModel, Field
     except ImportError as exc:
         raise RuntimeError("Install eh-archive to use the Web process") from exc
@@ -428,10 +428,24 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             )
             return _serialize(row)
 
+    control_body = Body()
+
     @app.put("/api/control/{component}")
-    def control(component: str, payload: ControlUpdate):
-        if payload.state not in {"running", "paused"}:
-            raise HTTPException(400, "state must be running or paused")
+    def control(component: str, payload=control_body):
+        try:
+            payload = ControlUpdate(**payload)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(422, f"invalid control payload: {exc}") from exc
+        if component == "all":
+            raise HTTPException(400, "component all was replaced by supervisor")
+        allowed_states = (
+            {"running", "paused", "draining"}
+            if component == "supervisor"
+            else {"running", "paused"}
+        )
+        if payload.state not in allowed_states:
+            allowed = ", ".join(sorted(allowed_states))
+            raise HTTPException(400, f"state for {component} must be one of: {allowed}")
         with database.session() as session:
             row = session.get(SystemControl, component)
             if row is None:

@@ -68,6 +68,8 @@ class Supervisor:
         self.stopping = False
         self.draining = False
         self.drain_heartbeat = True
+        self.control_state: str | None = None
+        self._last_graceful_children: tuple[str, ...] | None = None
         self.exit_code = 0
         self.failed_operations: set[str] = set()
         self.last_collect = 0.0
@@ -96,6 +98,11 @@ class Supervisor:
             self._heartbeat()
         self._reap_children()
         if self.draining:
+            return
+        if self.control_state == "draining":
+            self._log_graceful_drain_wait()
+            return
+        if self.control_state == "paused":
             return
         self._complete_cancellations()
         self._maybe_collect()
@@ -213,10 +220,19 @@ class Supervisor:
         signal.signal(signal.SIGTERM, self.stop)
         if hasattr(signal, "SIGBREAK"):
             signal.signal(signal.SIGBREAK, self.stop)
+        graceful_drain_completed = False
         try:
             while not self.stopping:
                 try:
                     self.tick()
+                    if (
+                        not self.draining
+                        and self.control_state == "draining"
+                        and not self.children
+                        and self._complete_graceful_drain()
+                    ):
+                        graceful_drain_completed = True
+                        break
                 except Exception as exc:
                     info = classify_exception(exc)
                     log.exception(
@@ -249,16 +265,14 @@ class Supervisor:
                 ",".join(sorted(self.failed_operations)) or "supervisor",
                 self.exit_code,
             )
+        elif graceful_drain_completed:
+            log.info("graceful drain completed; supervisor stopped with exit_code=0")
         return self.exit_code
 
     def _paused(self, component: str) -> bool:
         with self.database.session() as session:
-            all_control = session.get(SystemControl, "all")
             own_control = session.get(SystemControl, component)
-            return bool(
-                (all_control and all_control.state == "paused")
-                or (own_control and own_control.state == "paused")
-            )
+            return bool(own_control and own_control.state == "paused")
 
     def _heartbeat(self) -> None:
         from sqlalchemy import select
@@ -284,6 +298,55 @@ class Supervisor:
             control.heartbeat_at = utcnow()
             control.lease_owner = self.owner
             control.lease_until = utcnow() + timedelta(seconds=self.config.lease_seconds)
+            self._set_control_state(control.state)
+
+    def _set_control_state(self, state: str) -> None:
+        previous = self.control_state
+        self.control_state = state
+        if state == previous:
+            return
+        self._last_graceful_children = None
+        if state == "paused":
+            log.info("supervisor paused; no new submodules will start")
+        elif state == "draining":
+            log.info(
+                "graceful drain requested; no new submodules will start: running_children=%s",
+                ",".join(sorted(self.children)) or "none",
+            )
+        elif previous == "draining":
+            log.info("graceful drain cancelled; supervisor scheduling resumed")
+        elif previous == "paused":
+            log.info("supervisor scheduling resumed")
+
+    def _log_graceful_drain_wait(self) -> None:
+        running = tuple(sorted(self.children))
+        if not running or running == self._last_graceful_children:
+            return
+        self._last_graceful_children = running
+        log.info("graceful drain waiting: running_children=%s", ",".join(running))
+
+    def _complete_graceful_drain(self) -> bool:
+        """Atomically consume a drain request after every child has exited."""
+
+        from sqlalchemy import select
+
+        with self.database.session() as session:
+            control = session.scalar(
+                select(SystemControl)
+                .where(SystemControl.component == "supervisor")
+                .with_for_update()
+            )
+            if control is None or control.lease_owner != self.owner:
+                raise RuntimeError("Supervisor lease was lost while completing graceful drain")
+            if control.state != "draining":
+                self._set_control_state(control.state)
+                return False
+            control.state = "paused"
+            control.reason = "graceful drain completed"
+            control.updated_by = self.owner
+            control.row_version += 1
+            self.control_state = "paused"
+        return True
 
     def _reap_children(self) -> None:
         for operation, child in list(self.children.items()):

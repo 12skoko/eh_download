@@ -34,6 +34,7 @@ build/
 .pytest-tmp/
 .codex-pytest-*/
 sample/
+/tools/
 
 db.text.json
 config.py

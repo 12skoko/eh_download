@@ -262,7 +262,10 @@ class EventLog(Base):
 class SystemControl(Base):
     __tablename__ = "system_control"
     __table_args__ = (
-        CheckConstraint("state IN ('running', 'paused')", name="ck_system_control_state"),
+        CheckConstraint(
+            "state IN ('running', 'paused', 'draining')",
+            name="ck_system_control_state",
+        ),
     )
     component: Mapped[str] = mapped_column(String(32), primary_key=True)
     state: Mapped[str] = mapped_column(String(16), default="running", nullable=False)

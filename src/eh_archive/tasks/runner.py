@@ -62,6 +62,10 @@ TORRENT_FALLBACK_CODES = frozenset(
 )
 
 
+def _operation_logger(operation: str):
+    return get_logger(operation)
+
+
 def _qbit_tags(info: Any) -> set[str]:
     raw = getattr(info, "tags", None)
     if raw is None:
@@ -1215,6 +1219,8 @@ class TaskExecutor:
     ) -> None:
         replacement = repository.get(record.superseded_by_id) if record.superseded_by_id else None
         if replacement is None or replacement.status not in {
+            Status.UPLOAD_PENDING.value,
+            Status.UPLOADING.value,
             Status.UPLOADED.value,
             Status.COMPLETED.value,
         }:
@@ -1618,11 +1624,14 @@ def _finish_task_report(
 
 
 def main(argv: list[str] | None = None) -> int:
+    global log
+
     parser = argparse.ArgumentParser(prog="eharchive-task")
     parser.add_argument("--operation", required=True)
     parser.add_argument("--config-dir", default="config")
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args(argv)
+    log = _operation_logger(args.operation)
     app, supervisor, _, _ = load_config(args.config_dir)
     run_id = str(uuid.uuid4())
     configure_logging(
