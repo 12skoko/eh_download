@@ -534,7 +534,7 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
   -Headers $headers -ContentType 'application/json' -Body $body
 ```
 
-维护结束时把 `state` 改为 `running`。详情页的人工控制对所有可设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`uploading`、`cancel_requested`、`deferred` 和 `cancelled` 不作为人工目标状态。`download_pending` 必须指定 `download_method`；`downloaded` 还必须填写服务器上真实存在的 `artifact_filename`；`uploaded` 和 `completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定已进入上传阶段的替代档案；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
+维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为人工目标状态。`download_pending` 必须指定 `download_method`；`downloaded` 还必须填写服务器上真实存在的 `artifact_filename`；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定已进入上传阶段的替代档案；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
 
 旧的 `/actions/*` 和 `/archive-confirmation` API 为兼容既有脚本继续保留。新的管理界面使用 `/status/{target_status}`；它只修改数据库状态和关联字段，不在 Web 请求中直接运行子模块。Supervisor 后续根据 `download_pending`、`downloaded`、`upload_pending`、`uploaded` 和 `outdated` 等状态安排相应模块。
 

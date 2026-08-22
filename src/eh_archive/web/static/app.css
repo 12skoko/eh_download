@@ -143,10 +143,10 @@ tbody tr:hover { background: rgb(23 107 135 / 3.5%); }
 .action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .75rem; }
 .action-card { display: grid; gap: .45rem; padding: .85rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-soft); }
 .action-card small { color: var(--muted); }
+.status-control-panel { margin-bottom: 1.5rem; }
 .status-action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: .65rem; }
-.status-action-button { min-height: 64px; display: grid; justify-items: start; align-content: center; text-align: left; }
+.status-action-button { min-height: 64px; display: grid; justify-items: center; align-content: center; text-align: center; }
 .status-action-button small { color: var(--muted); font-family: "Cascadia Code", Consolas, monospace; }
-.status-action-button.danger { color: var(--red); border-color: #e6aaa4; }
 .status-action-button:disabled { cursor: not-allowed; opacity: .5; }
 .status-dialog {
   width: min(600px, calc(100% - 2rem)); max-height: calc(100vh - 2rem); padding: 0;

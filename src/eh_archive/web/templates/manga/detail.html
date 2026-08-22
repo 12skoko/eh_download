@@ -16,12 +16,12 @@
   </article>
 </section>
 {% if row.last_error_code %}<section class="panel error-panel"><div class="section-head"><div><p class="eyebrow">最近故障</p><h2>{{ row.last_error_code }}</h2></div><span>{{ row.last_error_at|datetime }}</span></div><p>{{ row.last_error_detail }}</p><p class="mono">operation: {{ row.last_error_operation or '—' }}</p></section>{% endif %}
-<section class="panel"><div class="section-head"><div><p class="eyebrow">人工控制</p><h2>调整到关键状态</h2><p class="muted">所有操作都会先打开确认窗口，并写入下方审计轨迹。</p></div></div>
+<section class="panel status-control-panel"><div class="section-head"><div><p class="eyebrow">人工处理</p><h2>状态调整</h2></div></div>
   {% set execution_active = row.active_attempt_id or row.lease_owner or row.lease_token %}
   {% if execution_active %}<div class="alert warning">当前档案仍有活动任务或租约，人工状态调整已锁定。</div>{% endif %}
   <div class="status-action-grid">
     {% for target in manual_status_targets %}
-    <button type="button" class="status-action-button {{ 'danger' if target.danger else '' }}" data-open-dialog="status-dialog-{{ target.status }}" {% if execution_active or row.status == target.status %}disabled{% endif %}>
+    <button type="button" class="status-action-button" data-open-dialog="status-dialog-{{ target.status }}" {% if execution_active or row.status == target.status %}disabled{% endif %}>
       <strong>{{ target.label }}</strong>
       <small>{{ target.status }}{% if row.status == target.status %} · 当前状态{% endif %}</small>
     </button>
