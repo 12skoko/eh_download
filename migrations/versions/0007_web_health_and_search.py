@@ -52,7 +52,7 @@ def upgrade() -> None:
     with op.get_context().autocommit_block():
         op.execute(
             "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_manga_web_queue "
-            "ON manga (priority DESC, created_at, manga_id)"
+            "ON manga (posted_at DESC NULLS LAST, manga_id)"
         )
         op.execute(
             "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_manga_web_error "

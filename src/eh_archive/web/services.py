@@ -341,7 +341,7 @@ def list_manga(
 ) -> MangaPage:
     limit = max(1, min(limit, 100))
     query = select(MangaRecord).order_by(
-        desc(MangaRecord.priority), MangaRecord.created_at, MangaRecord.manga_id
+        desc(MangaRecord.posted_at).nulls_last(), MangaRecord.manga_id
     )
     if statuses:
         invalid = [value for value in statuses if value not in STATUS_LABELS]
@@ -368,18 +368,22 @@ def list_manga(
         )
     decoded = _decode_cursor(cursor)
     if decoded is not None:
-        priority, created_at, manga_id = decoded
-        query = query.where(
-            or_(
-                MangaRecord.priority < priority,
-                and_(MangaRecord.priority == priority, MangaRecord.created_at > created_at),
-                and_(
-                    MangaRecord.priority == priority,
-                    MangaRecord.created_at == created_at,
-                    MangaRecord.manga_id > manga_id,
-                ),
+        posted_at, manga_id = decoded
+        if posted_at is None:
+            query = query.where(
+                and_(MangaRecord.posted_at.is_(None), MangaRecord.manga_id > manga_id)
             )
-        )
+        else:
+            query = query.where(
+                or_(
+                    MangaRecord.posted_at < posted_at,
+                    MangaRecord.posted_at.is_(None),
+                    and_(
+                        MangaRecord.posted_at == posted_at,
+                        MangaRecord.manga_id > manga_id,
+                    ),
+                )
+            )
     elif offset:
         query = query.offset(max(0, offset))
     rows = list(session.scalars(query.limit(limit + 1)))
@@ -564,17 +568,19 @@ def _escape_like(value: str) -> str:
 
 def _encode_cursor(row: MangaRecord) -> str:
     payload = json.dumps(
-        [row.priority, row.created_at.isoformat(), row.manga_id], separators=(",", ":")
+        [row.posted_at.isoformat() if row.posted_at is not None else None, row.manga_id],
+        separators=(",", ":"),
     ).encode("utf-8")
     return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
 
 
-def _decode_cursor(value: str | None) -> tuple[int, datetime, str] | None:
+def _decode_cursor(value: str | None) -> tuple[datetime | None, str] | None:
     if not value:
         return None
     try:
         padding = "=" * (-len(value) % 4)
-        priority, created_at, manga_id = json.loads(base64.urlsafe_b64decode(value + padding))
-        return int(priority), datetime.fromisoformat(str(created_at)), str(manga_id)
+        posted_at, manga_id = json.loads(base64.urlsafe_b64decode(value + padding))
+        parsed_posted_at = datetime.fromisoformat(str(posted_at)) if posted_at is not None else None
+        return parsed_posted_at, str(manga_id)
     except (TypeError, ValueError, json.JSONDecodeError):
         raise InvalidRequest("无效分页游标") from None
