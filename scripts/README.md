@@ -88,3 +88,37 @@ configured `log_dir/tools` directory, which should remain outside version
 control. The comparison lists database-only IDs, LANraragi-only IDs, duplicate
 IDs, invalid database IDs, and LANraragi archives whose source gallery URL
 could not be parsed.
+
+## Download artifact cleanup
+
+`cleanup_download_artifacts.py` scans the configured torrent, direct, H@H, and
+aria2 download roots. It also scans every qBittorrent task whose category is
+exactly `eharchive`. A recognized item is eligible only when the matching
+PostgreSQL manga row is `completed` or `deleted` and has no active attempt or
+lease. The script never changes PostgreSQL and never calls LANraragi.
+
+Preview all eligible and skipped items first:
+
+```powershell
+python scripts/cleanup_download_artifacts.py --config-dir config
+```
+
+Test one numeric gallery ID before a full cleanup:
+
+```powershell
+python scripts/cleanup_download_artifacts.py --config-dir config --id 4127104
+python scripts/cleanup_download_artifacts.py --config-dir config --id 4127104 --apply
+```
+
+Apply the full cleanup only after reviewing the dry-run JSON report:
+
+```powershell
+python scripts/cleanup_download_artifacts.py --config-dir config --apply
+```
+
+qBittorrent tasks are removed first with `delete_files=false`; the script then
+removes the corresponding numeric torrent directory. Direct and aria2 ZIP
+files are removed individually, while recognized H@H gallery directories are
+removed recursively. Unrecognized names, temporary files, symlinks, missing
+database rows, non-terminal states, and anomalous active leases are preserved
+and listed in the report.

@@ -93,6 +93,11 @@ class QBittorrentClient:
         values = self._call("torrents_info", torrent_hashes=torrent_hash)
         return values[0] if values else None
 
+    def list_managed(self) -> list[Any]:
+        """Return every torrent still owned by EH Archive."""
+
+        return list(self._call("torrents_info", category=QBITTORRENT_CATEGORY))
+
     def version(self) -> str:
         return str(self._call("app_version"))
 

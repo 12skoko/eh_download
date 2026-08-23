@@ -445,6 +445,16 @@ qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会
 
 `delete` 通常处理已经被新版本替代且状态为 `outdated` 的记录；它也会处理只能从管理网页人工设置的 `force_delete_pending`。普通 `outdated` 删除必须验证替代档案已经进入上传阶段，强制删除会跳过这一验证，但仍使用相同的 LANraragi 删除、本地归档删除、租约和 attempt fencing。不要用它代替普通清理。
 
+历史 cleanup/delete 异常造成下载目录遗留时，可以运行独立维护脚本。脚本默认只预览，扫描 `eharchive` 分类且名称为纯数字 ID 的 qBittorrent 任务，以及 torrent、direct、H@H、aria2 四个下载目录；只有数据库状态为 `completed` 或 `deleted` 且没有活动 attempt/租约的项目才会进入删除计划。它不修改数据库，也不调用 LANraragi。先用单个数字 ID 验证，再执行全量清理：
+
+```powershell
+python scripts/cleanup_download_artifacts.py --config-dir config --id 4127104
+python scripts/cleanup_download_artifacts.py --config-dir config --id 4127104 --apply
+python scripts/cleanup_download_artifacts.py --config-dir config --apply
+```
+
+每次运行都会在 `log_dir/tools` 生成 JSON 报告。应用模式先以 `delete_files=false` 移除匹配的 qBittorrent 任务，再删除本地数字 ID 目录；任务删除失败时保留对应 Torrent 目录。无法识别的名称、临时文件、符号链接、数据库不存在或非终态的项目全部跳过。
+
 ### 7.5 缩略图再生成
 
 每个 upload 子进程完成整个上传批次后，会统一调用一次 LANraragi 的
