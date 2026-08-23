@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}[{{ row.manga_id|manga_tab_id }}] ▪ EH Archive控制台{% endblock %}
 {% block content %}
-<div class="page-head detail-head"><div><a class="back" href="/manga">← 返回队列</a><p class="eyebrow mono">{{ row.manga_id }}</p><h1>{{ row.name or row.real_name or row.manga_id }}</h1><p class="muted">{{ row.real_name }}</p></div><span class="badge large status-{{ row.status }}">{{ row.status|status_label }}</span></div>
+<div class="page-head detail-head"><div><a class="back" href="/manga">← 返回队列</a><p class="eyebrow mono detail-manga-id">{{ row.manga_id }}</p><h1>{{ row.name or row.real_name or row.manga_id }}</h1><p class="muted">{{ row.real_name }}</p></div><span class="badge large status-{{ row.status }}">{{ row.status|status_label }}</span></div>
 {% if notice %}<div class="alert success">操作已完成，页面显示的是数据库最新状态。</div>{% endif %}
 <section class="detail-grid">
   <article class="panel"><div class="section-head"><div><p class="eyebrow">当前状态</p><h2>调度信息</h2></div></div><dl class="facts two">
@@ -16,6 +16,32 @@
   </article>
 </section>
 {% if row.last_error_code %}<section class="panel error-panel"><div class="section-head"><div><p class="eyebrow">最近故障</p><h2>{{ row.last_error_code }}</h2></div><span>{{ row.last_error_at|datetime }}</span></div><p>{{ row.last_error_detail }}</p><p class="mono">operation: {{ row.last_error_operation or '—' }}</p></section>{% endif %}
+{% if row.last_error_code|lower == 'lrr_409' or row.rename_target_filename %}
+<section class="panel table-panel filename-match-panel">
+  <div class="section-head"><div><p class="eyebrow">重复排查</p><h2>同名档案</h2></div><span class="mono break">{{ row.artifact_filename or '未登记文件名' }}</span></div>
+  <div class="table-wrap"><table><thead><tr><th>档案</th><th>状态</th><th>LANraragi ID</th><th>状态更新时间</th></tr></thead><tbody>{% for match in filename_matches %}<tr><td class="title-cell"><a href="/manga/{{ match.manga_id }}" target="_blank" rel="noopener" hx-boost="false"><strong>{{ match.name or match.real_name or match.manga_id }}</strong><small class="mono">{{ match.manga_id }}</small></a></td><td><span class="badge status-{{ match.status }}">{{ match.status|status_label }}</span></td><td class="mono break">{{ match.lrr_archive_id or '—' }}</td><td>{{ match.status_updated_at|datetime }}</td></tr>{% else %}<tr><td colspan="4" class="empty">{% if row.artifact_filename %}数据库中没有找到其他同名档案{% else %}当前档案尚未登记文件名，无法查找同名档案{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+  {% if conflict_rename_available %}
+  <div class="panel-actions"><button type="button" class="primary" data-open-dialog="conflict-rename-dialog">同名但需要分别保留</button></div>
+  <dialog id="conflict-rename-dialog" class="status-dialog">
+    <form method="post" action="/manga/{{ row.manga_id }}/conflict-rename" class="status-dialog-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="row_version" value="{{ row.row_version }}">
+      <div class="dialog-head"><div><p class="eyebrow">同名冲突处理</p><h2>分别保留两个档案</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+      <p>validate 模块会先重命名真实文件，再重新校验文件和 SHA1；校验通过后进入等待上传。</p>
+      <dl class="transition-preview"><div><dt>当前文件名</dt><dd class="mono break">{{ row.artifact_filename }}</dd></div><div><dt>目标状态</dt><dd>rename_pending / 等待冲突改名</dd></div></dl>
+      <label>改名后的文件名（必填）<input name="target_filename" value="{{ conflict_rename_filename or '' }}" required></label>
+      <p class="field-help">文件仍保存在当前位置：<span class="mono">{{ row.artifact_location }}</span>。系统不会覆盖同名目标文件。</p>
+      <label>分别保留原因（必填）<textarea name="reason" rows="3" required>同名档案内容不同，需要分别保留</textarea></label>
+      <label class="lease-confirmation"><input type="checkbox" name="confirmed" value="yes" required><span>我已核对同名档案，确认当前档案需要单独上传。</span></label>
+      <div class="alert warning">确认后将修改真实文件名，并按照正常上传流程再次提交到 LANraragi。</div>
+      <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认分别保留</button></div>
+    </form>
+  </dialog>
+  {% elif row.rename_target_filename %}
+  <div class="alert warning">等待 validate 模块改名为 <span class="mono break">{{ row.rename_target_filename }}</span> 并重新校验。</div>
+  {% endif %}
+</section>
+{% endif %}
 <section class="panel status-control-panel"><div class="section-head"><div><p class="eyebrow">人工处理</p><h2>状态调整</h2></div></div>
   {% set execution_active = row.active_attempt_id or row.lease_owner or row.lease_token %}
   {% if expired_attempt %}
@@ -62,7 +88,7 @@
         <label>替代档案 ID（必填）<input name="superseded_by_id" value="{{ row.superseded_by_id or '' }}" placeholder="例如 123456/token" required></label>
         {% endif %}
         {% if target.status == 'force_delete_pending' %}
-        <label>档案 ID 二次确认（必填）<input name="confirmation_manga_id" placeholder="请输入 {{ row.manga_id }}" autocomplete="off" required></label>
+        <label><span class="field-label-line">档案 ID 二次确认（必填）<span class="mono confirmation-manga-id">{{ row.manga_id }}</span></span><input name="confirmation_manga_id" placeholder="请输入上方档案 ID" autocomplete="off" required></label>
         {% endif %}
         <label>操作原因{% if target.requires_reason %}（必填）{% else %}（可选）{% endif %}<textarea name="reason" rows="3" {% if target.requires_reason %}required{% endif %}>{% if target.status == 'force_delete_pending' %}outdated{% endif %}</textarea></label>
         {% if target.danger %}<div class="alert warning">这是高影响操作，请核对目标状态和必填信息后再确认。</div>{% endif %}
@@ -73,7 +99,7 @@
   </div>
 </section>
 <section class="detail-grid">
-  <article class="panel"><div class="section-head"><div><p class="eyebrow">归档产物</p><h2>文件信息</h2></div></div><dl class="facts two"><div><dt>位置</dt><dd>{{ row.artifact_location or '—' }}</dd></div><div><dt>文件名</dt><dd class="mono break">{{ row.artifact_filename or '—' }}</dd></div><div><dt>类型/代次</dt><dd>{{ row.artifact_kind or '—' }} / {{ row.artifact_generation or '—' }}</dd></div><div><dt>大小</dt><dd>{{ row.artifact_size|filesize }}</dd></div><div><dt>SHA1</dt><dd class="mono break">{{ row.artifact_sha1 or '—' }}</dd></div><div><dt>LANraragi ID</dt><dd class="mono break">{{ row.lrr_archive_id or '—' }}</dd></div></dl></article>
+  <article class="panel"><div class="section-head"><div><p class="eyebrow">归档产物</p><h2>文件信息</h2></div></div><dl class="facts two"><div><dt>位置</dt><dd>{{ row.artifact_location or '—' }}</dd></div><div><dt>文件名</dt><dd class="mono break">{{ row.artifact_filename or '—' }}</dd></div>{% if row.rename_target_filename %}<div class="wide"><dt>等待改名为</dt><dd class="mono break">{{ row.rename_target_filename }}</dd></div>{% endif %}<div><dt>类型/代次</dt><dd>{{ row.artifact_kind or '—' }} / {{ row.artifact_generation or '—' }}</dd></div><div><dt>大小</dt><dd>{{ row.artifact_size|filesize }}</dd></div><div><dt>SHA1</dt><dd class="mono break">{{ row.artifact_sha1 or '—' }}</dd></div><div><dt>LANraragi ID</dt><dd class="mono break">{{ row.lrr_archive_id or '—' }}</dd></div></dl></article>
   <article class="panel"><div class="section-head"><div><p class="eyebrow">来源信息</p><h2>画廊详情</h2></div></div><dl class="facts two"><div><dt>分类</dt><dd>{{ row.category or '—' }}</dd></div><div><dt>上传者</dt><dd>{{ row.uploader or '—' }}</dd></div><div><dt>页数</dt><dd>{{ row.pages or '—' }}</dd></div><div><dt>评分</dt><dd>{{ row.rating or '—' }}</dd></div><div class="wide"><dt>来源链接</dt><dd><a href="{{ row.link }}" target="_blank" rel="noopener noreferrer" hx-boost="false">{{ row.link }}</a></dd></div><div class="wide"><dt>标签</dt><dd class="break">{{ row.tags_raw or '—' }}</dd></div></dl></article>
 </section>
 <section class="panel table-panel"><div class="section-head"><div><p class="eyebrow">执行记录</p><h2>Attempts</h2></div></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>操作</th><th>状态</th><th>开始</th><th>结束</th><th>错误</th></tr></thead><tbody>{% for item in attempts %}<tr><td>{{ item.id }}</td><td>{{ item.operation }}</td><td><span class="badge {{ item.status }}">{{ item.status }}</span></td><td>{{ item.started_at|datetime }}</td><td>{{ item.finished_at|datetime }}</td><td>{{ item.error_code or '—' }}</td></tr>{% else %}<tr><td colspan="6" class="empty">暂无 attempt</td></tr>{% endfor %}</tbody></table></div></section>

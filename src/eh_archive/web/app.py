@@ -537,6 +537,25 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             "expired-lease-released",
         )
 
+    @app.post("/manga/{manga_id:path}/conflict-rename")
+    async def conflict_rename_page(request: Request, manga_id: str):
+        form = await _validated_form(request)
+        return _page_update(
+            request,
+            templates,
+            database,
+            manga_id,
+            lambda service: service.request_conflict_rename(
+                manga_id,
+                row_version=int(str(form.get("row_version", ""))),
+                target_filename=_optional_text(form.get("target_filename")),
+                reason=_optional_text(form.get("reason")),
+                confirmed=form.get("confirmed") == "yes",
+            ),
+            "conflict-rename-requested",
+            app_config=app_config,
+        )
+
     @app.post("/manga/{manga_id:path}/status/{target_status}")
     async def override_manga_status_page(request: Request, manga_id: str, target_status: str):
         form = await _validated_form(request)

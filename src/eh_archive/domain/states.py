@@ -21,6 +21,7 @@ class Status(StrEnum):
     UNAVAILABLE = "unavailable"
     OUTDATED = "outdated"
     FORCE_DELETE_PENDING = "force_delete_pending"
+    RENAME_PENDING = "rename_pending"
     DELETED = "deleted"
     CANCEL_REQUESTED = "cancel_requested"
     CANCELLED = "cancelled"
@@ -74,6 +75,7 @@ TRANSITIONS: dict[str, dict[str, str]] = {
         "quarantine": Status.QUARANTINED,
         "review": Status.MANUAL_REVIEW,
         "retry": Status.DOWNLOADED,
+        "rename_retry": Status.RENAME_PENDING,
         "details_retry": Status.VALIDATING,
     },
     Status.PREPARING: {
@@ -105,6 +107,7 @@ TRANSITIONS: dict[str, dict[str, str]] = {
         "deleted": Status.DELETED,
         "review": Status.MANUAL_REVIEW,
     },
+    Status.RENAME_PENDING: {"validate": Status.VALIDATING},
     Status.SKIPPED: {"override": Status.DOWNLOAD_PENDING, "cancel": Status.CANCEL_REQUESTED},
     Status.UNAVAILABLE: {"retry": Status.DOWNLOAD_PENDING, "cancel": Status.CANCEL_REQUESTED},
     Status.QUARANTINED: {
@@ -113,6 +116,7 @@ TRANSITIONS: dict[str, dict[str, str]] = {
         "cancel": Status.CANCEL_REQUESTED,
     },
     Status.MANUAL_REVIEW: {
+        "rename": Status.RENAME_PENDING,
         "resume_download": Status.DOWNLOAD_PENDING,
         "resume_validate": Status.VALIDATING,
         "resume_upload": Status.UPLOAD_PENDING,

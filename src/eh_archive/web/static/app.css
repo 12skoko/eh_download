@@ -83,7 +83,7 @@ h2 { margin-bottom: .25rem; font-size: 1.05rem; }
 .badge { display: inline-flex; align-items: center; width: fit-content; padding: .22rem .55rem; border-radius: 999px; color: #38505e; background: #edf1f3; font-size: .72rem; font-weight: 750; white-space: nowrap; }
 .badge.large { padding: .4rem .8rem; font-size: .8rem; }
 .badge.running, .badge.healthy, .badge.succeeded, .status-completed, .status-uploaded { color: var(--green); background: var(--green-soft); }
-.badge.paused, .badge.draining, .badge.degraded, .badge.stale, .status-manual_review, .status-deferred, .status-force_delete_pending { color: var(--amber); background: var(--amber-soft); }
+.badge.paused, .badge.draining, .badge.degraded, .badge.stale, .status-manual_review, .status-deferred, .status-force_delete_pending, .status-rename_pending { color: var(--amber); background: var(--amber-soft); }
 .badge.unavailable, .badge.failed, .badge.abandoned, .status-quarantined, .status-unavailable, .status-cancel_requested { color: var(--red); background: var(--red-soft); }
 .status-downloading, .status-validating, .status-preparing, .status-uploading { color: #165d8d; background: var(--blue-soft); }
 
@@ -145,8 +145,11 @@ tbody tr:hover { background: rgb(23 107 135 / 3.5%); }
 .pagination { display: flex; justify-content: center; padding: 1.2rem; }
 
 .detail-head { align-items: end; }
+.detail-manga-id { text-transform: none; letter-spacing: .04em; }
 .back { display: inline-block; margin-bottom: 1rem; }
 .error-panel { margin-bottom: 1.5rem; color: #6f1d17; border-color: #edb5ae; background: var(--red-soft); }
+.filename-match-panel { margin-bottom: 1.5rem; }
+.filename-match-panel .panel-actions { display: flex; justify-content: flex-end; padding: 1rem 1.25rem 0; }
 .action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .75rem; }
 .action-card { display: grid; gap: .45rem; padding: .85rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-soft); }
 .action-card small { color: var(--muted); }
@@ -173,6 +176,8 @@ tbody tr:hover { background: rgb(23 107 135 / 3.5%); }
 .transition-preview dt { color: var(--muted); font-size: .72rem; }
 .transition-preview dd { margin: .2rem 0 0; font-family: "Cascadia Code", Consolas, monospace; overflow-wrap: anywhere; }
 .field-help { margin: -.5rem 0 0; color: var(--muted); font-size: .78rem; }
+.field-label-line { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .6rem; }
+.confirmation-manga-id { padding: .15rem .4rem; color: var(--text); border-radius: 5px; background: var(--surface-soft); user-select: text; }
 .lease-confirmation { display: flex; flex-direction: row; align-items: flex-start; gap: .65rem; cursor: pointer; }
 .lease-confirmation input { width: auto; min-height: auto; margin-top: .2rem; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: .75rem; padding-top: .25rem; }
@@ -195,9 +200,9 @@ pre { max-height: 350px; overflow: auto; padding: .8rem; color: #d8e5ec; border-
 .error-facets a:hover, .error-facets a.active { color: var(--accent-strong); border-color: #75aec0; background: var(--blue-soft); }
 .error-facets strong { min-width: 1.4rem; padding: .08rem .35rem; border-radius: 999px; text-align: center; background: rgb(23 107 135 / 10%); font-size: .72rem; }
 .review-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 1rem; }
-.review-card { min-width: 0; padding: 1rem; }
+.review-card { min-width: 0; padding: 1rem; display: flex; flex-direction: column; }
 .review-card h2 { margin: 1rem 0; line-height: 1.4; overflow-wrap: anywhere; }
-.review-card .button { margin-top: 1rem; }
+.review-card-action { margin-top: auto; padding-top: 1rem; }
 .review-manga-id, .review-reason { min-width: 0; overflow-wrap: anywhere; }
 .review-error-detail { margin-top: .9rem; }
 .review-error-detail pre { max-height: 180px; margin-bottom: 0; }

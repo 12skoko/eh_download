@@ -31,6 +31,7 @@ class Manga:
     artifact_generation: int | None = None
     artifact_location: str | None = None
     artifact_filename: str | None = None
+    rename_target_filename: str | None = None
     artifact_kind: str | None = None
     artifact_size: int | None = None
     artifact_sha1: str | None = None

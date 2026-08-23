@@ -962,6 +962,7 @@ class TaskExecutor:
     def _validate(
         self, repository: ArchiveRepository, claim: ClaimedAttempt, record: MangaRecord
     ) -> None:
+        rename_detail = self._rename_pending_artifact(repository, claim, record)
         if not record.artifact_location or not record.artifact_filename:
             raise ValidationError("missing_artifact_registration", "record has no artifact")
         path = (
@@ -969,20 +970,143 @@ class TaskExecutor:
             if record.artifact_location == "torrent_download"
             else self.paths.validate_registered(record.artifact_location, record.artifact_filename)
         )
-        fingerprint = validate_artifact(
-            path,
-            expected_kind=record.artifact_kind,
-            calculate_sha1=not bool(record.artifact_sha1),
-        )
+        try:
+            fingerprint = validate_artifact(
+                path,
+                expected_kind=record.artifact_kind,
+                calculate_sha1=not bool(record.artifact_sha1),
+            )
+        except ValidationError:
+            # The rename itself succeeded, but the artifact is invalid and will
+            # be moved to quarantine by the normal validation error handler.
+            if rename_detail is not None:
+                record.rename_target_filename = None
+            raise
         record.artifact_size = fingerprint.size
         if fingerprint.sha1 is not None:
             record.artifact_sha1 = fingerprint.sha1
         record.artifact_checked_at = fingerprint.checked_at
+        record.rename_target_filename = None
         repository.finish(
             claim,
             owner=self.owner,
             event="prepare" if fingerprint.kind == "directory" else "upload",
+            detail=rename_detail,
         )
+
+    def _rename_pending_artifact(
+        self,
+        repository: ArchiveRepository,
+        claim: ClaimedAttempt,
+        record: MangaRecord,
+    ) -> dict[str, Any] | None:
+        target_name = record.rename_target_filename
+        if not target_name:
+            return None
+        if not record.artifact_location or not record.artifact_filename:
+            raise ArchiveError(
+                "rename_source_missing",
+                "conflict rename has no registered source artifact",
+                ErrorClass.ITEM,
+            )
+        try:
+            if safe_filename(target_name) != target_name:
+                raise UnsafePathError("target filename would be normalised")
+            source_name = record.artifact_filename
+            source = (
+                self.paths.torrent_registered(record.manga_id, source_name)
+                if record.artifact_location == "torrent_download"
+                else self.paths.validate_registered(record.artifact_location, source_name)
+            )
+            target = (
+                self.paths.torrent_registered(record.manga_id, target_name)
+                if record.artifact_location == "torrent_download"
+                else self.paths.validate_registered(record.artifact_location, target_name)
+            )
+        except (KeyError, UnsafePathError, ValueError) as exc:
+            raise ArchiveError(
+                "rename_path_invalid",
+                f"conflict rename path is invalid: {exc}",
+                ErrorClass.ITEM,
+            ) from exc
+
+        if source == target:
+            if not target.is_file():
+                raise ArchiveError(
+                    "rename_source_missing",
+                    f"renamed artifact is missing: {target_name}",
+                    ErrorClass.ITEM,
+                )
+        else:
+            source_exists = source.exists()
+            target_exists = target.exists()
+            if source_exists and not source.is_file():
+                raise ArchiveError(
+                    "rename_source_not_file",
+                    f"conflict rename only supports archive files: {source_name}",
+                    ErrorClass.ITEM,
+                )
+            if target_exists and not target.is_file():
+                raise ArchiveError(
+                    "rename_target_exists",
+                    f"rename target already exists and is not a file: {target_name}",
+                    ErrorClass.ITEM,
+                )
+            if source_exists and target_exists:
+                try:
+                    same_file = source.samefile(target)
+                except OSError as exc:
+                    raise ArchiveError(
+                        "rename_target_inspection_failed",
+                        f"cannot compare rename source and target: {exc}",
+                        ErrorClass.SYSTEM,
+                    ) from exc
+                if not same_file:
+                    raise ArchiveError(
+                        "rename_target_exists",
+                        f"rename target already exists: {target_name}",
+                        ErrorClass.ITEM,
+                    )
+                if repository.fenced(claim, owner=self.owner) is None:
+                    raise ArchiveError(
+                        "stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY
+                    )
+                source.unlink()
+            elif source_exists:
+                if repository.fenced(claim, owner=self.owner) is None:
+                    raise ArchiveError(
+                        "stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY
+                    )
+                try:
+                    # A hard link gives us an atomic, no-overwrite target. If
+                    # the process exits before unlinking the source, the next
+                    # attempt recognises both names as the same file.
+                    os.link(source, target, follow_symlinks=False)
+                except FileExistsError as exc:
+                    raise ArchiveError(
+                        "rename_target_exists",
+                        f"rename target already exists: {target_name}",
+                        ErrorClass.ITEM,
+                    ) from exc
+                source.unlink()
+            elif not target_exists:
+                raise ArchiveError(
+                    "rename_source_missing",
+                    f"neither rename source nor target exists: {source_name} -> {target_name}",
+                    ErrorClass.ITEM,
+                )
+
+        if repository.fenced(claim, owner=self.owner) is None:
+            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        record.artifact_filename = target_name
+        record.artifact_size = None
+        record.artifact_sha1 = None
+        record.artifact_checked_at = None
+        return {
+            "conflict_rename": True,
+            "source_filename": source_name,
+            "target_filename": target_name,
+        }
 
     def _prepare(
         self, repository: ArchiveRepository, claim: ClaimedAttempt, record: MangaRecord
@@ -1374,6 +1498,8 @@ class TaskExecutor:
                 "cleanup": "cleanup_retry",
                 "delete": "review",
             }.get(claim.operation, "retry")
+            if claim.operation == "validate" and record and record.rename_target_filename:
+                retry_event = "rename_retry"
             if not repository.finish(
                 claim,
                 owner=self.owner,
@@ -1465,6 +1591,8 @@ class TaskExecutor:
             "details": "details_retry",
             "cleanup": "cleanup_retry",
         }.get(claim.operation, "retry")
+        if claim.operation == "validate" and record.rename_target_filename:
+            retry_event = "rename_retry"
         repository.finish(
             claim,
             owner=self.owner,

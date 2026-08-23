@@ -22,7 +22,7 @@ from ..db.models import (
 )
 from ..db.repository import utcnow
 from ..domain.states import Status, can_transition, transition_target
-from ..services.paths import ArtifactPathService, UnsafePathError
+from ..services.paths import ArtifactPathService, UnsafePathError, safe_filename
 
 CONTROL_COMPONENTS = ("supervisor", *SUPERVISOR_MODULES)
 
@@ -44,6 +44,7 @@ STATUS_LABELS = {
     Status.UNAVAILABLE.value: "不可用",
     Status.OUTDATED.value: "已过时",
     Status.FORCE_DELETE_PENDING.value: "等待强制删除",
+    Status.RENAME_PENDING.value: "等待冲突改名",
     Status.DELETED.value: "已删除",
     Status.CANCEL_REQUESTED.value: "等待取消",
     Status.CANCELLED.value: "已取消",
@@ -460,6 +461,7 @@ class WebService:
             row.superseded_by_id = replacement_id
 
         previous_status = row.status
+        row.rename_target_filename = None
         if target_status == Status.DISCOVERED.value:
             row.screen_pending = False
             row.screen_group_id = None
@@ -488,6 +490,81 @@ class WebService:
             from_status=previous_status,
             to_status=target_status,
             detail={key: value for key, value in detail.items() if value is not None},
+        )
+        return row
+
+    def request_conflict_rename(
+        self,
+        manga_id: str,
+        *,
+        row_version: int,
+        target_filename: str | None,
+        reason: str | None,
+        confirmed: bool,
+    ) -> MangaRecord:
+        """Queue a Web-approved filename-conflict recovery for validation."""
+
+        row = self._manga(manga_id)
+        self._require_version(row, row_version)
+        if row.status != Status.MANUAL_REVIEW.value:
+            raise InvalidRequest("只有人工复核状态可以申请冲突改名")
+        duplicate_error = bool(
+            row.last_error_code and row.last_error_code.casefold() == "lrr_409"
+        )
+        if not duplicate_error and not row.rename_target_filename:
+            raise InvalidRequest("只有 LANraragi 409 同名冲突可以使用这个操作")
+        if row.active_attempt_id is not None or row.lease_owner or row.lease_token:
+            raise Conflict("档案仍有活动任务或租约，不能申请冲突改名")
+        if not confirmed:
+            raise InvalidRequest("必须确认同名档案需要分别保留")
+        clean_reason = reason.strip() if reason and reason.strip() else None
+        if not clean_reason:
+            raise InvalidRequest("必须填写分别保留的原因")
+        if not row.artifact_filename:
+            raise InvalidRequest("档案缺少当前文件名")
+        source = self._require_artifact(row, row.artifact_filename)
+        if not source.is_file():
+            raise InvalidRequest("冲突改名只支持已经生成的归档文件")
+
+        requested = target_filename.strip() if target_filename else ""
+        if not requested:
+            raise InvalidRequest("必须填写改名后的文件名")
+        try:
+            clean_target = safe_filename(requested)
+        except (OSError, UnsafePathError, ValueError) as exc:
+            raise InvalidRequest("改名后的文件名无效") from exc
+        if clean_target != requested:
+            raise InvalidRequest("改名后的文件名包含不安全字符或长度超限")
+        if clean_target == row.artifact_filename:
+            raise InvalidRequest("改名后的文件名不能与当前文件名相同")
+        if Path(clean_target).suffix.casefold() != Path(row.artifact_filename).suffix.casefold():
+            raise InvalidRequest("冲突改名不能改变文件扩展名")
+        target = self._artifact_path(row, clean_target)
+        if target.exists():
+            raise Conflict("改名后的目标文件已经存在，请更换文件名")
+
+        previous_status = row.status
+        previous_error_code = row.last_error_code
+        row.rename_target_filename = clean_target
+        row.artifact_size = None
+        row.artifact_sha1 = None
+        row.artifact_checked_at = None
+        row.status = transition_target(row.status, "rename").value
+        row.queue_source = "manual"
+        row.next_retry_at = None
+        row.status_updated_at = row.updated_at = utcnow()
+        row.row_version += 1
+        self._event(
+            row,
+            "conflict_rename_requested",
+            from_status=previous_status,
+            to_status=row.status,
+            detail={
+                "reason": clean_reason,
+                "source_filename": row.artifact_filename,
+                "target_filename": clean_target,
+                "source_error_code": previous_error_code,
+            },
         )
         return row
 
@@ -574,7 +651,7 @@ class WebService:
         )
         return row
 
-    def _require_artifact(self, row: MangaRecord, filename: str | None) -> Path:
+    def _artifact_path(self, row: MangaRecord, filename: str | None) -> Path:
         if self.app_config is None:
             raise InvalidRequest("Web 未加载存储路径配置")
         if not row.artifact_location:
@@ -590,6 +667,10 @@ class WebService:
             )
         except (KeyError, OSError, UnsafePathError, ValueError) as exc:
             raise InvalidRequest("档案文件名或存储位置无效") from exc
+        return path
+
+    def _require_artifact(self, row: MangaRecord, filename: str | None) -> Path:
+        path = self._artifact_path(row, filename)
         if not path.exists() or not (path.is_file() or path.is_dir()):
             raise InvalidRequest(f"找不到本地档案：{row.artifact_location}/{filename}")
         return path
@@ -840,6 +921,20 @@ def _lease_expired(value: datetime | None, *, now: datetime | None = None) -> bo
     return comparable_value <= comparable_now
 
 
+def conflict_rename_filename(manga_id: str, current_filename: str | None) -> str | None:
+    """Build the operator-visible default used by the legacy conflict recovery."""
+
+    if not current_filename:
+        return None
+    gallery_id, _separator, token = manga_id.partition("/")
+    normal_prefix = f"[{gallery_id}] "
+    prefix = normal_prefix
+    if current_filename.startswith((normal_prefix, f"[{gallery_id}]")):
+        safe_token = re.sub(r"[^A-Za-z0-9]", "", token)[:8] or "archive"
+        prefix = f"[{gallery_id}-{safe_token}] "
+    return safe_filename(prefix + current_filename)
+
+
 def manga_detail(session: Session, manga_id: str) -> dict[str, Any]:
     row = session.scalar(
         select(MangaRecord)
@@ -848,6 +943,24 @@ def manga_detail(session: Session, manga_id: str) -> dict[str, Any]:
     )
     if row is None:
         raise NotFound("档案不存在")
+    filename_matches: list[MangaRecord] = []
+    duplicate_review = bool(
+        row.last_error_code
+        and row.last_error_code.casefold() == "lrr_409"
+        or row.rename_target_filename
+    )
+    if duplicate_review and row.artifact_filename:
+        filename_matches = list(
+            session.scalars(
+                select(MangaRecord)
+                .where(
+                    MangaRecord.manga_id != row.manga_id,
+                    func.lower(MangaRecord.artifact_filename) == row.artifact_filename.lower(),
+                )
+                .order_by(desc(MangaRecord.status_updated_at), MangaRecord.manga_id)
+                .limit(50)
+            )
+        )
     attempts = list(
         session.scalars(
             select(JobAttempt)
@@ -878,6 +991,16 @@ def manga_detail(session: Session, manga_id: str) -> dict[str, Any]:
         "row": row,
         "attempts": attempts,
         "events": events,
+        "filename_matches": filename_matches,
+        "conflict_rename_available": (
+            row.status == Status.MANUAL_REVIEW.value
+            and duplicate_review
+            and bool(row.artifact_location and row.artifact_filename)
+        ),
+        "conflict_rename_filename": (
+            row.rename_target_filename
+            or conflict_rename_filename(row.manga_id, row.artifact_filename)
+        ),
         "active_attempt": active_attempt,
         "expired_attempt": expired_attempt,
     }
@@ -986,6 +1109,7 @@ def serialize_manga(row: MangaRecord) -> dict[str, Any]:
         "external_download_id",
         "artifact_location",
         "artifact_filename",
+        "rename_target_filename",
         "artifact_kind",
         "artifact_generation",
         "artifact_size",

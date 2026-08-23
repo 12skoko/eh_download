@@ -43,6 +43,7 @@ STATUS_VALUES = (
     "unavailable",
     "outdated",
     "force_delete_pending",
+    "rename_pending",
     "deleted",
     "cancel_requested",
     "cancelled",
@@ -142,6 +143,7 @@ class MangaRecord(Base):
     external_download_id: Mapped[str | None] = mapped_column(Text)
     artifact_location: Mapped[str | None] = mapped_column(String(32))
     artifact_filename: Mapped[str | None] = mapped_column(Text)
+    rename_target_filename: Mapped[str | None] = mapped_column(Text)
     artifact_kind: Mapped[str | None] = mapped_column(String(16))
     artifact_generation: Mapped[int | None] = mapped_column(Integer)
     artifact_size: Mapped[int | None] = mapped_column(BigInteger)

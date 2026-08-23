@@ -58,7 +58,11 @@ OPERATION_STATES: dict[str, tuple[tuple[str, ...], str | None]] = {
         Status.DOWNLOADING.value,
     ),
     "validate": (
-        (Status.DOWNLOADED.value, Status.VALIDATING.value),
+        (
+            Status.DOWNLOADED.value,
+            Status.RENAME_PENDING.value,
+            Status.VALIDATING.value,
+        ),
         Status.VALIDATING.value,
     ),
     "prepare": ((Status.PREPARING.value,), Status.PREPARING.value),
