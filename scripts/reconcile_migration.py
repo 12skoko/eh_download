@@ -20,6 +20,7 @@ REMOTE_OWNED_STATUSES = frozenset(
         Status.UPLOADED.value,
         Status.COMPLETED.value,
         Status.OUTDATED.value,
+        Status.FORCE_DELETE_PENDING.value,
         Status.DELETED.value,
     }
 )

@@ -440,7 +440,7 @@ qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会
 .\.venv\Scripts\eharchive.exe --config-dir config task cleanup --limit 10
 ```
 
-`delete` 只处理已经被新版本替代且状态为 `outdated` 的记录；不要用它代替普通清理。任务执行是有租约和 attempt fencing 的，已过期的进程不能覆盖新产物。
+`delete` 通常处理已经被新版本替代且状态为 `outdated` 的记录；它也会处理只能从管理网页人工设置的 `force_delete_pending`。普通 `outdated` 删除必须验证替代档案已经进入上传阶段，强制删除会跳过这一验证，但仍使用相同的 LANraragi 删除、本地归档删除、租约和 attempt fencing。不要用它代替普通清理。
 
 ### 7.5 缩略图再生成
 
@@ -534,9 +534,9 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
   -Headers $headers -ContentType 'application/json' -Body $body
 ```
 
-维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为人工目标状态。`download_pending` 必须指定 `download_method`；`downloaded` 还必须填写服务器上真实存在的 `artifact_filename`；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定已进入上传阶段的替代档案；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
+维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为普通人工目标状态。`download_pending` 必须指定 `download_method`；`downloaded` 还必须填写服务器上真实存在的 `artifact_filename`；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定已进入上传阶段的替代档案；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。`force_delete_pending` 只允许从 `uploaded`、`completed`、`outdated` 或 `manual_review` 进入，必须填写原因并再次输入当前档案 ID；界面默认把原因写为 `outdated`，不要求已有 LANraragi archive ID。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
 
-旧的 `/actions/*` 和 `/archive-confirmation` API 为兼容既有脚本继续保留。新的管理界面使用 `/status/{target_status}`；它只修改数据库状态和关联字段，不在 Web 请求中直接运行子模块。Supervisor 后续根据 `download_pending`、`downloaded`、`upload_pending`、`uploaded` 和 `outdated` 等状态安排相应模块。
+旧的 `/actions/*` 和 `/archive-confirmation` API 为兼容既有脚本继续保留。新的管理界面使用 `/status/{target_status}`；它只修改数据库状态和关联字段，不在 Web 请求中直接运行子模块。`force_delete_pending` 被明确限制为管理网页操作，通用状态 API 不能设置它，自动状态机也没有进入该状态的转换。Supervisor 后续根据 `download_pending`、`downloaded`、`upload_pending`、`uploaded`、`outdated` 和 `force_delete_pending` 等状态安排相应模块。
 
 数据库升级会自动执行 `CREATE EXTENSION IF NOT EXISTS pg_trgm`，并为几十万条记录创建标题搜索和队列索引。正常情况下不需要单独在 Docker PostgreSQL 中启用扩展；只有 migration 账号缺少数据库 `CREATE` 权限时，才需要由 PostgreSQL 管理员提前启用。
 
@@ -609,7 +609,7 @@ python scripts/reconcile_migration.py \
 
 - 日志目录由 `app.toml` 的 `log_dir` 指定，也必须是绝对目录。每次 Supervisor 运行会创建 `supervisor/<启动时间>_<run_id>.log`，它包含 Supervisor 及其子进程的公共 JSON 日志；各子模块的简明运行报告位于 `detail/<模块>/<启动时间>_<run_id>.log`。Web、CLI 和手动独立运行的模块使用各自的会话目录。旧的 `eharchive.log` 不再追加；不要把 Cookie、Authorization 或代理密码写入事件备注。
 - 先看 `/health`，再看 `/api/manga/{manga_id}` 的 `attempts` 和 `events`。失败会有 `error_code`、下次重试时间和最后一次操作。
-- 维护前先暂停 `all`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；强制终止后应人工核对数据库中的过期租约、产物和外部任务，Supervisor 不会自动接管。
+- 维护前先暂停 `all`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；强制终止后应人工核对数据库中的过期租约、产物和外部任务，Supervisor 不会自动接管。详情页仅在关联 attempt 仍为 `running` 且租约已经过期时显示“解除过期租约”按钮；填写原因并确认旧进程后，操作会将 attempt 收口为 `abandoned`、把档案转入 `manual_review`、清空活动租约并写入审计轨迹。它不会停止系统进程、调用 cleanup、删除文件或清除外部任务 ID。
 - 子模块遇到严重公共故障时会返回严重错误：E 站 Cookie 失效、代理不可达、关键页面结构失效、qBittorrent/LANraragi 不可达或认证失败、工作目录无法读写、磁盘已满以及数据库失联。Supervisor 会暂停出错模块并进入排空状态，不再启动任何新子模块；已经运行的其他子模块自然结束后，Supervisor 释放自己的租约并以非零状态退出。单条漫画失败、种子失败后回退 direct、E 站单次超时/SSL 中断及 HTTP 429/5xx 仍按条目错误或临时错误处理，不触发排空停机。若使用 systemd、Docker 等自动重启策略，需要避免在非零退出后立即重启，否则未暂停的模块会在新 Supervisor 中继续运行。
 - `manual_review` 不是自动重试状态：检查 EH 页面、本地文件、LANraragi metadata 或重复上传后，在详情页明确选择要进入的关键状态。
 - 看到 `qBittorrent no longer reports...` 或 qBittorrent `error`/`missingFiles` 时，先人工检查任务和磁盘；需要切换 fallback 时，在 qBittorrent 管理界面给任务添加精确的 `failed` 标签。如果记录已经进入 `manual_review`，在 Web 中选择“进入下载队列”并确认下载方式，程序才会再次读取这个标签。未标记 `failed` 的 `stalledDL` 在超过 `torrent_stall_seconds` 后会自动删除任务并 fallback，未超过阈值时继续等待。

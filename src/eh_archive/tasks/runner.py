@@ -1217,16 +1217,21 @@ class TaskExecutor:
     def _delete(
         self, repository: ArchiveRepository, claim: ClaimedAttempt, record: MangaRecord
     ) -> None:
-        replacement = repository.get(record.superseded_by_id) if record.superseded_by_id else None
-        if replacement is None or replacement.status not in {
-            Status.UPLOAD_PENDING.value,
-            Status.UPLOADING.value,
-            Status.UPLOADED.value,
-            Status.COMPLETED.value,
-        }:
-            raise ArchiveError(
-                "replacement_not_ready", "replacement archive is not ready", ErrorClass.ITEM
+        if record.status != Status.FORCE_DELETE_PENDING.value:
+            replacement = (
+                repository.get(record.superseded_by_id) if record.superseded_by_id else None
             )
+            if replacement is None or replacement.status not in {
+                Status.UPLOAD_PENDING.value,
+                Status.UPLOADING.value,
+                Status.UPLOADED.value,
+                Status.COMPLETED.value,
+            }:
+                raise ArchiveError(
+                    "replacement_not_ready",
+                    "replacement archive is not ready",
+                    ErrorClass.ITEM,
+                )
         if record.lrr_archive_id:
             client = LANraragiClient(
                 self.app.lanraragi_url,

@@ -20,6 +20,7 @@ class Status(StrEnum):
     SKIPPED = "skipped"
     UNAVAILABLE = "unavailable"
     OUTDATED = "outdated"
+    FORCE_DELETE_PENDING = "force_delete_pending"
     DELETED = "deleted"
     CANCEL_REQUESTED = "cancel_requested"
     CANCELLED = "cancelled"
@@ -100,6 +101,10 @@ TRANSITIONS: dict[str, dict[str, str]] = {
     },
     Status.COMPLETED: {"outdate": Status.OUTDATED},
     Status.OUTDATED: {"deleted": Status.DELETED, "review": Status.MANUAL_REVIEW},
+    Status.FORCE_DELETE_PENDING: {
+        "deleted": Status.DELETED,
+        "review": Status.MANUAL_REVIEW,
+    },
     Status.SKIPPED: {"override": Status.DOWNLOAD_PENDING, "cancel": Status.CANCEL_REQUESTED},
     Status.UNAVAILABLE: {"retry": Status.DOWNLOAD_PENDING, "cancel": Status.CANCEL_REQUESTED},
     Status.QUARANTINED: {

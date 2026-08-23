@@ -18,10 +18,26 @@
 {% if row.last_error_code %}<section class="panel error-panel"><div class="section-head"><div><p class="eyebrow">最近故障</p><h2>{{ row.last_error_code }}</h2></div><span>{{ row.last_error_at|datetime }}</span></div><p>{{ row.last_error_detail }}</p><p class="mono">operation: {{ row.last_error_operation or '—' }}</p></section>{% endif %}
 <section class="panel status-control-panel"><div class="section-head"><div><p class="eyebrow">人工处理</p><h2>状态调整</h2></div></div>
   {% set execution_active = row.active_attempt_id or row.lease_owner or row.lease_token %}
-  {% if execution_active %}<div class="alert warning">当前档案仍有活动任务或租约，人工状态调整已锁定。</div>{% endif %}
+  {% if expired_attempt %}
+  <div class="alert warning lease-warning"><div><strong>活动任务的租约已经过期</strong><p>确认旧进程和外部系统状态后，可解除租约并转入人工复核。</p></div><button type="button" class="warning-button" data-open-dialog="release-expired-lease-dialog">解除过期租约</button></div>
+  <dialog id="release-expired-lease-dialog" class="status-dialog">
+    <form method="post" action="/manga/{{ row.manga_id }}/lease/release-expired" class="status-dialog-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="row_version" value="{{ row.row_version }}">
+      <div class="dialog-head"><div><p class="eyebrow">过期任务处理</p><h2>解除过期租约并转人工复核</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+      <p>该操作不会停止仍在运行的系统进程，也不会运行 cleanup 或删除文件。解除后，旧任务将无法再通过原租约写回数据库。</p>
+      <dl class="transition-preview"><div><dt>Attempt</dt><dd>#{{ expired_attempt.id }} · {{ expired_attempt.operation }}</dd></div><div><dt>开始时间</dt><dd>{{ expired_attempt.started_at|datetime }}</dd></div><div><dt>租约持有者</dt><dd>{{ row.lease_owner or '—' }}</dd></div><div><dt>租约到期</dt><dd>{{ row.lease_until|datetime }}</dd></div></dl>
+      {% if expired_attempt.operation == 'upload' %}<div class="alert warning">请先检查 LANraragi，确认档案是否已经上传，避免后续重复上传。</div>{% elif expired_attempt.operation == 'torrent_download' %}<div class="alert warning">请先检查 qBittorrent 中对应任务是否仍在运行。</div>{% elif expired_attempt.operation == 'direct_download' %}<div class="alert warning">请先确认下载进程已经退出，并检查本地完整文件和临时文件。</div>{% else %}<div class="alert warning">租约过期不代表进程已经退出，请先确认旧任务不会继续产生外部影响。</div>{% endif %}
+      <label>解除原因（必填）<textarea name="reason" rows="3" required>服务器重启后遗留，已确认旧进程不存在</textarea></label>
+      <label class="lease-confirmation"><input type="checkbox" name="confirmed" value="yes" required><span>我已确认旧任务进程已经停止，或不应再写回数据库。</span></label>
+      <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认解除</button></div>
+    </form>
+  </dialog>
+  {% elif execution_active %}<div class="alert warning">当前档案仍有活动任务或租约，人工状态调整已锁定。</div>{% endif %}
   <div class="status-action-grid">
     {% for target in manual_status_targets %}
-    <button type="button" class="status-action-button" data-open-dialog="status-dialog-{{ target.status }}" {% if execution_active or row.status == target.status %}disabled{% endif %}>
+    {% set source_allowed = not target.allowed_from or row.status in target.allowed_from %}
+    <button type="button" class="status-action-button" data-open-dialog="status-dialog-{{ target.status }}" {% if execution_active or row.status == target.status or not source_allowed %}disabled{% endif %}>
       <strong>{{ target.label }}</strong>
       <small>{{ target.status }}{% if row.status == target.status %} · 当前状态{% endif %}</small>
     </button>
@@ -45,7 +61,10 @@
         {% if target.status == 'outdated' %}
         <label>替代档案 ID（必填）<input name="superseded_by_id" value="{{ row.superseded_by_id or '' }}" placeholder="例如 123456/token" required></label>
         {% endif %}
-        <label>操作原因{% if target.requires_reason %}（必填）{% else %}（可选）{% endif %}<textarea name="reason" rows="3" {% if target.requires_reason %}required{% endif %}></textarea></label>
+        {% if target.status == 'force_delete_pending' %}
+        <label>档案 ID 二次确认（必填）<input name="confirmation_manga_id" placeholder="请输入 {{ row.manga_id }}" autocomplete="off" required></label>
+        {% endif %}
+        <label>操作原因{% if target.requires_reason %}（必填）{% else %}（可选）{% endif %}<textarea name="reason" rows="3" {% if target.requires_reason %}required{% endif %}>{% if target.status == 'force_delete_pending' %}outdated{% endif %}</textarea></label>
         {% if target.danger %}<div class="alert warning">这是高影响操作，请核对目标状态和必填信息后再确认。</div>{% endif %}
         <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认修改</button></div>
       </form>

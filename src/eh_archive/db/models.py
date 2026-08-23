@@ -42,6 +42,7 @@ STATUS_VALUES = (
     "skipped",
     "unavailable",
     "outdated",
+    "force_delete_pending",
     "deleted",
     "cancel_requested",
     "cancelled",

@@ -1,0 +1,10 @@
+{% set paused = control and control.state == 'paused' %}
+<form method="post" action="/control/{{ component }}" class="component-row" hx-post="/control/{{ component }}" hx-target="this" hx-swap="outerHTML" hx-sync="this:replace" hx-disabled-elt="find button">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="row_version" value="{{ control.row_version if control else '' }}">
+  <div class="component-identity"><strong>{{ component|component_label }}</strong><small class="mono">{{ component }}</small></div>
+  <span class="badge {{ 'paused' if paused else 'running' }}">{{ '已暂停' if paused else '可调度' }}</span>
+  {% if paused %}<div class="component-reason"><small>暂停原因</small><span>{{ control.reason or '未填写暂停原因' }}</span></div>{% else %}<input name="reason" placeholder="暂停原因（可选）">{% endif %}
+  {% if paused %}<button name="state" value="running">恢复调度</button>{% else %}<button name="state" value="paused">暂停</button>{% endif %}
+  {% if component_error %}<div class="component-feedback" role="alert">{{ component_error }}</div>{% endif %}
+</form>

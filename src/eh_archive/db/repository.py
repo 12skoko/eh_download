@@ -64,7 +64,12 @@ OPERATION_STATES: dict[str, tuple[tuple[str, ...], str | None]] = {
     "prepare": ((Status.PREPARING.value,), Status.PREPARING.value),
     "upload": ((Status.UPLOAD_PENDING.value,), Status.UPLOADING.value),
     "cleanup": ((Status.UPLOADED.value,), Status.UPLOADED.value),
-    "delete": ((Status.OUTDATED.value,), Status.OUTDATED.value),
+    # Keep the queued status unchanged so the worker can distinguish ordinary
+    # replacement deletion from the Web-only forced deletion path.
+    "delete": (
+        (Status.OUTDATED.value, Status.FORCE_DELETE_PENDING.value),
+        None,
+    ),
 }
 
 

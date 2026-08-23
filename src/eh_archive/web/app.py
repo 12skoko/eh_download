@@ -412,6 +412,23 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             "action-completed",
         )
 
+    @app.post("/manga/{manga_id:path}/lease/release-expired")
+    async def release_expired_lease_page(request: Request, manga_id: str):
+        form = await _validated_form(request)
+        return _page_update(
+            request,
+            templates,
+            database,
+            manga_id,
+            lambda service: service.release_expired_lease(
+                manga_id,
+                row_version=int(str(form.get("row_version", ""))),
+                reason=_optional_text(form.get("reason")),
+                confirmed=form.get("confirmed") == "yes",
+            ),
+            "expired-lease-released",
+        )
+
     @app.post("/manga/{manga_id:path}/status/{target_status}")
     async def override_manga_status_page(request: Request, manga_id: str, target_status: str):
         form = await _validated_form(request)
@@ -429,6 +446,8 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 artifact_filename=_optional_text(form.get("artifact_filename")),
                 archive_id=_optional_text(form.get("archive_id")),
                 superseded_by_id=_optional_text(form.get("superseded_by_id")),
+                confirmation_manga_id=_optional_text(form.get("confirmation_manga_id")),
+                allow_web_only=True,
             ),
             "status-updated",
             app_config=app_config,
@@ -439,14 +458,39 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
         form = await _validated_form(request)
         try:
             with database.session() as session:
-                WebService(session, actor=_actor(request)).set_control(
+                control = WebService(session, actor=_actor(request)).set_control(
                     component,
                     state=str(form.get("state", "")),
                     reason=_optional_text(form.get("reason")),
                     row_version=_optional_int(form.get("row_version")),
                 )
-        except WebServiceError as exc:
-            return _error_response(request, templates, exc)
+        except (ValueError, WebServiceError) as exc:
+            error = exc if isinstance(exc, WebServiceError) else InvalidRequest("表单数据无效")
+            if request.headers.get("HX-Request") == "true":
+                with database.session() as session:
+                    current = session.get(SystemControl, component)
+                return templates.TemplateResponse(
+                    request=request,
+                    name="_component_row.html",
+                    context=_context(
+                        request,
+                        component=component,
+                        control=current,
+                        component_error=str(error),
+                    ),
+                )
+            return _error_response(request, templates, error)
+        if request.headers.get("HX-Request") == "true":
+            return templates.TemplateResponse(
+                request=request,
+                name="_component_row.html",
+                context=_context(
+                    request,
+                    component=component,
+                    control=control,
+                    component_error=None,
+                ),
+            )
         return _redirect_response(request, "/?notice=control-updated")
 
     @app.get("/health")

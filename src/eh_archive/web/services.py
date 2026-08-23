@@ -4,7 +4,7 @@ import base64
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,7 @@ STATUS_LABELS = {
     Status.SKIPPED.value: "已跳过",
     Status.UNAVAILABLE.value: "不可用",
     Status.OUTDATED.value: "已过时",
+    Status.FORCE_DELETE_PENDING.value: "等待强制删除",
     Status.DELETED.value: "已删除",
     Status.CANCEL_REQUESTED.value: "等待取消",
     Status.CANCELLED.value: "已取消",
@@ -58,7 +59,7 @@ COMPONENT_LABELS = {
     "prepare": "压缩准备",
     "upload": "上传",
     "cleanup": "清理",
-    "delete": "过时删除",
+    "delete": "档案删除",
     "qbittorrent": "qBittorrent",
     "lanraragi": "LANraragi",
 }
@@ -123,6 +124,22 @@ MANUAL_STATUS_TARGETS = (
         "danger": True,
     },
     {
+        "status": Status.FORCE_DELETE_PENDING.value,
+        "label": "强制删除",
+        "description": (
+            "进入 delete 队列并跳过替代档案验证；随后会删除 LANraragi 档案和本地归档文件。"
+        ),
+        "requires_reason": True,
+        "danger": True,
+        "web_only": True,
+        "allowed_from": (
+            Status.UPLOADED.value,
+            Status.COMPLETED.value,
+            Status.OUTDATED.value,
+            Status.MANUAL_REVIEW.value,
+        ),
+    },
+    {
         "status": Status.DELETED.value,
         "label": "已删除",
         "description": "只确认外部删除事实，不会在此操作中删除任何文件。",
@@ -132,6 +149,14 @@ MANUAL_STATUS_TARGETS = (
 )
 
 MANUAL_STATUS_VALUES = frozenset(target["status"] for target in MANUAL_STATUS_TARGETS)
+FORCE_DELETE_SOURCE_STATUSES = frozenset(
+    {
+        Status.UPLOADED.value,
+        Status.COMPLETED.value,
+        Status.OUTDATED.value,
+        Status.MANUAL_REVIEW.value,
+    }
+)
 REPLACEMENT_READY_STATUSES = frozenset(
     {
         Status.UPLOAD_PENDING.value,
@@ -339,6 +364,8 @@ class WebService:
         artifact_filename: str | None = None,
         archive_id: str | None = None,
         superseded_by_id: str | None = None,
+        confirmation_manga_id: str | None = None,
+        allow_web_only: bool = False,
     ) -> MangaRecord:
         """Apply an explicit, audited administrator status override."""
 
@@ -346,6 +373,13 @@ class WebService:
         self._require_version(row, row_version)
         if target_status not in MANUAL_STATUS_VALUES:
             raise InvalidRequest("这个状态不能通过人工控制设置")
+        if target_status == Status.FORCE_DELETE_PENDING.value:
+            if not allow_web_only:
+                raise InvalidRequest("等待强制删除状态只能通过管理网页设置")
+            if row.status not in FORCE_DELETE_SOURCE_STATUSES:
+                raise InvalidRequest("当前状态不能进入强制删除队列")
+            if not confirmation_manga_id or confirmation_manga_id.strip() != row.manga_id:
+                raise InvalidRequest("二次确认的档案 ID 与当前档案不一致")
         if row.status == target_status:
             raise InvalidRequest("档案已经处于目标状态")
         if row.active_attempt_id is not None or row.lease_owner or row.lease_token:
@@ -357,6 +391,7 @@ class WebService:
             in {
                 Status.UNAVAILABLE.value,
                 Status.QUARANTINED.value,
+                Status.FORCE_DELETE_PENDING.value,
                 Status.DELETED.value,
             }
             and not clean_reason
@@ -435,6 +470,9 @@ class WebService:
             "artifact_filename": row.artifact_filename,
             "archive_id": confirmed_id,
             "superseded_by_id": replacement_id,
+            "confirmation_manga_id": (
+                row.manga_id if target_status == Status.FORCE_DELETE_PENDING.value else None
+            ),
         }
         if previous_method != row.download_method:
             detail["previous_download_method"] = previous_method
@@ -444,6 +482,89 @@ class WebService:
             from_status=previous_status,
             to_status=target_status,
             detail={key: value for key, value in detail.items() if value is not None},
+        )
+        return row
+
+    def release_expired_lease(
+        self,
+        manga_id: str,
+        *,
+        row_version: int,
+        reason: str | None,
+        confirmed: bool,
+    ) -> MangaRecord:
+        """Abandon an expired attempt and move its archive to manual review."""
+
+        row = self._manga(manga_id)
+        self._require_version(row, row_version)
+        clean_reason = reason.strip() if reason and reason.strip() else None
+        if not clean_reason:
+            raise InvalidRequest("解除过期租约必须填写原因")
+        if not confirmed:
+            raise InvalidRequest("请确认旧任务进程已经停止或不应再写回数据库")
+        if row.active_attempt_id is None:
+            raise InvalidRequest("档案没有活动 attempt")
+        now = utcnow()
+        if row.lease_until is None or not _lease_expired(row.lease_until, now=now):
+            raise Conflict("档案租约尚未过期，不能解除")
+
+        attempt = self.session.get(JobAttempt, row.active_attempt_id)
+        if attempt is None or attempt.manga_id != row.manga_id:
+            raise Conflict("活动 attempt 记录不存在或不属于当前档案")
+        if attempt.status != "running":
+            raise Conflict("活动 attempt 已经结束，请刷新页面")
+        if not row.lease_token or attempt.lease_token != row.lease_token:
+            raise Conflict("档案与 attempt 的租约 token 不一致，不能自动解除")
+
+        previous_status = row.status
+        previous_lease_owner = row.lease_owner
+        previous_lease_until = row.lease_until
+        attempt.status = "abandoned"
+        attempt.finished_at = now
+        attempt.resulting_status = Status.MANUAL_REVIEW.value
+        attempt.error_code = "lease_expired_manual_release"
+        attempt.detail = {
+            **(attempt.detail or {}),
+            "manual_release": {
+                "actor": self.actor,
+                "reason": clean_reason,
+                "released_at": now.isoformat(),
+                "lease_owner": previous_lease_owner,
+                "lease_until": previous_lease_until.isoformat(),
+            },
+        }
+
+        row.status = Status.MANUAL_REVIEW.value
+        row.queue_source = "manual"
+        row.defer_until = None
+        row.next_retry_at = None
+        row.active_attempt_id = None
+        row.lease_token = None
+        row.lease_owner = None
+        row.lease_until = None
+        row.status_updated_at = row.updated_at = now
+        row.row_version += 1
+        self._event(
+            row,
+            "release_expired_lease",
+            attempt_id=attempt.id,
+            from_status=previous_status,
+            to_status=Status.MANUAL_REVIEW.value,
+            error_code="lease_expired_manual_release",
+            detail={
+                "reason": clean_reason,
+                "attempt_id": attempt.id,
+                "attempt_operation": attempt.operation,
+                "attempt_started_at": attempt.started_at.isoformat(),
+                "lease_owner": previous_lease_owner,
+                "lease_until": previous_lease_until.isoformat(),
+                "external_task_id": attempt.external_task_id,
+                "external_effect_started_at": (
+                    attempt.external_effect_started_at.isoformat()
+                    if attempt.external_effect_started_at
+                    else None
+                ),
+            },
         )
         return row
 
@@ -533,18 +654,22 @@ class WebService:
         row: MangaRecord,
         operation: str,
         *,
+        attempt_id: int | None = None,
         from_status: str | None = None,
         to_status: str | None = None,
+        error_code: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> None:
         self.session.add(
             EventLog(
                 manga_id=row.manga_id,
+                attempt_id=attempt_id,
                 component="web",
                 event_type="manual",
                 operation=operation,
                 from_status=from_status,
                 to_status=to_status,
+                error_code=error_code,
                 actor=self.actor,
                 detail=detail or {},
             )
@@ -616,6 +741,18 @@ def list_manga(
     return MangaPage(rows, next_cursor)
 
 
+def _lease_expired(value: datetime | None, *, now: datetime | None = None) -> bool:
+    if value is None:
+        return False
+    comparable_value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    comparable_now = now or utcnow()
+    if comparable_now.tzinfo is None:
+        comparable_now = comparable_now.replace(tzinfo=UTC)
+    else:
+        comparable_now = comparable_now.astimezone(UTC)
+    return comparable_value <= comparable_now
+
+
 def manga_detail(session: Session, manga_id: str) -> dict[str, Any]:
     row = session.scalar(
         select(MangaRecord)
@@ -640,7 +777,23 @@ def manga_detail(session: Session, manga_id: str) -> dict[str, Any]:
             .limit(200)
         )
     )
-    return {"row": row, "attempts": attempts, "events": events}
+    active_attempt = next(
+        (attempt for attempt in attempts if attempt.id == row.active_attempt_id), None
+    )
+    expired_attempt = (
+        active_attempt
+        if active_attempt is not None
+        and active_attempt.status == "running"
+        and _lease_expired(row.lease_until)
+        else None
+    )
+    return {
+        "row": row,
+        "attempts": attempts,
+        "events": events,
+        "active_attempt": active_attempt,
+        "expired_attempt": expired_attempt,
+    }
 
 
 def dashboard_data(session: Session) -> dict[str, Any]:
