@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import time
 import uuid
@@ -15,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..config import load_config
 from ..config.loader import SUPERVISOR_MODULES
 from ..db import Database
-from ..db.models import MangaRecord, SystemControl, SystemHealth
+from ..db.models import EventLog, MangaRecord, SystemControl, SystemHealth
 from ..logging import configure_logging
 from .auth import (
     SESSION_COOKIE,
@@ -24,11 +25,18 @@ from .auth import (
     WebIdentity,
     valid_password_hash,
 )
+from .configuration import (
+    ConfigurationConflict,
+    ConfigurationError,
+    load_config_sections,
+    update_config_section,
+)
 from .services import (
     COMPONENT_LABELS,
     CONTROL_COMPONENTS,
     MANUAL_STATUS_TARGETS,
     STATUS_LABELS,
+    Conflict,
     InvalidRequest,
     WebService,
     WebServiceError,
@@ -36,7 +44,9 @@ from .services import (
     dashboard_data,
     list_events,
     list_manga,
+    list_review_manga,
     manga_detail,
+    review_facets,
     safe_detail,
     serialize_manga,
     serialize_model,
@@ -73,6 +83,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
     except ImportError as exc:
         raise RuntimeError("Install eh-archive to use the Web process") from exc
 
+    config_dir = Path(config_dir)
     app_config, supervisor_config, _, secrets_config = load_config(config_dir)
     database = database or Database(app_config.database_url)
     auth_enabled = bool(secrets_config.web_password_hash)
@@ -94,9 +105,12 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
     templates.env.filters["status_label"] = lambda value: STATUS_LABELS.get(value, value)
     templates.env.filters["component_label"] = lambda value: COMPONENT_LABELS.get(value, value)
     templates.env.filters["safe_detail"] = safe_detail
+    templates.env.filters["error_summary"] = _error_summary
+    templates.env.filters["manga_tab_id"] = _manga_tab_id
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.state.database = database
     app.state.auth_enabled = auth_enabled
+    app.state.config_dir = config_dir
 
     class ManualManga(BaseModel):
         url: str
@@ -266,7 +280,11 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             return _error_response(request, templates, exc)
         return templates.TemplateResponse(
             request=request,
-            name="manga/list.html",
+            name=(
+                "_manga_results.html"
+                if request.headers.get("HX-Target") == "manga-results"
+                else "manga/list.html"
+            ),
             context=_context(
                 request,
                 page=page,
@@ -305,16 +323,49 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
     def review_page(
         request: Request,
         status: str = "manual_review",
+        q: str | None = None,
+        error_code: str | None = None,
+        operation: str | None = None,
         cursor: str | None = None,
     ):
         if status not in {"manual_review", "quarantined"}:
             status = "manual_review"
-        with database.session() as session:
-            page = list_manga(session, statuses=[status], limit=50, cursor=cursor)
+        try:
+            with database.session() as session:
+                page = list_review_manga(
+                    session,
+                    status=status,
+                    query_text=q,
+                    error_code=error_code,
+                    operation=operation,
+                    limit=50,
+                    cursor=cursor,
+                )
+                error_facets, operations = review_facets(
+                    session,
+                    status=status,
+                    query_text=q,
+                    operation=operation,
+                )
+        except WebServiceError as exc:
+            return _error_response(request, templates, exc)
         return templates.TemplateResponse(
             request=request,
-            name="review.html",
-            context=_context(request, page=page, selected_status=status),
+            name=(
+                "_review_workspace.html"
+                if request.headers.get("HX-Target") == "review-workspace"
+                else "review.html"
+            ),
+            context=_context(
+                request,
+                page=page,
+                selected_status=status,
+                q=q or "",
+                error_code=error_code or "",
+                operation=operation or "",
+                error_facets=error_facets,
+                review_operations=operations,
+            ),
         )
 
     @app.get("/events", response_class=HTMLResponse)
@@ -347,6 +398,63 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 error_only=error_only,
                 limit=limit,
             ),
+        )
+
+    @app.get("/config", response_class=HTMLResponse)
+    def config_page(
+        request: Request,
+        notice: str | None = None,
+        updated_file: str | None = None,
+    ):
+        try:
+            sections = load_config_sections(config_dir)
+        except (ConfigurationError, OSError, TypeError, ValueError) as exc:
+            return _error_response(request, templates, InvalidRequest(f"读取配置失败：{exc}"))
+        return templates.TemplateResponse(
+            request=request,
+            name="config.html",
+            context=_context(
+                request,
+                sections=sections,
+                notice=notice,
+                updated_file=updated_file,
+            ),
+        )
+
+    @app.post("/config/{section_name}")
+    async def update_config_page(request: Request, section_name: str):
+        form = await _validated_form(request)
+        try:
+            result = update_config_section(
+                config_dir,
+                section_name,
+                form,
+                revision=str(form.get("revision", "")),
+            )
+        except ConfigurationConflict as exc:
+            return _error_response(request, templates, Conflict(str(exc)))
+        except ConfigurationError as exc:
+            return _error_response(request, templates, InvalidRequest(str(exc)))
+        if result.changed_fields:
+            with database.session() as session:
+                session.add(
+                    EventLog(
+                        manga_id=None,
+                        component="web",
+                        event_type="manual",
+                        operation="config_update",
+                        actor=_actor(request),
+                        detail={
+                            "file": result.filename,
+                            "fields": list(result.changed_fields),
+                            "restart_required": result.restart,
+                        },
+                    )
+                )
+        notice_value = "saved" if result.changed_fields else "unchanged"
+        return _redirect_response(
+            request,
+            f"/config?notice={notice_value}&updated_file={quote(result.filename)}",
         )
 
     @app.get("/manga/{manga_id:path}", response_class=HTMLResponse)
@@ -830,6 +938,27 @@ def _format_filesize(value) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
     return str(value)
+
+
+def _manga_tab_id(value) -> str:
+    manga_id = str(value or "").strip()
+    return manga_id.partition("/")[0] or manga_id
+
+
+def _error_summary(value) -> str:
+    detail = str(value or "").strip()
+    if not detail:
+        return "未记录原因"
+    try:
+        parsed = json.loads(detail)
+    except (TypeError, ValueError):
+        return detail
+    if isinstance(parsed, dict):
+        for key in ("error", "message", "detail"):
+            summary = parsed.get(key)
+            if isinstance(summary, str) and summary.strip():
+                return summary.strip()
+    return detail
 
 
 def _serialize(row):

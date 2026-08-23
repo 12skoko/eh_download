@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}配置 ▪ EH Archive控制台{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">运行配置</p><h1>配置</h1></div></div>
+{% if notice == 'saved' %}<div class="alert success">{{ updated_file }} 已保存。重启页面中标明的服务后生效。</div>{% elif notice == 'unchanged' %}<div class="alert success">配置没有变化。</div>{% endif %}
+<div class="alert warning config-security-note">secrets.toml、数据库连接地址和可能改变 Web 监听位置的字段不会在此页面编辑。</div>
+
+<div class="config-sections">
+  {% for section in sections %}
+  <section class="panel config-section">
+    <div class="section-head"><div><p class="eyebrow">{{ section.filename }}</p><h2>{{ section.title }}</h2></div><span class="badge">重启 {{ section.restart }} 后生效</span></div>
+    {% if section.name == 'supervisor' %}<div class="alert warning">“启动组件”决定 Supervisor 重启后是否加载组件；总览页面的暂停是运行时调度控制。</div>{% endif %}
+    <form method="post" action="/config/{{ section.name }}" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="revision" value="{{ section.revision }}">
+      <div class="config-field-grid">
+        {% for field in section.fields %}
+        {% if field.editable %}
+          {% if field.kind == 'bool' %}
+          <label class="config-boolean"><input type="checkbox" name="{{ field.name }}" value="true" {{ 'checked' if field.checked }}><span>{{ field.label }}</span></label>
+          {% elif field.kind in ['lines', 'mapping'] %}
+          <label class="config-field config-field-wide">{{ field.label }}<textarea name="{{ field.name }}" rows="5">{{ field.value }}</textarea>{% if field.help %}<small>{{ field.help }}</small>{% endif %}</label>
+          {% elif field.kind == 'choice' %}
+          <label class="config-field">{{ field.label }}<select name="{{ field.name }}" required>{% for option in field.options %}<option value="{{ option }}" {{ 'selected' if field.value == option }}>{{ option }}</option>{% endfor %}</select>{% if field.help %}<small>{{ field.help }}</small>{% endif %}</label>
+          {% elif field.kind in ['int', 'float'] %}
+          <label class="config-field">{{ field.label }}<input type="number" name="{{ field.name }}" value="{{ field.value }}" step="{{ '1' if field.kind == 'int' else 'any' }}" {% if field.minimum is not none %}min="{{ field.minimum }}"{% endif %} required>{% if field.help %}<small>{{ field.help }}</small>{% endif %}</label>
+          {% elif field.kind == 'time' %}
+          <label class="config-field">{{ field.label }}<input type="time" name="{{ field.name }}" value="{{ field.value }}">{% if field.help %}<small>{{ field.help }}</small>{% endif %}</label>
+          {% else %}
+          <label class="config-field">{{ field.label }}<input name="{{ field.name }}" value="{{ field.value }}" required>{% if field.help %}<small>{{ field.help }}</small>{% endif %}</label>
+          {% endif %}
+        {% else %}
+        <div class="config-readonly {{ 'config-field-wide' if '\n' in field.value }}"><span>{{ field.label }}</span><pre>{{ field.value or '—' }}</pre>{% if field.help %}<small>{{ field.help }}</small>{% endif %}</div>
+        {% endif %}
+        {% endfor %}
+      </div>
+      <div class="config-actions"><span>保存后不会自动重启服务。</span><button class="primary" type="submit">保存 {{ section.filename }}</button></div>
+    </form>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

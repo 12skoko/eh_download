@@ -1,0 +1,23 @@
+<div id="review-workspace">
+  <form id="review-filter-form" class="filter-panel" method="get" action="/review"
+        hx-get="/review" hx-target="#review-workspace" hx-swap="outerHTML"
+        hx-push-url="true" hx-sync="this:replace" data-auto-filter-form>
+    <input type="hidden" name="status" value="{{ selected_status }}">
+    <input type="hidden" name="error_code" value="{{ error_code }}">
+    <label class="grow">搜索<input name="q" value="{{ q }}" placeholder="标题、文件名或 manga ID" data-debounced-search></label>
+    <label>发生环节<select name="operation"><option value="">全部</option>{% for item in review_operations %}<option value="{{ item }}" {{ 'selected' if operation == item }}>{{ item|component_label }}</option>{% endfor %}</select></label>
+    <button class="primary" type="submit">筛选</button>
+  </form>
+
+  <div class="error-facets" aria-label="错误类型">
+    <a class="{{ 'active' if not error_code }}" href="/review?status={{ selected_status }}&q={{ q|urlencode }}&operation={{ operation|urlencode }}"
+       hx-get="/review?status={{ selected_status }}&q={{ q|urlencode }}&operation={{ operation|urlencode }}" hx-target="#review-workspace" hx-swap="outerHTML" hx-push-url="true">全部错误</a>
+    {% for facet in error_facets %}
+    <a class="{{ 'active' if error_code == facet.error_code }}" href="/review?status={{ selected_status }}&q={{ q|urlencode }}&operation={{ operation|urlencode }}&error_code={{ facet.error_code|urlencode }}"
+       hx-get="/review?status={{ selected_status }}&q={{ q|urlencode }}&operation={{ operation|urlencode }}&error_code={{ facet.error_code|urlencode }}" hx-target="#review-workspace" hx-swap="outerHTML" hx-push-url="true"><span>{{ facet.error_code }}</span><strong>{{ facet.count }}</strong></a>
+    {% endfor %}
+  </div>
+
+  <section class="review-grid">{% for row in page.rows %}<article class="review-card"><div class="panel-head"><span class="badge status-{{ row.status }}">{{ row.status|status_label }}</span><span class="mono review-manga-id">{{ row.manga_id }}</span></div><h2><a href="/manga/{{ row.manga_id }}" target="_blank" rel="noopener" hx-boost="false">{{ row.name or row.real_name or row.manga_id }}</a></h2><dl class="facts"><div><dt>进入时间</dt><dd>{{ row.status_updated_at|datetime }}</dd></div><div><dt>错误码</dt><dd class="error-code">{{ row.last_error_code or '—' }}</dd></div><div><dt>原因</dt><dd class="review-reason">{{ (row.last_error_detail or row.remark)|error_summary }}</dd></div></dl>{% if row.last_error_detail %}<details class="review-error-detail"><summary>查看完整错误</summary><pre>{{ row.last_error_detail }}</pre></details>{% endif %}<a class="button primary" href="/manga/{{ row.manga_id }}" target="_blank" rel="noopener" hx-boost="false">查看并处理</a></article>{% else %}<div class="panel empty">当前没有符合条件的{{ selected_status|status_label }}记录。</div>{% endfor %}</section>
+  {% if page.next_cursor %}<div class="pagination"><a class="button primary" href="/review?status={{ selected_status }}&cursor={{ page.next_cursor }}&q={{ q|urlencode }}&operation={{ operation|urlencode }}&error_code={{ error_code|urlencode }}" hx-get="/review?status={{ selected_status }}&cursor={{ page.next_cursor }}&q={{ q|urlencode }}&operation={{ operation|urlencode }}&error_code={{ error_code|urlencode }}" hx-target="#review-workspace" hx-swap="outerHTML" hx-push-url="true">下一页</a></div>{% endif %}
+</div>

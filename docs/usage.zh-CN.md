@@ -361,6 +361,7 @@ eharchive-supervisor --config-dir config
 - `/manga`：档案队列和搜索；
 - `/review`：人工复核和隔离工作台；
 - `/events`：事件与错误；
+- `/config`：查看非敏感配置并修改允许从网页维护的字段；
 - `/docs`：FastAPI Swagger API 文档；
 - `/health`：数据库、组件、健康快照和状态计数 JSON。
 
@@ -534,11 +535,17 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
   -Headers $headers -ContentType 'application/json' -Body $body
 ```
 
+总览页面的 Supervisor“暂停”和“排空”都会先打开确认窗口。“暂停”立即停止启动新的子进程，但不会强制终止已经启动的任务；“排空”停止领取新任务，等待正在执行的任务结束后自动转为暂停。
+
+档案队列会在搜索输入停止一秒后自动更新，状态、来源和错误筛选也会立即更新；搜索范围包括 manga ID、标题、原始标题和本地归档文件名。人工复核使用独立的进入时间游标，按 `status_updated_at` 从新到旧排列，并可按错误码和发生环节筛选。
+
+配置页面不会读取或展示 `secrets.toml`、数据库连接字符串，也不允许修改 Web 监听地址和服务器路径。可编辑字段以类型化表单保存；保存前会重新校验完整配置、检查页面版本以防并发覆盖，并在原文件旁保留一份 `.bak` 备份。配置保存不会从网页自动重启进程，页面会标明需要重启 Web、Supervisor 或两者；审计事件只记录文件名和修改字段，不记录配置值。
+
 维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为普通人工目标状态。`download_pending` 必须指定 `download_method`；`downloaded` 还必须填写服务器上真实存在的 `artifact_filename`；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定已进入上传阶段的替代档案；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。`force_delete_pending` 只允许从 `uploaded`、`completed`、`outdated` 或 `manual_review` 进入，必须填写原因并再次输入当前档案 ID；界面默认把原因写为 `outdated`，不要求已有 LANraragi archive ID。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
 
 旧的 `/actions/*` 和 `/archive-confirmation` API 为兼容既有脚本继续保留。新的管理界面使用 `/status/{target_status}`；它只修改数据库状态和关联字段，不在 Web 请求中直接运行子模块。`force_delete_pending` 被明确限制为管理网页操作，通用状态 API 不能设置它，自动状态机也没有进入该状态的转换。Supervisor 后续根据 `download_pending`、`downloaded`、`upload_pending`、`uploaded`、`outdated` 和 `force_delete_pending` 等状态安排相应模块。
 
-数据库升级会自动执行 `CREATE EXTENSION IF NOT EXISTS pg_trgm`，并为几十万条记录创建标题搜索和队列索引。正常情况下不需要单独在 Docker PostgreSQL 中启用扩展；只有 migration 账号缺少数据库 `CREATE` 权限时，才需要由 PostgreSQL 管理员提前启用。
+数据库升级会自动执行 `CREATE EXTENSION IF NOT EXISTS pg_trgm`，并为几十万条记录创建标题、归档文件名搜索索引，以及档案队列和人工复核局部索引。正常情况下不需要单独在 Docker PostgreSQL 中启用扩展；只有 migration 账号缺少数据库 `CREATE` 权限时，才需要由 PostgreSQL 管理员提前启用。
 
 ## 10. 从旧 MySQL 迁移
 

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}系统总览 · EH Archive{% endblock %}
+{% block title %}系统总览 ▪ EH Archive控制台{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><p class="eyebrow">运行控制</p><h1>系统总览</h1><p class="muted">数据库版本 {{ migration_version or '未知' }}</p></div>
+  <div><p class="eyebrow">运行控制</p><h1>系统总览</h1></div>
   <a class="button secondary" href="/health">查看健康 JSON</a>
 </div>
 
@@ -15,14 +15,30 @@
       <div><dt>暂停原因</dt><dd>{{ supervisor.reason or '—' if supervisor else '—' }}</dd></div>
       <div><dt>租约持有者</dt><dd class="mono truncate">{{ supervisor.lease_owner or '—' if supervisor else '—' }}</dd></div>
     </dl>
-    <form method="post" action="/control/supervisor" class="inline-control">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}">
-      <input name="reason" placeholder="原因（可选）">
-      <button name="state" value="running" type="submit">运行</button>
-      <button name="state" value="paused" type="submit">暂停</button>
-      <button class="warning-button" name="state" value="draining" type="submit" hx-confirm="停止领取新任务并等待当前任务结束？">排空</button>
-    </form>
+    <div class="supervisor-actions">
+      <form method="post" action="/control/supervisor" hx-boost="false"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}"><button name="state" value="running" type="submit">运行</button></form>
+      <button type="button" data-open-dialog="supervisor-pause-dialog">暂停</button>
+      <button type="button" class="warning-button" data-open-dialog="supervisor-drain-dialog">排空</button>
+    </div>
+    <dialog id="supervisor-pause-dialog" class="status-dialog">
+      <form method="post" action="/control/supervisor" class="status-dialog-form" hx-boost="false">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}"><input type="hidden" name="state" value="paused">
+        <div class="dialog-head"><div><p class="eyebrow">调度器控制</p><h2>暂停 Supervisor</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+        <p>暂停后不会再启动新的子进程；已经启动的任务不会被强制终止。</p>
+        <label>暂停原因（可选）<textarea name="reason" rows="3"></textarea></label>
+        <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认暂停</button></div>
+      </form>
+    </dialog>
+    <dialog id="supervisor-drain-dialog" class="status-dialog">
+      <form method="post" action="/control/supervisor" class="status-dialog-form" hx-boost="false">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}"><input type="hidden" name="state" value="draining">
+        <div class="dialog-head"><div><p class="eyebrow">调度器控制</p><h2>排空 Supervisor</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+        <p>排空后停止领取新任务，等待正在执行的任务结束，然后自动转为暂停状态。</p>
+        <label>排空原因（可选）<textarea name="reason" rows="3"></textarea></label>
+        <div class="alert warning">该操作会停止整个归档流程继续调度新任务。</div>
+        <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认排空</button></div>
+      </form>
+    </dialog>
   </article>
   <article class="panel add-panel">
     <div class="panel-head"><div><p class="eyebrow">人工队列</p><h2>添加画廊</h2></div></div>
@@ -49,7 +65,7 @@
 <section class="two-column">
   <article class="panel table-panel"><div class="section-head"><div><p class="eyebrow">执行中</p><h2>当前任务</h2></div></div>
     <div class="table-wrap"><table><thead><tr><th>档案</th><th>操作</th><th>开始时间</th></tr></thead><tbody>
-    {% for attempt in running %}<tr><td><a class="mono" href="/manga/{{ attempt.manga_id }}">{{ attempt.manga_id or '系统任务' }}</a></td><td>{{ attempt.operation }}</td><td>{{ attempt.started_at|datetime }}</td></tr>{% else %}<tr><td colspan="3" class="empty">当前没有运行中的任务</td></tr>{% endfor %}
+    {% for attempt in running %}<tr><td>{% if attempt.manga_id %}<a class="mono" href="/manga/{{ attempt.manga_id }}" target="_blank" rel="noopener" hx-boost="false">{{ attempt.manga_id }}</a>{% else %}<span class="mono">系统任务</span>{% endif %}</td><td>{{ attempt.operation }}</td><td>{{ attempt.started_at|datetime }}</td></tr>{% else %}<tr><td colspan="3" class="empty">当前没有运行中的任务</td></tr>{% endfor %}
     </tbody></table></div>
   </article>
   <article class="panel">
@@ -74,7 +90,7 @@
   </article>
   <article class="panel table-panel"><div class="section-head"><div><p class="eyebrow">需要关注</p><h2>最近错误</h2></div><a href="/manga?has_error=yes">全部</a></div>
     <div class="table-wrap"><table><thead><tr><th>档案</th><th>错误</th><th>时间</th></tr></thead><tbody>
-    {% for row in recent_errors %}<tr><td><a href="/manga/{{ row.manga_id }}">{{ row.name or row.manga_id }}</a></td><td><span class="error-code">{{ row.last_error_code }}</span></td><td>{{ row.last_error_at|datetime }}</td></tr>{% else %}<tr><td colspan="3" class="empty">没有错误记录</td></tr>{% endfor %}
+    {% for row in recent_errors %}<tr><td><a href="/manga/{{ row.manga_id }}" target="_blank" rel="noopener" hx-boost="false">{{ row.name or row.manga_id }}</a></td><td><span class="error-code">{{ row.last_error_code }}</span></td><td>{{ row.last_error_at|datetime }}</td></tr>{% else %}<tr><td colspan="3" class="empty">没有错误记录</td></tr>{% endfor %}
     </tbody></table></div>
   </article>
 </section>

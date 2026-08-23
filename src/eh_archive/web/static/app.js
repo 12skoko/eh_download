@@ -38,3 +38,19 @@ document.addEventListener("click", (event) => {
     if (!inside) event.target.close();
   }
 });
+
+const autoFilterTimers = new WeakMap();
+
+document.addEventListener("input", (event) => {
+  if (!event.target.matches("[data-debounced-search]")) return;
+  const form = event.target.closest("[data-auto-filter-form]");
+  if (!(form instanceof HTMLFormElement)) return;
+  clearTimeout(autoFilterTimers.get(form));
+  autoFilterTimers.set(form, setTimeout(() => form.requestSubmit(), 1000));
+});
+
+document.addEventListener("change", (event) => {
+  if (event.target.matches("[data-debounced-search]")) return;
+  const form = event.target.closest("[data-auto-filter-form]");
+  if (form instanceof HTMLFormElement) form.requestSubmit();
+});

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import and_, desc, func, inspect, or_, select, text
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config.loader import SUPERVISOR_MODULES, AppConfig
@@ -228,6 +228,12 @@ class InvalidRequest(WebServiceError):
 class MangaPage:
     rows: list[MangaRecord]
     next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class ReviewFacet:
+    error_code: str
+    count: int
 
 
 class WebService:
@@ -705,15 +711,7 @@ def list_manga(
     elif has_error is False:
         query = query.where(MangaRecord.last_error_at.is_(None))
     if query_text and query_text.strip():
-        value = query_text.strip()
-        pattern = f"%{_escape_like(value.casefold())}%"
-        query = query.where(
-            or_(
-                MangaRecord.manga_id.ilike(f"{_escape_like(value)}%", escape="\\"),
-                func.lower(MangaRecord.name).like(pattern, escape="\\"),
-                func.lower(MangaRecord.real_name).like(pattern, escape="\\"),
-            )
-        )
+        query = query.where(_manga_search_predicate(query_text))
     decoded = _decode_cursor(cursor)
     if decoded is not None:
         posted_at, manga_id = decoded
@@ -739,6 +737,95 @@ def list_manga(
     rows = rows[:limit]
     next_cursor = _encode_cursor(rows[-1]) if has_more and rows else None
     return MangaPage(rows, next_cursor)
+
+
+def list_review_manga(
+    session: Session,
+    *,
+    status: str,
+    query_text: str | None = None,
+    error_code: str | None = None,
+    operation: str | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+) -> MangaPage:
+    if status not in {Status.MANUAL_REVIEW.value, Status.QUARANTINED.value}:
+        raise InvalidRequest("无效人工复核状态")
+    limit = max(1, min(limit, 100))
+    query = (
+        select(MangaRecord)
+        .where(MangaRecord.status == status)
+        .order_by(desc(MangaRecord.status_updated_at), MangaRecord.manga_id)
+    )
+    if query_text and query_text.strip():
+        query = query.where(_manga_search_predicate(query_text))
+    if error_code:
+        query = query.where(MangaRecord.last_error_code == error_code.strip())
+    if operation:
+        query = query.where(MangaRecord.last_error_operation == operation.strip())
+
+    decoded = _decode_cursor(cursor)
+    if decoded is not None:
+        status_updated_at, manga_id = decoded
+        if status_updated_at is None:
+            raise InvalidRequest("无效人工复核分页游标")
+        query = query.where(
+            or_(
+                MangaRecord.status_updated_at < status_updated_at,
+                and_(
+                    MangaRecord.status_updated_at == status_updated_at,
+                    MangaRecord.manga_id > manga_id,
+                ),
+            )
+        )
+
+    rows = list(session.scalars(query.limit(limit + 1)))
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    next_cursor = (
+        _encode_datetime_cursor(rows[-1].status_updated_at, rows[-1].manga_id)
+        if has_more and rows
+        else None
+    )
+    return MangaPage(rows, next_cursor)
+
+
+def review_facets(
+    session: Session,
+    *,
+    status: str,
+    query_text: str | None = None,
+    operation: str | None = None,
+) -> tuple[list[ReviewFacet], list[str]]:
+    if status not in {Status.MANUAL_REVIEW.value, Status.QUARANTINED.value}:
+        raise InvalidRequest("无效人工复核状态")
+    conditions = [MangaRecord.status == status]
+    if query_text and query_text.strip():
+        conditions.append(_manga_search_predicate(query_text))
+    if operation:
+        conditions.append(MangaRecord.last_error_operation == operation.strip())
+
+    facets = [
+        ReviewFacet(str(code), int(count))
+        for code, count in session.execute(
+            select(MangaRecord.last_error_code, func.count())
+            .where(*conditions, MangaRecord.last_error_code.is_not(None))
+            .group_by(MangaRecord.last_error_code)
+            .order_by(desc(func.count()), MangaRecord.last_error_code)
+        )
+    ]
+    operations = list(
+        session.scalars(
+            select(MangaRecord.last_error_operation)
+            .where(
+                MangaRecord.status == status,
+                MangaRecord.last_error_operation.is_not(None),
+            )
+            .distinct()
+            .order_by(MangaRecord.last_error_operation)
+        )
+    )
+    return facets, [str(value) for value in operations]
 
 
 def _lease_expired(value: datetime | None, *, now: datetime | None = None) -> bool:
@@ -826,10 +913,6 @@ def dashboard_data(session: Session) -> dict[str, Any]:
             .limit(12)
         )
     )
-    version = None
-    connection = session.connection()
-    if inspect(connection).has_table("alembic_version"):
-        version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
     return {
         "counts": counts,
         "controls": controls,
@@ -837,7 +920,6 @@ def dashboard_data(session: Session) -> dict[str, Any]:
         "running": running,
         "recent_errors": recent_errors,
         "retries": retries,
-        "migration_version": version,
     }
 
 
@@ -942,9 +1024,24 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _manga_search_predicate(value: str):
+    value = value.strip()
+    pattern = f"%{_escape_like(value.casefold())}%"
+    return or_(
+        MangaRecord.manga_id.ilike(f"{_escape_like(value)}%", escape="\\"),
+        func.lower(MangaRecord.name).like(pattern, escape="\\"),
+        func.lower(MangaRecord.real_name).like(pattern, escape="\\"),
+        func.lower(MangaRecord.artifact_filename).like(pattern, escape="\\"),
+    )
+
+
 def _encode_cursor(row: MangaRecord) -> str:
+    return _encode_datetime_cursor(row.posted_at, row.manga_id)
+
+
+def _encode_datetime_cursor(value: datetime | None, manga_id: str) -> str:
     payload = json.dumps(
-        [row.posted_at.isoformat() if row.posted_at is not None else None, row.manga_id],
+        [value.isoformat() if value is not None else None, manga_id],
         separators=(",", ":"),
     ).encode("utf-8")
     return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
