@@ -218,11 +218,11 @@ def select_torrent(
         )
 
     expected_size = _parse_size(estimated_size_raw, field="estimated")
-    candidates = [choice for choice in candidates if choice.size_bytes * 5 >= expected_size * 4]
+    candidates = [choice for choice in candidates if choice.size_bytes * 5 >= expected_size * 3]
     if not candidates:
         raise ArchiveError(
             "torrent_size_too_small",
-            "all usable torrents are smaller than 80% of the estimated gallery size",
+            "all usable torrents are smaller than 60% of the estimated gallery size",
             ErrorClass.ITEM,
         )
 
