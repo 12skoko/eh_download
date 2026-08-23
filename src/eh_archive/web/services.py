@@ -25,6 +25,12 @@ from ..domain.states import Status, can_transition, transition_target
 from ..services.paths import ArtifactPathService, UnsafePathError, safe_filename
 
 CONTROL_COMPONENTS = ("supervisor", *SUPERVISOR_MODULES)
+DOWNLOAD_METHOD_LOCATIONS = {
+    "torrent": "torrent_download",
+    "direct": "direct_download",
+    "hah": "hah_download",
+    "aria2": "aria2_download",
+}
 
 STATUS_LABELS = {
     Status.DISCOVERED.value: "已发现",
@@ -407,6 +413,7 @@ class WebService:
 
         clean_method = download_method.strip() if download_method else None
         previous_method = row.download_method
+        previous_artifact_location = row.artifact_location
         if target_status in {Status.DOWNLOAD_PENDING.value, Status.DOWNLOADED.value}:
             if clean_method not in DOWNLOAD_METHOD_VALUES:
                 raise InvalidRequest("必须选择有效的下载方式")
@@ -419,6 +426,7 @@ class WebService:
         if target_status == Status.DOWNLOADED.value:
             if not clean_filename:
                 raise InvalidRequest("进入已下载状态必须填写文件名")
+            row.artifact_location = DOWNLOAD_METHOD_LOCATIONS[clean_method]
             artifact_path = self._require_artifact(row, clean_filename)
             try:
                 artifact_is_directory = artifact_path.is_dir()
@@ -476,6 +484,7 @@ class WebService:
             "download_method": row.download_method,
             "artifact_location": row.artifact_location,
             "artifact_filename": row.artifact_filename,
+            "artifact_check_path": str(artifact_path) if artifact_path is not None else None,
             "archive_id": confirmed_id,
             "superseded_by_id": replacement_id,
             "confirmation_manga_id": (
@@ -484,6 +493,8 @@ class WebService:
         }
         if previous_method != row.download_method:
             detail["previous_download_method"] = previous_method
+        if previous_artifact_location != row.artifact_location:
+            detail["previous_artifact_location"] = previous_artifact_location
         self._event(
             row,
             "status_override",
@@ -672,7 +683,7 @@ class WebService:
     def _require_artifact(self, row: MangaRecord, filename: str | None) -> Path:
         path = self._artifact_path(row, filename)
         if not path.exists() or not (path.is_file() or path.is_dir()):
-            raise InvalidRequest(f"找不到本地档案：{row.artifact_location}/{filename}")
+            raise InvalidRequest(f"找不到本地档案：{path}")
         return path
 
     def set_control(
@@ -1003,6 +1014,13 @@ def manga_detail(session: Session, manga_id: str) -> dict[str, Any]:
         ),
         "active_attempt": active_attempt,
         "expired_attempt": expired_attempt,
+        "progress_poll": bool(
+            active_attempt is not None and active_attempt.operation == "direct_download"
+        )
+        or (
+            row.download_method == "direct"
+            and row.status in {Status.DOWNLOAD_PENDING.value, Status.DOWNLOADING.value}
+        ),
     }
 
 
@@ -1012,14 +1030,7 @@ def dashboard_data(session: Session) -> dict[str, Any]:
     )
     controls = {row.component: row for row in session.scalars(select(SystemControl))}
     health = {row.component: row for row in session.scalars(select(SystemHealth))}
-    running = list(
-        session.scalars(
-            select(JobAttempt)
-            .where(JobAttempt.status == "running")
-            .order_by(desc(JobAttempt.started_at))
-            .limit(12)
-        )
-    )
+    running = running_attempts(session)
     recent_errors = list(
         session.scalars(
             select(MangaRecord)
@@ -1043,6 +1054,42 @@ def dashboard_data(session: Session) -> dict[str, Any]:
         "running": running,
         "recent_errors": recent_errors,
         "retries": retries,
+    }
+
+
+def running_attempts(session: Session, *, limit: int = 12) -> list[JobAttempt]:
+    return list(
+        session.scalars(
+            select(JobAttempt)
+            .where(JobAttempt.status == "running")
+            .order_by(desc(JobAttempt.started_at))
+            .limit(limit)
+        )
+    )
+
+
+def manga_progress_data(session: Session, manga_id: str) -> dict[str, Any]:
+    row = session.get(MangaRecord, manga_id)
+    if row is None:
+        raise NotFound("档案不存在")
+    active_attempt = (
+        session.get(JobAttempt, row.active_attempt_id) if row.active_attempt_id is not None else None
+    )
+    if active_attempt is not None and (
+        active_attempt.manga_id != row.manga_id or active_attempt.status != "running"
+    ):
+        active_attempt = None
+    direct_active = bool(
+        active_attempt is not None and active_attempt.operation == "direct_download"
+    )
+    progress_poll = direct_active or (
+        row.download_method == "direct"
+        and row.status in {Status.DOWNLOAD_PENDING.value, Status.DOWNLOADING.value}
+    )
+    return {
+        "row": row,
+        "active_attempt": active_attempt if direct_active else None,
+        "progress_poll": progress_poll,
     }
 
 

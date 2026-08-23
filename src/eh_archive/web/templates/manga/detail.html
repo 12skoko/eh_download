@@ -3,6 +3,7 @@
 {% block content %}
 <div class="page-head detail-head"><div><a class="back" href="/manga">← 返回队列</a><p class="eyebrow mono detail-manga-id">{{ row.manga_id }}</p><h1>{{ row.name or row.real_name or row.manga_id }}</h1><p class="muted">{{ row.real_name }}</p></div><span class="badge large status-{{ row.status }}">{{ row.status|status_label }}</span></div>
 {% if notice %}<div class="alert success">操作已完成，页面显示的是数据库最新状态。</div>{% endif %}
+{% include "_direct_download_progress.html" %}
 <section class="detail-grid">
   <article class="panel"><div class="section-head"><div><p class="eyebrow">当前状态</p><h2>调度信息</h2></div></div><dl class="facts two">
     <div><dt>状态</dt><dd>{{ row.status }} / {{ row.status|status_label }}</dd></div><div><dt>优先级</dt><dd>{{ row.priority }}</dd></div>
@@ -75,11 +76,11 @@
         <p>{{ target.description }}</p>
         <dl class="transition-preview"><div><dt>当前状态</dt><dd>{{ row.status }} / {{ row.status|status_label }}</dd></div><div><dt>目标状态</dt><dd>{{ target.status }} / {{ target.status|status_label }}</dd></div></dl>
         {% if target.status in ['download_pending', 'downloaded'] %}
-        <label>下载方式（必填）<select name="download_method" required><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}" {% if row.download_method == method %}selected{% endif %}>{{ method }}</option>{% endfor %}</select></label>
+        <label>下载方式（必填）<select name="download_method" required {% if target.status == 'downloaded' %}data-artifact-method{% endif %}><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}" data-artifact-directory="{{ artifact_directories.get(method, '') }}" {% if row.download_method == method %}selected{% endif %}>{{ method }}</option>{% endfor %}</select></label>
         {% endif %}
         {% if target.status == 'downloaded' %}
-        <label>文件名（必填）<input name="artifact_filename" value="{{ row.artifact_filename or '' }}" placeholder="已存在于当前 artifact_location 的文件名" required></label>
-        <p class="field-help">当前位置：<span class="mono">{{ row.artifact_location or '未登记' }}</span>。服务器会检查文件真实存在。</p>
+        <label>文件名（必填）<input name="artifact_filename" value="{{ row.artifact_filename or '' }}" placeholder="服务器下载目录中已有的文件名" data-artifact-filename required></label>
+        <div class="artifact-path-preview"><span>服务器将检查</span><output class="mono break" data-artifact-path>请选择下载方式并填写文件名</output></div>
         {% endif %}
         {% if target.status in ['uploaded', 'completed'] %}
         <label>LANraragi archive ID（必填）<input name="archive_id" value="{{ row.lrr_archive_id or '' }}" pattern="[0-9A-Fa-f]{40}" maxlength="40" placeholder="40 位十六进制 archive ID" required></label>

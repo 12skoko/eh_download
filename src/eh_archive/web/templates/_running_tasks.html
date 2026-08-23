@@ -1,0 +1,20 @@
+<article id="running-tasks" class="panel table-panel" hx-get="/partials/running-tasks" hx-trigger="every 2s" hx-swap="outerHTML">
+  <div class="section-head"><div><p class="eyebrow">执行中</p><h2>当前任务</h2></div></div>
+  <div class="table-wrap"><table><thead><tr><th>档案</th><th>操作与进度</th><th>开始时间</th></tr></thead><tbody>
+  {% for attempt in running %}
+    {% set progress = attempt|attempt_progress %}
+    <tr>
+      <td>{% if attempt.manga_id %}<a class="mono" href="/manga/{{ attempt.manga_id }}" target="_blank" rel="noopener" hx-boost="false">{{ attempt.manga_id }}</a>{% else %}<span class="mono">系统任务</span>{% endif %}</td>
+      <td class="task-operation-cell"><span class="mono">{{ attempt.operation }}</span>
+        {% if attempt.operation == 'direct_download' %}
+        <div class="compact-progress">
+          <progress max="100" {% if progress.percent is not none %}value="{{ progress.percent }}"{% endif %}></progress>
+          <small>{% if progress.total is not none %}{{ progress.downloaded|filesize }} / {{ progress.total|filesize }} · {{ '%.1f'|format(progress.percent) }}%{% else %}{{ progress.downloaded|filesize }}{% endif %}{% if progress.speed %} · {{ progress.speed|filesize }}/s{% endif %}</small>
+        </div>
+        {% endif %}
+      </td>
+      <td>{{ attempt.started_at|datetime }}</td>
+    </tr>
+  {% else %}<tr><td colspan="3" class="empty">当前没有运行中的任务</td></tr>{% endfor %}
+  </tbody></table></div>
+</article>

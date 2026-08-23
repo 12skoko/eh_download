@@ -1,0 +1,18 @@
+<div id="direct-download-progress" class="download-progress-shell" {% if progress_poll %}hx-get="/partials/manga-progress/{{ row.manga_id }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% if active_attempt and active_attempt.operation == 'direct_download' %}
+  {% set progress = active_attempt|attempt_progress %}
+  <section class="panel download-progress-panel">
+    <div class="section-head"><div><p class="eyebrow">直接下载</p><h2>下载进度</h2></div><span class="badge running">运行中</span></div>
+    <progress max="100" {% if progress.percent is not none %}value="{{ progress.percent }}"{% endif %}></progress>
+    <div class="download-progress-meta">
+      <strong>{% if progress.percent is not none %}{{ '%.1f'|format(progress.percent) }}%{% else %}正在下载{% endif %}</strong>
+      <span>{{ progress.downloaded|filesize }}{% if progress.total is not none %} / {{ progress.total|filesize }}{% endif %}</span>
+      <span>{% if progress.speed %}{{ progress.speed|filesize }}/s{% else %}正在计算速度{% endif %}</span>
+      <span>{% if progress.eta is not none %}预计剩余 {{ progress.eta|duration }}{% else %}剩余时间未知{% endif %}</span>
+      <small>进度更新时间：{{ active_attempt.progress_updated_at|datetime }}</small>
+    </div>
+  </section>
+  {% elif progress_poll %}
+  <section class="panel download-progress-panel waiting"><div><p class="eyebrow">直接下载</p><h2>等待下载任务启动</h2></div></section>
+  {% endif %}
+</div>

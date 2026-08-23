@@ -18,6 +18,7 @@ from ..config.loader import SUPERVISOR_MODULES
 from ..db import Database
 from ..db.models import EventLog, MangaRecord, SystemControl, SystemHealth
 from ..logging import configure_logging
+from ..services.paths import safe_filename
 from .auth import (
     SESSION_COOKIE,
     SESSION_MAX_AGE_SECONDS,
@@ -34,6 +35,7 @@ from .configuration import (
 from .services import (
     COMPONENT_LABELS,
     CONTROL_COMPONENTS,
+    DOWNLOAD_METHOD_LOCATIONS,
     MANUAL_STATUS_TARGETS,
     STATUS_LABELS,
     Conflict,
@@ -46,7 +48,9 @@ from .services import (
     list_manga,
     list_review_manga,
     manga_detail,
+    manga_progress_data,
     review_facets,
+    running_attempts,
     safe_detail,
     serialize_manga,
     serialize_model,
@@ -107,6 +111,8 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
     templates.env.filters["safe_detail"] = safe_detail
     templates.env.filters["error_summary"] = _error_summary
     templates.env.filters["manga_tab_id"] = _manga_tab_id
+    templates.env.filters["attempt_progress"] = _attempt_progress
+    templates.env.filters["duration"] = _format_duration
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.state.database = database
     app.state.auth_enabled = auth_enabled
@@ -252,6 +258,29 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 health_states=health_states,
                 supervisor_state=supervisor_state,
             ),
+        )
+
+    @app.get("/partials/running-tasks", response_class=HTMLResponse)
+    def running_tasks_partial(request: Request):
+        with database.session() as session:
+            running = running_attempts(session)
+        return templates.TemplateResponse(
+            request=request,
+            name="_running_tasks.html",
+            context=_context(request, running=running),
+        )
+
+    @app.get("/partials/manga-progress/{manga_id:path}", response_class=HTMLResponse)
+    def manga_progress_partial(request: Request, manga_id: str):
+        try:
+            with database.session() as session:
+                progress = manga_progress_data(session, manga_id)
+        except WebServiceError as exc:
+            return _error_response(request, templates, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="_direct_download_progress.html",
+            context=_context(request, **progress),
         )
 
     @app.get("/manga", response_class=HTMLResponse)
@@ -467,7 +496,12 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
         return templates.TemplateResponse(
             request=request,
             name="manga/detail.html",
-            context=_context(request, **detail, notice=notice),
+            context=_context(
+                request,
+                **detail,
+                notice=notice,
+                artifact_directories=_manual_artifact_directories(app_config, manga_id),
+            ),
         )
 
     @app.post("/manga/{manga_id:path}/remark")
@@ -957,6 +991,51 @@ def _format_filesize(value) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
     return str(value)
+
+
+def _format_duration(value) -> str:
+    if value is None:
+        return "—"
+    seconds = max(0, int(float(value)))
+    if seconds < 60:
+        return f"{seconds} 秒"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes} 分 {seconds} 秒"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} 小时 {minutes} 分"
+
+
+def _attempt_progress(attempt) -> dict[str, float | int | None]:
+    downloaded = max(0, int(attempt.progress_bytes or 0))
+    total = (
+        max(0, int(attempt.progress_total_bytes))
+        if attempt.progress_total_bytes is not None
+        else None
+    )
+    speed = max(0.0, float(attempt.progress_speed_bps or 0))
+    percent = min(100.0, downloaded / total * 100) if total else None
+    eta = max(0.0, (total - downloaded) / speed) if total and speed > 0 else None
+    return {
+        "downloaded": downloaded,
+        "total": total,
+        "speed": speed,
+        "percent": percent,
+        "eta": eta,
+    }
+
+
+def _manual_artifact_directories(app_config, manga_id: str) -> dict[str, str]:
+    directories: dict[str, str] = {}
+    for method, location in DOWNLOAD_METHOD_LOCATIONS.items():
+        try:
+            directory = app_config.root(location).expanduser().resolve()
+        except KeyError:
+            continue
+        if method == "torrent":
+            directory = directory / safe_filename(manga_id.split("/", 1)[0])
+        directories[method] = str(directory)
+    return directories
 
 
 def _manga_tab_id(value) -> str:

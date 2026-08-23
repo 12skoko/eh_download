@@ -176,11 +176,29 @@ tbody tr:hover { background: rgb(23 107 135 / 3.5%); }
 .transition-preview dt { color: var(--muted); font-size: .72rem; }
 .transition-preview dd { margin: .2rem 0 0; font-family: "Cascadia Code", Consolas, monospace; overflow-wrap: anywhere; }
 .field-help { margin: -.5rem 0 0; color: var(--muted); font-size: .78rem; }
+.artifact-path-preview { display: grid; gap: .35rem; padding: .75rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
+.artifact-path-preview > span { color: var(--muted); font-size: .72rem; font-weight: 650; }
+.artifact-path-preview output { color: var(--text); user-select: text; }
 .field-label-line { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .6rem; }
 .confirmation-manga-id { padding: .15rem .4rem; color: var(--text); border-radius: 5px; background: var(--surface-soft); user-select: text; }
 .lease-confirmation { display: flex; flex-direction: row; align-items: flex-start; gap: .65rem; cursor: pointer; }
 .lease-confirmation input { width: auto; min-height: auto; margin-top: .2rem; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: .75rem; padding-top: .25rem; }
+
+.download-progress-shell:not(:empty) { margin-bottom: 1.5rem; }
+.download-progress-panel progress, .compact-progress progress { width: 100%; accent-color: var(--accent); }
+.download-progress-panel progress { height: 18px; }
+.download-progress-panel.waiting { color: var(--muted); }
+.download-progress-panel.waiting h2 { margin: 0; color: var(--text); }
+.download-progress-meta { display: grid; grid-template-columns: auto auto auto auto minmax(170px, 1fr); align-items: center; gap: .6rem 1rem; margin-top: .65rem; }
+.download-progress-meta strong { color: var(--accent-strong); font-size: 1.05rem; }
+.download-progress-meta span, .download-progress-meta small { color: var(--muted); white-space: nowrap; }
+.download-progress-meta small { justify-self: end; }
+.task-operation-cell { min-width: 230px; }
+.compact-progress { display: grid; gap: .25rem; }
+.task-operation-cell .compact-progress { margin-top: .35rem; }
+.compact-progress progress { height: 10px; }
+.compact-progress small { color: var(--muted); white-space: nowrap; }
 
 .timeline { position: relative; display: grid; margin-left: .3rem; }
 .timeline::before { content: ""; position: absolute; top: .5rem; bottom: .5rem; left: 5px; width: 1px; background: var(--line); }
@@ -237,6 +255,8 @@ pre { max-height: 350px; overflow: auto; padding: .8rem; color: #d8e5ec; border-
   .hero-grid, .two-column, .detail-grid { grid-template-columns: 1fr; }
   .component-row { grid-template-columns: minmax(120px, 1fr) 64px 84px; }
   .component-row input:not([type="hidden"]), .component-reason { grid-column: 1 / -1; }
+  .download-progress-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .download-progress-meta small { grid-column: 1 / -1; justify-self: start; }
 }
 
 @media (max-width: 680px) {

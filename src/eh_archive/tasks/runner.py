@@ -52,6 +52,7 @@ from ..services.validator.artifact import ValidationError, quarantine_artifact, 
 
 log = get_logger(__name__)
 DIRECT_REPORT_PROGRESS_INTERVAL_SECONDS = 10.0
+DIRECT_WEB_PROGRESS_INTERVAL_SECONDS = 2.0
 TORRENT_FALLBACK_CODES = frozenset(
     {
         "no_torrent",
@@ -174,6 +175,9 @@ class TaskExecutor:
         self._active_report_sample_bytes = 0
         self._active_report_sample_at = 0.0
         self._active_report_updated_at = 0.0
+        self._active_progress_sample_bytes = 0
+        self._active_progress_sample_at = 0.0
+        self._active_progress_updated_at = 0.0
         self._tag_translation: EhTagTranslation | None = None
         self._http_sessions: dict[str, RoleSession] = {}
         self.thumbnail_regeneration: UploadOutcome | None = None
@@ -225,8 +229,6 @@ class TaskExecutor:
         report.write(f"[{self._report_item_index}] {clean_report_value(claim.manga_id)} | started")
 
     def _begin_direct_report_line(self, claim: ClaimedAttempt) -> None:
-        if self.report is None:
-            return
         self._report_item_index += 1
         self._active_report_manga = claim.manga_id
         self._active_report_filename = None
@@ -237,6 +239,11 @@ class TaskExecutor:
         self._active_report_sample_bytes = 0
         self._active_report_sample_at = time.monotonic()
         self._active_report_updated_at = 0.0
+        self._active_progress_sample_bytes = 0
+        self._active_progress_sample_at = time.monotonic()
+        self._active_progress_updated_at = 0.0
+        if self.report is None:
+            return
         self._active_report_line = self.report.begin_live_line(
             f"[{self._report_item_index}] {clean_report_value(claim.manga_id)} | starting"
         )
@@ -251,7 +258,7 @@ class TaskExecutor:
         )
 
     def _start_direct_report_transfer(self, downloaded: int, total: int | None) -> None:
-        if self._active_report_line is None or self._active_report_manga is None:
+        if self._active_report_manga is None:
             return
         now = time.monotonic()
         self._active_report_downloaded = max(0, downloaded)
@@ -260,6 +267,12 @@ class TaskExecutor:
         self._active_report_sample_bytes = self._active_report_downloaded
         self._active_report_sample_at = now
         self._active_report_updated_at = now
+        self._active_progress_sample_bytes = self._active_report_downloaded
+        self._active_progress_sample_at = now
+        self._active_progress_updated_at = now
+        self._persist_direct_progress_snapshot()
+        if self._active_report_line is None:
+            return
         if self._active_report_stage == "starting":
             fields = [
                 f"[{self._report_item_index}] {clean_report_value(self._active_report_manga)}",
@@ -301,22 +314,57 @@ class TaskExecutor:
         return " | ".join(fields)
 
     def _update_direct_report_progress(self, downloaded: int, *, force: bool = False) -> None:
-        if self._active_report_line is None or self._active_report_manga is None:
+        if self._active_report_manga is None:
             return
         self._active_report_downloaded = max(0, downloaded)
         now = time.monotonic()
+        if force or (
+            now - self._active_progress_updated_at >= DIRECT_WEB_PROGRESS_INTERVAL_SECONDS
+        ):
+            elapsed = now - self._active_progress_sample_at
+            transferred = self._active_report_downloaded - self._active_progress_sample_bytes
+            self._active_report_speed = (
+                transferred / elapsed if elapsed > 0 and transferred >= 0 else 0
+            )
+            self._active_progress_sample_bytes = self._active_report_downloaded
+            self._active_progress_sample_at = now
+            self._active_progress_updated_at = now
+            self._persist_direct_progress_snapshot()
+        if self._active_report_line is None:
+            return
         if (
             not force
             and now - self._active_report_updated_at < DIRECT_REPORT_PROGRESS_INTERVAL_SECONDS
         ):
             return
-        elapsed = now - self._active_report_sample_at
-        transferred = self._active_report_downloaded - self._active_report_sample_bytes
-        self._active_report_speed = transferred / elapsed if elapsed > 0 and transferred >= 0 else 0
         self._active_report_line.update(self._direct_report_progress_line())
         self._active_report_sample_bytes = self._active_report_downloaded
         self._active_report_sample_at = now
         self._active_report_updated_at = now
+
+    def _persist_direct_progress_snapshot(self) -> None:
+        claim = self.current_claim
+        if claim is None or claim.operation != "direct_download":
+            return
+        try:
+            with self.database.session() as session:
+                ArchiveRepository(session, run_id=self.run_id).update_attempt_progress(
+                    claim,
+                    downloaded_bytes=self._active_report_downloaded,
+                    total_bytes=self._active_report_total,
+                    speed_bps=self._active_report_speed,
+                )
+        except Exception:
+            log.warning(
+                "failed to persist direct download progress",
+                exc_info=True,
+                extra={
+                    "event": {
+                        "manga_id": claim.manga_id,
+                        "attempt_id": claim.attempt_id,
+                    }
+                },
+            )
 
     def _finish_item_report(self, result: TaskRunResult) -> None:
         if result.operation == "direct_download":
@@ -331,15 +379,17 @@ class TaskExecutor:
 
     def _finish_direct_report_line(self, result: TaskRunResult) -> None:
         report = self.report
-        if self._active_report_line is None or report is None:
-            return
-        line = f"[{self._report_item_index}] {_task_result_line(result, timezone=report.timezone)}"
-        if self._active_report_stage == "progress":
-            self._active_report_line.finish(self._direct_report_progress_line())
-            report.write(line)
-        else:
-            self._active_report_line.finish(line)
-        report.write("")
+        if self._active_report_line is not None and report is not None:
+            line = (
+                f"[{self._report_item_index}] "
+                f"{_task_result_line(result, timezone=report.timezone)}"
+            )
+            if self._active_report_stage == "progress":
+                self._active_report_line.finish(self._direct_report_progress_line())
+                report.write(line)
+            else:
+                self._active_report_line.finish(line)
+            report.write("")
         self._active_report_line = None
         self._active_report_manga = None
         self._active_report_filename = None
@@ -347,6 +397,9 @@ class TaskExecutor:
         self._active_report_downloaded = 0
         self._active_report_total = None
         self._active_report_speed = 0.0
+        self._active_progress_sample_bytes = 0
+        self._active_progress_sample_at = 0.0
+        self._active_progress_updated_at = 0.0
 
     @staticmethod
     def _result_snapshot(

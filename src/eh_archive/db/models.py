@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -224,6 +225,10 @@ class JobAttempt(Base):
     artifact_generation: Mapped[int | None] = mapped_column(Integer)
     external_task_id: Mapped[str | None] = mapped_column(Text)
     external_effect_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    progress_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    progress_total_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    progress_speed_bps: Mapped[float | None] = mapped_column(Float)
+    progress_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )

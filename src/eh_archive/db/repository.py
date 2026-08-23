@@ -833,6 +833,33 @@ class ArchiveRepository:
         )
         return result.rowcount == 1
 
+    def update_attempt_progress(
+        self,
+        claim: ClaimedAttempt,
+        *,
+        downloaded_bytes: int,
+        total_bytes: int | None,
+        speed_bps: float | None,
+    ) -> bool:
+        """Persist an observable snapshot without advancing the workflow."""
+
+        result = self.session.execute(
+            update(JobAttempt)
+            .where(
+                JobAttempt.id == claim.attempt_id,
+                JobAttempt.manga_id == claim.manga_id,
+                JobAttempt.lease_token == claim.lease_token,
+                JobAttempt.status == "running",
+            )
+            .values(
+                progress_bytes=max(0, downloaded_bytes),
+                progress_total_bytes=(max(0, total_bytes) if total_bytes is not None else None),
+                progress_speed_bps=(max(0.0, speed_bps) if speed_bps is not None else None),
+                progress_updated_at=utcnow(),
+            )
+        )
+        return result.rowcount == 1
+
     def finish(
         self,
         claim: ClaimedAttempt,

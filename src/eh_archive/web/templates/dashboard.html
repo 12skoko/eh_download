@@ -63,11 +63,7 @@
 </section>
 
 <section class="two-column">
-  <article class="panel table-panel"><div class="section-head"><div><p class="eyebrow">执行中</p><h2>当前任务</h2></div></div>
-    <div class="table-wrap"><table><thead><tr><th>档案</th><th>操作</th><th>开始时间</th></tr></thead><tbody>
-    {% for attempt in running %}<tr><td>{% if attempt.manga_id %}<a class="mono" href="/manga/{{ attempt.manga_id }}" target="_blank" rel="noopener" hx-boost="false">{{ attempt.manga_id }}</a>{% else %}<span class="mono">系统任务</span>{% endif %}</td><td>{{ attempt.operation }}</td><td>{{ attempt.started_at|datetime }}</td></tr>{% else %}<tr><td colspan="3" class="empty">当前没有运行中的任务</td></tr>{% endfor %}
-    </tbody></table></div>
-  </article>
+  {% include "_running_tasks.html" %}
   <article class="panel">
     <div class="section-head"><div><p class="eyebrow">组件开关</p><h2>任务组件</h2></div></div>
     <div class="component-list">
