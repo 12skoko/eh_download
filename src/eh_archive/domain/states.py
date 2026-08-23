@@ -39,6 +39,22 @@ class DownloadMethod(StrEnum):
     ARIA2 = "aria2"
 
 
+REPLACEMENT_DELETE_READY_STATUSES = frozenset(
+    {
+        Status.DOWNLOAD_PENDING.value,
+        Status.DOWNLOADING.value,
+        Status.DOWNLOADED.value,
+        Status.RENAME_PENDING.value,
+        Status.VALIDATING.value,
+        Status.PREPARING.value,
+        Status.UPLOAD_PENDING.value,
+        Status.UPLOADING.value,
+        Status.UPLOADED.value,
+        Status.COMPLETED.value,
+    }
+)
+
+
 # Event names are deliberately stable. The transition service is the only
 # runtime entry point allowed to change a Manga.status value.
 TRANSITIONS: dict[str, dict[str, str]] = {

@@ -443,7 +443,7 @@ qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会
 .\.venv\Scripts\eharchive.exe --config-dir config task cleanup --limit 10
 ```
 
-`delete` 通常处理已经被新版本替代且状态为 `outdated` 的记录；它也会处理只能从管理网页人工设置的 `force_delete_pending`。普通 `outdated` 删除必须验证替代档案已经进入上传阶段，强制删除会跳过这一验证，但仍使用相同的 LANraragi 删除、本地归档删除、租约和 attempt fencing。不要用它代替普通清理。
+`delete` 通常处理已经被新版本替代且状态为 `outdated` 的记录；它也会处理只能从管理网页人工设置的 `force_delete_pending`。普通 `outdated` 只有在替代档案已经进入 `download_pending` 或后续正常处理状态时才会被领取；尚未进入下载队列或已经转入异常状态的替代档案会让旧档案继续保持 `outdated` 等待。强制删除会跳过这一验证，但仍使用相同的 LANraragi 删除、本地归档删除、租约和 attempt fencing。不要用它代替普通清理。
 
 历史 cleanup/delete 异常造成下载目录遗留时，可以运行独立维护脚本。脚本默认只预览，扫描 `eharchive` 分类且名称为纯数字 ID 的 qBittorrent 任务，以及 torrent、direct、H@H、aria2 四个下载目录；只有数据库状态为 `completed` 或 `deleted` 且没有活动 attempt/租约的项目才会进入删除计划。它不修改数据库，也不调用 LANraragi。先用单个数字 ID 验证，再执行全量清理：
 
@@ -555,7 +555,7 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
 
 配置页面不会读取或展示 `secrets.toml`、数据库连接字符串，也不允许修改 Web 监听地址和服务器路径。可编辑字段以类型化表单保存；保存前会重新校验完整配置、检查页面版本以防并发覆盖，并在原文件旁保留一份 `.bak` 备份。配置保存不会从网页自动重启进程，页面会标明需要重启 Web、Supervisor 或两者；审计事件只记录文件名和修改字段，不记录配置值。
 
-维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为普通人工目标状态。`download_pending` 必须指定 `download_method`；`downloaded` 还必须填写服务器上真实存在的 `artifact_filename`，Web 会根据下载方式自动登记 `artifact_location`，并在确认前显示服务器将检查的完整绝对路径；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定已进入上传阶段的替代档案；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。`force_delete_pending` 只允许从 `uploaded`、`completed`、`outdated` 或 `manual_review` 进入，必须填写原因并再次输入当前档案 ID；界面默认把原因写为 `outdated`，不要求已有 LANraragi archive ID。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
+维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为普通人工目标状态。`download_pending` 必须指定 `download_method`；`downloaded` 还必须填写服务器上真实存在的 `artifact_filename`，Web 会根据下载方式自动登记 `artifact_location`，并在确认前显示服务器将检查的完整绝对路径；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定数据库中存在且不是当前档案自身的替代档案，不限制替代档案当时的状态；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。`force_delete_pending` 只允许从 `uploaded`、`completed`、`outdated` 或 `manual_review` 进入，必须填写原因并再次输入当前档案 ID；界面默认把原因写为 `outdated`，不要求已有 LANraragi archive ID。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
 
 旧的 `/actions/*` 和 `/archive-confirmation` API 为兼容既有脚本继续保留。新的管理界面使用 `/status/{target_status}`；它只修改数据库状态和关联字段，不在 Web 请求中直接运行子模块。`force_delete_pending` 和 `rename_pending` 都被限制为管理网页发起，通用状态 API 不能直接设置；前者交给 `delete`，后者交给 `validate` 执行实体操作。Supervisor 后续根据 `download_pending`、`downloaded`、`rename_pending`、`upload_pending`、`uploaded`、`outdated` 和 `force_delete_pending` 等状态安排相应模块。
 

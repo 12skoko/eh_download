@@ -164,15 +164,6 @@ FORCE_DELETE_SOURCE_STATUSES = frozenset(
         Status.MANUAL_REVIEW.value,
     }
 )
-REPLACEMENT_READY_STATUSES = frozenset(
-    {
-        Status.UPLOAD_PENDING.value,
-        Status.UPLOADING.value,
-        Status.UPLOADED.value,
-        Status.COMPLETED.value,
-    }
-)
-
 _ACTION_EVENTS: dict[str, dict[str, str]] = {
     "retry": {
         Status.UNAVAILABLE.value: "retry",
@@ -464,8 +455,6 @@ class WebService:
             replacement = self.session.get(MangaRecord, replacement_id)
             if replacement is None:
                 raise InvalidRequest("替代档案不存在")
-            if replacement.status not in REPLACEMENT_READY_STATUSES:
-                raise InvalidRequest("替代档案尚未进入上传阶段")
             row.superseded_by_id = replacement_id
 
         previous_status = row.status

@@ -10,7 +10,13 @@ from sqlalchemy import and_, desc, exists, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..domain.models import Manga, MangaInfo
-from ..domain.states import TRANSITIONS, Status, can_transition, transition_target
+from ..domain.states import (
+    REPLACEMENT_DELETE_READY_STATUSES,
+    TRANSITIONS,
+    Status,
+    can_transition,
+    transition_target,
+)
 from .models import EventLog, JobAttempt, MangaInfoRecord, MangaRecord, SystemControl
 
 
@@ -94,6 +100,24 @@ def _details_missing_clause():
     return ~exists().where(
         MangaInfoRecord.manga_id == MangaRecord.manga_id,
         complete,
+    )
+
+
+def _delete_ready_clause():
+    """Keep ordinary outdated rows queued until their replacement is underway."""
+
+    replacement = MangaRecord.__table__.alias("replacement")
+    replacement_ready = exists(
+        select(1)
+        .select_from(replacement)
+        .where(
+            replacement.c.manga_id == MangaRecord.superseded_by_id,
+            replacement.c.status.in_(REPLACEMENT_DELETE_READY_STATUSES),
+        )
+    )
+    return or_(
+        MangaRecord.status == Status.FORCE_DELETE_PENDING.value,
+        and_(MangaRecord.status == Status.OUTDATED.value, replacement_ready),
     )
 
 
@@ -649,6 +673,8 @@ class ArchiveRepository:
                     MangaRecord.artifact_size < large_upload_threshold_bytes,
                 )
             )
+        elif operation == "delete":
+            query = query.where(_delete_ready_clause())
         return self.session.scalar(query) is not None
 
     def claim_next(
@@ -694,6 +720,8 @@ class ArchiveRepository:
                     MangaRecord.artifact_size < large_upload_threshold_bytes,
                 )
             )
+        elif operation == "delete":
+            query = query.where(_delete_ready_clause())
         manga = self.session.scalars(query).first()
         if manga is None:
             return None

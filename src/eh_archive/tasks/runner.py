@@ -22,7 +22,7 @@ from ..domain.errors import (
     ErrorClass,
     classify_exception,
 )
-from ..domain.states import Status
+from ..domain.states import REPLACEMENT_DELETE_READY_STATUSES, Status
 from ..integrations.http import RoleSession
 from ..logging import (
     LiveReportLine,
@@ -1398,17 +1398,19 @@ class TaskExecutor:
             replacement = (
                 repository.get(record.superseded_by_id) if record.superseded_by_id else None
             )
-            if replacement is None or replacement.status not in {
-                Status.UPLOAD_PENDING.value,
-                Status.UPLOADING.value,
-                Status.UPLOADED.value,
-                Status.COMPLETED.value,
-            }:
-                raise ArchiveError(
-                    "replacement_not_ready",
-                    "replacement archive is not ready",
-                    ErrorClass.ITEM,
+            if (
+                replacement is None
+                or replacement.status not in REPLACEMENT_DELETE_READY_STATUSES
+            ):
+                # The claim query normally keeps this row waiting. If the
+                # replacement changed concurrently, release the claim without
+                # turning the old archive into manual_review.
+                repository.finish(
+                    claim,
+                    owner=self.owner,
+                    detail={"reason": "replacement_not_ready"},
                 )
+                return
         if record.lrr_archive_id:
             client = LANraragiClient(
                 self.app.lanraragi_url,
@@ -1572,11 +1574,12 @@ class TaskExecutor:
                         seconds=min(3600, 2 ** min(record.attempt_count, 8))
                     )
                 event = "details_retry"
-            if claim.operation != "details" and info.code in {
-                "gallery_unavailable",
-                "archive_unavailable",
-                "http_unavailable",
-            }:
+            # Only an explicit response from the gallery page is permanent
+            # evidence that the gallery itself is unavailable. Archive files
+            # are served from separate download hosts, so a 404/410 from those
+            # hosts needs manual review instead of permanently suppressing the
+            # gallery.
+            if claim.operation != "details" and info.code == "gallery_unavailable":
                 event = "unavailable"
             if info.code in TORRENT_FALLBACK_CODES:
                 event = "fallback"
