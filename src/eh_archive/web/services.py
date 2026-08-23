@@ -567,7 +567,7 @@ class WebService:
         row.row_version += 1
         self._event(
             row,
-            "conflict_rename_requested",
+            "conflict_rename",
             from_status=previous_status,
             to_status=row.status,
             detail={
