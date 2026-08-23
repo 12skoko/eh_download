@@ -425,7 +425,7 @@ qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会
 
 程序提交的 qBittorrent category 固定为区分大小写的 `eharchive`。只有仍在该类别中的种子由程序托管；手工移到其他类别或清空类别后，即使任务带有 `failed` 标签、发生错误、长期停滞或已经完成，程序也不会处理它，数据库保持 `downloading`。移回 `eharchive` 后自动恢复轮询。cleanup 也不会删除已经移出 `eharchive` 的种子任务。
 
-上传到 LANraragi 前必须有完整 MangaInfo。上传成功必须同时拿到 40 位 SHA-1 archive ID 并通过远端 metadata 确认，之后才会清理本地文件和 qBittorrent/aria2 任务。HTTP 409、结果不确定或 archive ID 无法确认时会进入 `manual_review`，不会猜测上传是否成功。
+上传到 LANraragi 前必须有完整 MangaInfo。上传成功必须同时拿到 40 位 SHA-1 archive ID 并通过远端 metadata 确认，之后才会清理本地文件和 qBittorrent/aria2 任务。Torrent 产物的 cleanup 会递归删除 `torrent_download/<数字 ID>/` 整个档案目录；其他下载方式仍只删除数据库登记的文件或目录。HTTP 409、结果不确定或 archive ID 无法确认时会进入 `manual_review`，不会猜测上传是否成功。
 
 `lrr_409` 详情页会列出数据库中本地文件名相同的其他档案。人工核对后，如果两个档案内容不同且都需要保留，可以选择“同名但需要分别保留”：Web 只登记目标文件名并把状态改为 `rename_pending`，随后由 `validate` 模块以不覆盖已有文件的方式重命名真实归档、同步 `artifact_filename`、重新计算文件校验和 SHA-1，成功后进入 `upload_pending` 并沿用正常上传流程。操作必须填写原因并确认，改名申请和执行结果都会写入审计轨迹。目标文件已经被其他文件占用、源文件缺失或路径不安全时会返回人工复核，不会覆盖文件。
 

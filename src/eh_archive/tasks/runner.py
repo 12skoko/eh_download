@@ -1349,7 +1349,7 @@ class TaskExecutor:
             if repository.fenced(claim, owner=self.owner) is None:
                 raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
             path = (
-                self.paths.torrent_registered(record.manga_id, record.artifact_filename)
+                self.paths.torrent_gallery(record.manga_id)
                 if record.artifact_location == "torrent_download"
                 else self.paths.validate_registered(
                     record.artifact_location, record.artifact_filename

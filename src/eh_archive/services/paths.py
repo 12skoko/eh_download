@@ -191,17 +191,25 @@ class ArtifactPathService:
                 raise UnsafePathError("artifact path traverses a symlink")
         return path
 
-    def torrent_registered(self, manga_id: str, filename: str) -> Path:
-        """Resolve qBittorrent's per-gallery directory without storing it in DB."""
+    def torrent_gallery(self, manga_id: str) -> Path:
+        """Resolve qBittorrent's complete per-gallery download directory."""
         root = self._root("torrent_download")
         folder = safe_filename(manga_id.split("/", 1)[0])
+        folder_path = root / folder
+        if not self._inside(root, folder_path):
+            raise UnsafePathError("torrent gallery directory escapes configured root")
+        if folder_path.is_symlink():
+            raise UnsafePathError("torrent gallery directory is a symlink")
+        return folder_path
+
+    def torrent_registered(self, manga_id: str, filename: str) -> Path:
+        """Resolve a registered artifact inside qBittorrent's per-gallery directory."""
+        root = self._root("torrent_download")
         # qBittorrent has already created this file. Validate the registered
         # name for traversal, but do not truncate or otherwise rename it while
         # reconstructing its real path.
         name = existing_filename(filename)
-        folder_path = root / folder
-        if folder_path.is_symlink():
-            raise UnsafePathError("torrent artifact path traverses a symlink")
+        folder_path = self.torrent_gallery(manga_id)
         result = folder_path / name
         if not self._inside(root, result):
             raise UnsafePathError("torrent artifact escapes configured root")
