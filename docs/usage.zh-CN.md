@@ -56,14 +56,14 @@ qBittorrent、LANraragi、aria2 和 H@H 都可以部署在其他主机，只要�
 
 ```powershell
 Set-Location 'D:\F\program\program\python\eh-v6'
-conda create -n eharchive python=3.11 -y
-conda activate eharchive
+conda create -n eh python=3.11 -y
+conda activate eh
 python --version
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-如果你已经有可用的 Conda 环境（例如 `atf`），不必新建 `eharchive`；把上面所有 `conda activate eharchive` 替换为 `conda activate atf`，并在该环境中执行两条 `pip install` 命令即可。
+如果你已经有可用的 Conda 环境，不必重新创建；把上面的环境名替换为现有名称，并在该环境中执行两条 `pip install` 命令即可。本项目仓库约定的开发环境名为 `eh`。
 
 如果需要 aria2 或旧 MySQL 迁移，再安装完整依赖：
 
@@ -82,15 +82,15 @@ eharchive db --help
 
 ```powershell
 Set-Location 'D:\F\program\program\python\eh-v6'
-conda activate eharchive
+conda activate eh
 ```
 
 如果 `conda activate` 提示 PowerShell 未初始化，先执行一次 `conda init powershell`，重启 PowerShell 7 后再激活。也可以完全不激活，直接用 `conda run`：
 
 ```powershell
-conda run -n eharchive eharchive --help
-conda run -n eharchive eharchive-web --config-dir config
-conda run -n eharchive eharchive-supervisor --config-dir config
+conda run -n eh eharchive --help
+conda run -n eh eharchive-web --config-dir config
+conda run -n eh eharchive-supervisor --config-dir config
 ```
 
 ### Windows / PowerShell 7
@@ -192,6 +192,7 @@ $env:EHARCHIVE_WEB_SECRET = 'change-this-long-random-secret'
 | `external_request_delay_seconds` | 同一个 worker 连续访问 EH 外部网页请求完成后的最小等待秒数，默认 `5.0`；设为 `0` 可关闭。作用于列表、详情、torrent、archive/direct/H@H 网页请求，不作用于 LANraragi 和 qBittorrent |
 | `lanraragi_url` | LANraragi 地址 |
 | `fallback_method` | 无 torrent/无做种、qBittorrent 任务被手动标记为 `failed`，或未完成的 `stalledDL` 超过停滞阈值时使用的 `direct`、`hah` 或 `aria2` |
+| `large_upload_threshold_bytes` | 普通 HTTP upload 的文件大小上限，默认 `2147483648`（2 GiB）；达到或超过阈值的文件暂留在 `upload_pending`，因为专用大文件上传路径尚未实现。设为 `0` 可让流式 HTTP 上传领取所有大小的文件 |
 | `aria2_enabled`、`hah_enabled` | 启用对应可选下载器 |
 | `[roots]` | 受控文件根目录；每个值都必须是运行机器上的绝对目录 |
 
@@ -423,9 +424,11 @@ Supervisor 会自动运行 `details`、`torrent_download`、`direct_download`、
 
 qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的任务按 `torrent_poll_seconds` 延迟后再次检查，`stalledDL` 超过 `torrent_stall_seconds` 后会自动删除任务并切换 fallback。提交的新任务使用 manga ID 的数字部分作为 qBittorrent 显示名称，不改变种子内文件名。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小和 CRC，再为最终 ZIP 计算 LANraragi 所需的 SHA-1。
 
+只有画廊页面明确返回 `gallery_unavailable` 时，自动流程才会把档案设为 `unavailable`。direct 使用的 archive 页面和实际下载文件位于不同域名；下载主机返回 404/410 会记录为 `archive_unavailable` 并转入 `manual_review`，不会据此断定画廊永久不可用。
+
 程序提交的 qBittorrent category 固定为区分大小写的 `eharchive`。只有仍在该类别中的种子由程序托管；手工移到其他类别或清空类别后，即使任务带有 `failed` 标签、发生错误、长期停滞或已经完成，程序也不会处理它，数据库保持 `downloading`。移回 `eharchive` 后自动恢复轮询。cleanup 也不会删除已经移出 `eharchive` 的种子任务。
 
-上传到 LANraragi 前必须有完整 MangaInfo。上传成功必须同时拿到 40 位 SHA-1 archive ID 并通过远端 metadata 确认，之后才会清理本地文件和 qBittorrent/aria2 任务。Torrent 产物的 cleanup 会递归删除 `torrent_download/<数字 ID>/` 整个档案目录；其他下载方式仍只删除数据库登记的文件或目录。HTTP 409、结果不确定或 archive ID 无法确认时会进入 `manual_review`，不会猜测上传是否成功。
+上传到 LANraragi 前必须有完整 MangaInfo。上传成功必须同时拿到 40 位十六进制 archive ID 并通过该 ID 的远端 metadata 查询确认；代码不要求 archive ID 等于本地产物 SHA-1。未取得 archive ID 的断线、进程退出或 500 等不确定结果会进入 `manual_review`，不会自动按 SHA-1 搜索或盲目重传。达到 `large_upload_threshold_bytes` 的文件不会被普通 upload 任务领取，因而会继续停留在 `upload_pending`。确认上传后才会清理本地文件和 qBittorrent/aria2 任务。Torrent 产物的 cleanup 会递归删除 `torrent_download/<数字 ID>/` 整个档案目录；其他下载方式仍只删除数据库登记的文件或目录。HTTP 409 或 archive ID 无法确认时同样进入 `manual_review`。
 
 `lrr_409` 详情页会列出数据库中本地文件名相同的其他档案。人工核对后，如果两个档案内容不同且都需要保留，可以选择“同名但需要分别保留”：Web 只登记目标文件名并把状态改为 `rename_pending`，随后由 `validate` 模块以不覆盖已有文件的方式重命名真实归档、同步 `artifact_filename`、重新计算文件校验和 SHA-1，成功后进入 `upload_pending` 并沿用正常上传流程。操作必须填写原因并确认，改名申请和执行结果都会写入审计轨迹。目标文件已经被其他文件占用、源文件缺失或路径不安全时会返回人工复核，不会覆盖文件。
 
@@ -630,7 +633,7 @@ python scripts/reconcile_migration.py \
 
 - 日志目录由 `app.toml` 的 `log_dir` 指定，也必须是绝对目录。每次 Supervisor 运行会创建 `supervisor/<启动时间>_<run_id>.log`，它包含 Supervisor 及其子进程的公共 JSON 日志；各子模块的简明运行报告位于 `detail/<模块>/<启动时间>_<run_id>.log`。Web、CLI 和手动独立运行的模块使用各自的会话目录。旧的 `eharchive.log` 不再追加；不要把 Cookie、Authorization 或代理密码写入事件备注。
 - 先看 `/health`，再看 `/api/manga/{manga_id}` 的 `attempts` 和 `events`。失败会有 `error_code`、下次重试时间和最后一次操作。
-- 维护前先暂停 `all`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；强制终止后应人工核对数据库中的过期租约、产物和外部任务，Supervisor 不会自动接管。详情页仅在关联 attempt 仍为 `running` 且租约已经过期时显示“解除过期租约”按钮；填写原因并确认旧进程后，操作会将 attempt 收口为 `abandoned`、把档案转入 `manual_review`、清空活动租约并写入审计轨迹。它不会停止系统进程、调用 cleanup、删除文件或清除外部任务 ID。
+- 维护前先暂停 `supervisor`，等待正在执行的任务到安全边界，再停止两个进程。普通前台运行直接按 `Ctrl+C`；强制终止后应人工核对数据库中的过期租约、产物和外部任务，Supervisor 不会自动接管。详情页仅在关联 attempt 仍为 `running` 且租约已经过期时显示“解除过期租约”按钮；填写原因并确认旧进程后，操作会将 attempt 收口为 `abandoned`、把档案转入 `manual_review`、清空活动租约并写入审计轨迹。它不会停止系统进程、调用 cleanup、删除文件或清除外部任务 ID。
 - 子模块遇到严重公共故障时会返回严重错误：E 站 Cookie 失效、代理不可达、关键页面结构失效、qBittorrent/LANraragi 不可达或认证失败、工作目录无法读写、磁盘已满以及数据库失联。Supervisor 会暂停出错模块并进入排空状态，不再启动任何新子模块；已经运行的其他子模块自然结束后，Supervisor 释放自己的租约并以非零状态退出。单条漫画失败、种子失败后回退 direct、E 站单次超时/SSL 中断及 HTTP 429/5xx 仍按条目错误或临时错误处理，不触发排空停机。若使用 systemd、Docker 等自动重启策略，需要避免在非零退出后立即重启，否则未暂停的模块会在新 Supervisor 中继续运行。
 - `manual_review` 不是自动重试状态：检查 EH 页面、本地文件、LANraragi metadata 或重复上传后，在详情页明确选择要进入的关键状态。
 - 看到 `qBittorrent no longer reports...` 或 qBittorrent `error`/`missingFiles` 时，先人工检查任务和磁盘；需要切换 fallback 时，在 qBittorrent 管理界面给任务添加精确的 `failed` 标签。如果记录已经进入 `manual_review`，在 Web 中选择“进入下载队列”并确认下载方式，程序才会再次读取这个标签。未标记 `failed` 的 `stalledDL` 在超过 `torrent_stall_seconds` 后会自动删除任务并 fallback，未超过阈值时继续等待。

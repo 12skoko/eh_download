@@ -20,6 +20,11 @@ commands with Task Scheduler, NSSM, or WinSW. On Linux use two systemd units
 whose `ExecStart` values point at the same virtual environment. Both services
 must use the same `config/` and PostgreSQL URL.
 
+The repository currently provides deployment guidance only; it does not ship
+ready-to-install systemd units, Windows service definitions, PostgreSQL
+backup/restore automation, or built-in log rotation. Configure these with the
+host operating system and test them before production cutover.
+
 Every `roots` value and `log_dir` in `config/app.toml` must be an absolute
 directory. They may be UNC paths on Windows or mounted paths on Linux; relative
 paths are rejected during startup.

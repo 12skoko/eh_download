@@ -35,3 +35,9 @@ automatic transition enters this state. The normal `delete` worker then skips
 the replacement-readiness check but keeps the same LANraragi deletion, local
 artifact removal, attempt fencing, error handling, and final `deleted` state as
 an ordinary `outdated` deletion.
+
+For an ordinary `outdated` archive, the Web only requires an existing,
+different replacement manga ID. The delete worker waits until that replacement
+has reached `download_pending` or a later normal pipeline state. A replacement
+that is still merely discovered, or has entered an exceptional terminal state,
+leaves the old archive in `outdated`; it does not cause automatic deletion.
