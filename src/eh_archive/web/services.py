@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import base64
-import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Generic, TypeVar
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config.loader import SUPERVISOR_MODULES, AppConfig
@@ -222,10 +220,48 @@ class InvalidRequest(WebServiceError):
     status_code = 400
 
 
+T = TypeVar("T")
+
+
 @dataclass(frozen=True)
-class MangaPage:
-    rows: list[MangaRecord]
-    next_cursor: str | None
+class Page(Generic[T]):
+    rows: list[T]
+    page: int
+    limit: int
+    total: int
+
+    @property
+    def total_pages(self) -> int:
+        return max(1, (self.total + self.limit - 1) // self.limit) if self.limit else 1
+
+    @property
+    def has_prev(self) -> bool:
+        return self.page > 1
+
+    @property
+    def has_next(self) -> bool:
+        return self.page < self.total_pages
+
+    def page_numbers(self, *, span: int = 2) -> list[int | None]:
+        """Page numbers around the current page; None marks an ellipsis gap."""
+        if self.total_pages <= 1:
+            return []
+        lo = max(1, self.page - span)
+        hi = min(self.total_pages, self.page + span)
+        numbers: list[int | None] = []
+        if lo > 1:
+            numbers.append(1)
+            if lo > 2:
+                numbers.append(None)
+        numbers.extend(range(lo, hi + 1))
+        if hi < self.total_pages:
+            if hi < self.total_pages - 1:
+                numbers.append(None)
+            numbers.append(self.total_pages)
+        return numbers
+
+
+MangaPage = Page[MangaRecord]
 
 
 @dataclass(frozen=True)
@@ -771,53 +807,39 @@ def list_manga(
     queue_source: str | None = None,
     has_error: bool | None = None,
     limit: int = 50,
-    cursor: str | None = None,
-    offset: int = 0,
+    page: int = 1,
 ) -> MangaPage:
     limit = max(1, min(limit, 100))
-    query = select(MangaRecord).order_by(
-        desc(MangaRecord.posted_at).nulls_last(), MangaRecord.manga_id
-    )
+    conditions = []
     if statuses:
         invalid = [value for value in statuses if value not in STATUS_LABELS]
         if invalid:
             raise InvalidRequest("无效状态：" + ", ".join(invalid))
-        query = query.where(MangaRecord.status.in_(statuses))
+        conditions.append(MangaRecord.status.in_(statuses))
     if queue_source:
         if queue_source not in {"automatic", "manual"}:
             raise InvalidRequest("无效队列来源")
-        query = query.where(MangaRecord.queue_source == queue_source)
+        conditions.append(MangaRecord.queue_source == queue_source)
     if has_error is True:
-        query = query.where(MangaRecord.last_error_at.is_not(None))
+        conditions.append(MangaRecord.last_error_at.is_not(None))
     elif has_error is False:
-        query = query.where(MangaRecord.last_error_at.is_(None))
+        conditions.append(MangaRecord.last_error_at.is_(None))
     if query_text and query_text.strip():
-        query = query.where(_manga_search_predicate(query_text))
-    decoded = _decode_cursor(cursor)
-    if decoded is not None:
-        posted_at, manga_id = decoded
-        if posted_at is None:
-            query = query.where(
-                and_(MangaRecord.posted_at.is_(None), MangaRecord.manga_id > manga_id)
-            )
-        else:
-            query = query.where(
-                or_(
-                    MangaRecord.posted_at < posted_at,
-                    MangaRecord.posted_at.is_(None),
-                    and_(
-                        MangaRecord.posted_at == posted_at,
-                        MangaRecord.manga_id > manga_id,
-                    ),
-                )
-            )
-    elif offset:
-        query = query.offset(max(0, offset))
-    rows = list(session.scalars(query.limit(limit + 1)))
-    has_more = len(rows) > limit
-    rows = rows[:limit]
-    next_cursor = _encode_cursor(rows[-1]) if has_more and rows else None
-    return MangaPage(rows, next_cursor)
+        conditions.append(_manga_search_predicate(query_text))
+    total = (
+        session.scalar(select(func.count()).select_from(MangaRecord).where(*conditions))
+        or 0
+    )
+    page = max(1, page)
+    query = (
+        select(MangaRecord)
+        .where(*conditions)
+        .order_by(desc(MangaRecord.posted_at).nulls_last(), MangaRecord.manga_id)
+        .offset((page - 1) * limit)
+        .limit(limit)
+    )
+    rows = list(session.scalars(query))
+    return MangaPage(rows=rows, page=page, limit=limit, total=total)
 
 
 def list_review_manga(
@@ -828,47 +850,32 @@ def list_review_manga(
     error_code: str | None = None,
     operation: str | None = None,
     limit: int = 50,
-    cursor: str | None = None,
+    page: int = 1,
 ) -> MangaPage:
     if status not in {Status.MANUAL_REVIEW.value, Status.QUARANTINED.value}:
         raise InvalidRequest("无效人工复核状态")
     limit = max(1, min(limit, 100))
+    conditions = [MangaRecord.status == status]
+    if query_text and query_text.strip():
+        conditions.append(_manga_search_predicate(query_text))
+    if error_code:
+        conditions.append(MangaRecord.last_error_code == error_code.strip())
+    if operation:
+        conditions.append(MangaRecord.last_error_operation == operation.strip())
+    total = (
+        session.scalar(select(func.count()).select_from(MangaRecord).where(*conditions))
+        or 0
+    )
+    page = max(1, page)
     query = (
         select(MangaRecord)
-        .where(MangaRecord.status == status)
+        .where(*conditions)
         .order_by(desc(MangaRecord.status_updated_at), MangaRecord.manga_id)
+        .offset((page - 1) * limit)
+        .limit(limit)
     )
-    if query_text and query_text.strip():
-        query = query.where(_manga_search_predicate(query_text))
-    if error_code:
-        query = query.where(MangaRecord.last_error_code == error_code.strip())
-    if operation:
-        query = query.where(MangaRecord.last_error_operation == operation.strip())
-
-    decoded = _decode_cursor(cursor)
-    if decoded is not None:
-        status_updated_at, manga_id = decoded
-        if status_updated_at is None:
-            raise InvalidRequest("无效人工复核分页游标")
-        query = query.where(
-            or_(
-                MangaRecord.status_updated_at < status_updated_at,
-                and_(
-                    MangaRecord.status_updated_at == status_updated_at,
-                    MangaRecord.manga_id > manga_id,
-                ),
-            )
-        )
-
-    rows = list(session.scalars(query.limit(limit + 1)))
-    has_more = len(rows) > limit
-    rows = rows[:limit]
-    next_cursor = (
-        _encode_datetime_cursor(rows[-1].status_updated_at, rows[-1].manga_id)
-        if has_more and rows
-        else None
-    )
-    return MangaPage(rows, next_cursor)
+    rows = list(session.scalars(query))
+    return MangaPage(rows=rows, page=page, limit=limit, total=total)
 
 
 def review_facets(
@@ -1090,17 +1097,31 @@ def list_events(
     operation: str | None = None,
     error_only: bool = False,
     limit: int = 100,
-) -> list[EventLog]:
-    query = select(EventLog).order_by(desc(EventLog.created_at), desc(EventLog.id))
+    page: int = 1,
+) -> Page[EventLog]:
+    limit = max(1, min(limit, 500))
+    conditions = []
     if manga_id:
-        query = query.where(EventLog.manga_id == manga_id.strip())
+        conditions.append(EventLog.manga_id == manga_id.strip())
     if component:
-        query = query.where(EventLog.component == component.strip())
+        conditions.append(EventLog.component == component.strip())
     if operation:
-        query = query.where(EventLog.operation == operation.strip())
+        conditions.append(EventLog.operation == operation.strip())
     if error_only:
-        query = query.where(EventLog.error_code.is_not(None))
-    return list(session.scalars(query.limit(max(1, min(limit, 500)))))
+        conditions.append(EventLog.error_code.is_not(None))
+    total = (
+        session.scalar(select(func.count()).select_from(EventLog).where(*conditions)) or 0
+    )
+    page = max(1, page)
+    query = (
+        select(EventLog)
+        .where(*conditions)
+        .order_by(desc(EventLog.created_at), desc(EventLog.id))
+        .offset((page - 1) * limit)
+        .limit(limit)
+    )
+    rows = list(session.scalars(query))
+    return Page(rows=rows, page=page, limit=limit, total=total)
 
 
 def allowed_actions(status: str) -> list[dict[str, str]]:
@@ -1193,27 +1214,3 @@ def _manga_search_predicate(value: str):
         func.lower(MangaRecord.real_name).like(pattern, escape="\\"),
         func.lower(MangaRecord.artifact_filename).like(pattern, escape="\\"),
     )
-
-
-def _encode_cursor(row: MangaRecord) -> str:
-    return _encode_datetime_cursor(row.posted_at, row.manga_id)
-
-
-def _encode_datetime_cursor(value: datetime | None, manga_id: str) -> str:
-    payload = json.dumps(
-        [value.isoformat() if value is not None else None, manga_id],
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
-
-
-def _decode_cursor(value: str | None) -> tuple[datetime | None, str] | None:
-    if not value:
-        return None
-    try:
-        padding = "=" * (-len(value) % 4)
-        posted_at, manga_id = json.loads(base64.urlsafe_b64decode(value + padding))
-        parsed_posted_at = datetime.fromisoformat(str(posted_at)) if posted_at is not None else None
-        return parsed_posted_at, str(manga_id)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        raise InvalidRequest("无效分页游标") from None

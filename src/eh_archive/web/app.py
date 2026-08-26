@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 from fastapi import Request
 from sqlalchemy import select
@@ -75,6 +75,11 @@ def _gallery_id(value: str) -> str | None:
         return None
     match = re.fullmatch(r"/g/(\d+/[\w-]+)/?", parsed.path)
     return match.group(1) if match else None
+
+
+def _filter_query(params: list[tuple[str, str]]) -> str:
+    """Build a &-joined query string from filter params, for pagination links."""
+    return urlencode(params)
 
 
 def create_app(database: Database | None = None, *, config_dir: str | Path = "config"):
@@ -291,7 +296,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
         queue_source: str | None = None,
         has_error: str | None = None,
         limit: int = 50,
-        cursor: str | None = None,
+        page: int = 1,
     ):
         error_filter = None if has_error not in {"yes", "no"} else has_error == "yes"
         try:
@@ -303,10 +308,19 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                     queue_source=queue_source,
                     has_error=error_filter,
                     limit=limit,
-                    cursor=cursor,
+                    page=page,
                 )
         except WebServiceError as exc:
             return _error_response(request, templates, exc)
+        filter_params = []
+        if q:
+            filter_params.append(("q", q))
+        if queue_source:
+            filter_params.append(("queue_source", queue_source))
+        if has_error:
+            filter_params.append(("has_error", has_error))
+        filter_params.append(("limit", str(limit)))
+        filter_params.extend(("status", s) for s in status)
         return templates.TemplateResponse(
             request=request,
             name=(
@@ -322,6 +336,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 queue_source=queue_source or "",
                 has_error=has_error or "",
                 limit=limit,
+                filter_qs=_filter_query(filter_params),
             ),
         )
 
@@ -355,7 +370,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
         q: str | None = None,
         error_code: str | None = None,
         operation: str | None = None,
-        cursor: str | None = None,
+        page: int = 1,
     ):
         if status not in {"manual_review", "quarantined"}:
             status = "manual_review"
@@ -368,7 +383,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                     error_code=error_code,
                     operation=operation,
                     limit=50,
-                    cursor=cursor,
+                    page=page,
                 )
                 error_facets, operations = review_facets(
                     session,
@@ -378,6 +393,13 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 )
         except WebServiceError as exc:
             return _error_response(request, templates, exc)
+        filter_params = [("status", status)]
+        if q:
+            filter_params.append(("q", q))
+        if operation:
+            filter_params.append(("operation", operation))
+        if error_code:
+            filter_params.append(("error_code", error_code))
         return templates.TemplateResponse(
             request=request,
             name=(
@@ -394,6 +416,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 operation=operation or "",
                 error_facets=error_facets,
                 review_operations=operations,
+                filter_qs=_filter_query(filter_params),
             ),
         )
 
@@ -405,27 +428,40 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
         operation: str | None = None,
         error_only: bool = False,
         limit: int = 100,
+        page: int = 1,
     ):
         with database.session() as session:
-            events = list_events(
+            events_page = list_events(
                 session,
                 manga_id=manga_id,
                 component=component,
                 operation=operation,
                 error_only=error_only,
                 limit=limit,
+                page=page,
             )
+        filter_params = []
+        if manga_id:
+            filter_params.append(("manga_id", manga_id))
+        if component:
+            filter_params.append(("component", component))
+        if operation:
+            filter_params.append(("operation", operation))
+        if error_only:
+            filter_params.append(("error_only", "true"))
+        filter_params.append(("limit", str(limit)))
         return templates.TemplateResponse(
             request=request,
             name="events.html",
             context=_context(
                 request,
-                events=events,
+                page=events_page,
                 manga_id=manga_id or "",
                 component=component or "",
                 operation=operation or "",
                 error_only=error_only,
                 limit=limit,
+                filter_qs=_filter_query(filter_params),
             ),
         )
 
@@ -708,8 +744,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
         status: str | None = None,
         q: str | None = None,
         limit: int = 100,
-        cursor: str | None = None,
-        offset: int = 0,
+        page: int = 1,
     ):
         try:
             with database.session() as session:
@@ -718,8 +753,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                     statuses=[status] if status else None,
                     query_text=q,
                     limit=limit,
-                    cursor=cursor,
-                    offset=offset,
+                    page=page,
                 )
                 return [serialize_manga(row) for row in page.rows]
         except WebServiceError as exc:

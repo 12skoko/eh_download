@@ -8,5 +8,14 @@
     </tr>{% else %}<tr><td colspan="7" class="empty">没有符合条件的档案</td></tr>{% endfor %}
     </tbody></table></div>
   </section>
-  {% if page.next_cursor %}<div class="pagination"><a class="button primary" href="/manga?cursor={{ page.next_cursor }}&q={{ q|urlencode }}&queue_source={{ queue_source|urlencode }}&has_error={{ has_error|urlencode }}&limit={{ limit }}{% for status in selected_statuses %}&status={{ status|urlencode }}{% endfor %}" hx-get="/manga?cursor={{ page.next_cursor }}&q={{ q|urlencode }}&queue_source={{ queue_source|urlencode }}&has_error={{ has_error|urlencode }}&limit={{ limit }}{% for status in selected_statuses %}&status={{ status|urlencode }}{% endfor %}" hx-target="#manga-results" hx-swap="outerHTML" hx-push-url="true">下一页</a></div>{% endif %}
+  {% if page.total > 0 %}
+  <div class="pagination">
+    <span class="pagination-count">共 {{ page.total }}条</span>
+    {% if page.total_pages > 1 %}
+      {% if page.has_prev %}<a class="button" href="/manga?{{ filter_qs }}&page={{ page.page - 1 }}" hx-get="/manga?{{ filter_qs }}&page={{ page.page - 1 }}" hx-target="#manga-results" hx-swap="outerHTML" hx-push-url="true">上一页</a>{% endif %}
+      {% for p in page.page_numbers() %}{% if p is none %}<span class="pagination-gap">…</span>{% elif p == page.page %}<span class="pagination-current">{{ p }}</span>{% else %}<a class="pagination-link" href="/manga?{{ filter_qs }}&page={{ p }}" hx-get="/manga?{{ filter_qs }}&page={{ p }}" hx-target="#manga-results" hx-swap="outerHTML" hx-push-url="true">{{ p }}</a>{% endif %}{% endfor %}
+      {% if page.has_next %}<a class="button primary" href="/manga?{{ filter_qs }}&page={{ page.page + 1 }}" hx-get="/manga?{{ filter_qs }}&page={{ page.page + 1 }}" hx-target="#manga-results" hx-swap="outerHTML" hx-push-url="true">下一页</a>{% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
 </div>
