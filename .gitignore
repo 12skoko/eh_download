@@ -23,6 +23,9 @@ config/supervisor.toml
 config/crawl.toml
 config/secrets.toml
 config/migration.toml
+config/special/*.toml
+config/special/*.toml.bak
+!config/special/*.sample.toml
 *.db
 .pytest_cache/
 dist/

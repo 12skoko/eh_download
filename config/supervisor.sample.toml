@@ -17,6 +17,12 @@ shutdown_grace_seconds = 30
 maintenance_retry_seconds = 30
 maintenance_recovery_timeout_seconds = 900
 
+[special_processing]
+enabled = true
+poll_seconds = 5
+default_job_lease_seconds = 900
+max_concurrency = 1
+
 [modules]
 collect = true
 details = true
@@ -27,6 +33,7 @@ prepare = true
 upload = true
 cleanup = true
 delete = true
+special_processing = true
 
 [max_concurrency]
 collect = 1

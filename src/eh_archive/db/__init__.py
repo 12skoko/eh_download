@@ -4,6 +4,8 @@ from .models import (
     JobAttempt,
     MangaInfoRecord,
     MangaRecord,
+    SpecialJob,
+    SpecialWorkflow,
     SystemControl,
     SystemHealth,
 )
@@ -20,6 +22,8 @@ __all__ = [
     "MangaInfoRecord",
     "MangaRecord",
     "ScreenDecision",
+    "SpecialJob",
+    "SpecialWorkflow",
     "SystemControl",
     "SystemHealth",
     "create_database",

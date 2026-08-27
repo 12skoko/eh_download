@@ -31,6 +31,35 @@ paths are rejected during startup.
 The database stores only root keys and safe filenames, so moving a root only
 requires editing `config/app.toml`.
 
+## Video archive special processing
+
+Copy `config/special/video_archive.sample.toml` to
+`config/special/video_archive.toml` and create both configured directories.
+`download.external_root` is the path qBittorrent sees;
+`download.local_root` is the local/mounted path that reaches the same files.
+`work.workspace_root` must be a separate writable directory. Configure an
+absolute ffmpeg executable that provides the `libwebp` encoder. Secrets remain
+in the existing `secrets.toml`; never copy qBittorrent credentials or EH
+cookies into the module file.
+
+Web and Supervisor read only the module's declarative enabled configuration when
+offering or scheduling the extension. They do not periodically probe ffmpeg or
+the video workspace. The manually requested compose worker verifies local
+content, workspace writability/free-space access, and the configured ffmpeg
+`libwebp` encoder after both Torrents report complete.
+
+Run `eharchive --config-dir config db upgrade` while Web and Supervisor are
+stopped or drained. Revision `0013_special_processing` adds
+`special_processing`, `special_workflow`, and `special_job`. Back up PostgreSQL
+before applying it. Restart both Web and Supervisor after changing the module
+configuration or the `[special_processing]` Supervisor settings.
+
+The module uses the exact qBittorrent category configured in
+`download.category`; reserve it exclusively for EH Archive. The default
+`cleanup_source_on_success=false` retains both source downloads after a
+successful combination for manual recovery. Set it to true only after testing
+path mapping and deletion ownership on the deployment host.
+
 Before production cutover:
 
 1. Run the scripts in `scripts/README.md` against a read-only MySQL account.

@@ -20,13 +20,20 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-_db_path = Path(tempfile.gettempdir()) / "eharchive_web_demo.db"
-os.environ.setdefault("EHARCHIVE_DATABASE_URL", f"sqlite:///{_db_path}")
+_persistent_demo_db = os.getenv("EHARCHIVE_WEB_DEMO_DB")
+_db_path = (
+    Path(_persistent_demo_db).expanduser().resolve()
+    if _persistent_demo_db
+    else Path(tempfile.gettempdir()) / f"eharchive_web_demo_{os.getpid()}.db"
+)
+# Never inherit EHARCHIVE_DATABASE_URL here: a development demo must not be
+# able to connect to the configured production database by accident.
+os.environ["EHARCHIVE_DATABASE_URL"] = f"sqlite:///{_db_path.as_posix()}"
 os.environ.setdefault("EHARCHIVE_WEB_HOST", "127.0.0.1")
 os.environ.setdefault("EHARCHIVE_WEB_PORT", "8787")
 # No EHARCHIVE_WEB_SECRET / PASSWORD_HASH -> auth disabled, localhost-only mode.
 
-from eh_archive.db.models import (  # noqa: E402
+from eh_archive.db.models import (
     Base,
     EventLog,
     JobAttempt,
@@ -35,8 +42,8 @@ from eh_archive.db.models import (  # noqa: E402
     SystemControl,
     SystemHealth,
 )
-from eh_archive.db.session import Database  # noqa: E402
-from eh_archive.web.app import create_app  # noqa: E402
+from eh_archive.db.session import Database
+from eh_archive.web.app import create_app
 
 
 def _now() -> datetime:
@@ -84,6 +91,7 @@ def _seed(database: Database) -> None:
             ("uploaded", "automatic", "hah", None, None),
             ("completed", "manual", "direct", None, None),
             ("manual_review", "automatic", "direct", "LRR_409", now - timedelta(hours=2)),
+            ("manual_review", "automatic", "torrent", "video_torrent", now),
             ("quarantined", "automatic", "direct", "CHECKSUM_MISMATCH", now - timedelta(days=1)),
             ("deferred", "manual", "aria2", None, now + timedelta(days=1)),
         ]
@@ -209,27 +217,57 @@ def _demo_config_dir() -> Path:
     """Build a minimal config directory so load_config() works without real paths."""
     config_dir = Path(tempfile.gettempdir()) / "eharchive_web_demo_config"
     config_dir.mkdir(exist_ok=True)
+    demo_root = Path(tempfile.gettempdir()) / "eharchive-web-demo"
+    roots = {
+        name: demo_root / name
+        for name in (
+            "direct_download",
+            "torrent_download",
+            "hah_download",
+            "aria2_download",
+            "prepared",
+            "quarantine",
+            "trash",
+        )
+    }
+    for root in roots.values():
+        root.mkdir(parents=True, exist_ok=True)
+    root_lines = "\n".join(f'{name} = "{root.as_posix()}"' for name, root in roots.items())
     (config_dir / "app.toml").write_text(
-        """\
-database_url = "sqlite:///{db}"
+        f"""\
+database_url = "sqlite:///{_db_path.as_posix()}"
 web_host = "127.0.0.1"
 web_port = 8787
 
 [roots]
-direct_download = "/tmp/eharchive-demo/direct_download"
-torrent_download = "/tmp/eharchive-demo/torrent_download"
-hah_download = "/tmp/eharchive-demo/hah_download"
-aria2_download = "/tmp/eharchive-demo/aria2_download"
-prepared = "/tmp/eharchive-demo/prepared"
-quarantine = "/tmp/eharchive-demo/quarantine"
-trash = "/tmp/eharchive-demo/trash"
-""".format(db=_db_path),
+{root_lines}
+""",
         encoding="utf-8",
     )
     for name in ("supervisor.toml", "crawl.toml", "secrets.toml"):
         target = config_dir / name
         if not target.exists():
             target.write_text("", encoding="utf-8")
+    special_dir = config_dir / "special"
+    special_dir.mkdir(exist_ok=True)
+    module_root = Path(tempfile.gettempdir()) / "eharchive-web-demo-video"
+    download_root = module_root / "download"
+    workspace_root = module_root / "workspace"
+    download_root.mkdir(parents=True, exist_ok=True)
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    module_config = special_dir / "video_archive.toml"
+    module_config.write_text(
+        "enabled = true\nauto_start = false\n"
+        f'[download]\ncategory = "eharchive-demo-video"\n'
+        f'external_root = "{download_root.as_posix()}"\n'
+        f'local_root = "{download_root.as_posix()}"\n'
+        f'[work]\nworkspace_root = "{workspace_root.as_posix()}"\nmax_concurrency = 1\n'
+        f'[ffmpeg]\nexecutable = "{(module_root / "ffmpeg-placeholder").as_posix()}"\n'
+        "max_workers = 1\nquality = 75\ncompression_level = 6\n"
+        "[output]\ninclude_original_mp4 = false\nlayout = \"legacy_folders\"\n"
+        "cleanup_source_on_success = false\n",
+        encoding="utf-8",
+    )
     return config_dir
 
 

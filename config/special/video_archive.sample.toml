@@ -1,0 +1,32 @@
+enabled = true
+# This module always requires an explicit user action. true is rejected.
+auto_start = false
+
+[download]
+category = "eharchive-video-special"
+external_root = "D:/eharchive-data/special-video-download"
+local_root = "D:/eharchive-data/special-video-download"
+
+[work]
+workspace_root = "D:/eharchive-data/special-video-work"
+max_concurrency = 1
+
+[ffmpeg]
+executable = "D:/ffmpeg/bin/ffmpeg.exe"
+max_workers = 2
+quality = 75
+compression_level = 6
+loop = 0
+file_timeout_seconds = 3600
+max_output_bytes = 8589934592
+
+[output]
+include_original_mp4 = false
+layout = "legacy_folders"
+# false preserves the two qBittorrent downloads for manual recovery.
+cleanup_source_on_success = false
+
+[safety]
+max_members = 100000
+max_single_file_bytes = 17179869184
+max_expanded_bytes = 68719476736

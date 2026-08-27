@@ -14,13 +14,14 @@ from typing import Any
 
 import tomlkit
 
-from ..config import load_config
+from ..config import load_config, load_video_archive_config
 from ..config.loader import DEFAULT_LOCATIONS, SUPERVISOR_MODULES
 
 CONFIG_FILENAMES = {
     "app": "app.toml",
     "supervisor": "supervisor.toml",
     "crawl": "crawl.toml",
+    "video_archive": "special/video_archive.toml",
 }
 _CONFIG_WRITE_LOCK = threading.Lock()
 _DELETE = object()
@@ -125,6 +126,15 @@ SUPERVISOR_FIELDS = (
     FieldSpec(("maintenance_end",), "维护结束时间", "time", help="开始和结束必须同时填写。"),
     FieldSpec(("maintenance_retry_seconds",), "维护重试间隔（秒）", "float", minimum=0),
     FieldSpec(("maintenance_recovery_timeout_seconds",), "维护恢复超时（秒）", "float", minimum=0),
+    FieldSpec(("special_processing", "enabled"), "启用特殊处理调度", "bool"),
+    FieldSpec(("special_processing", "poll_seconds"), "特殊任务轮询间隔（秒）", "float", minimum=0),
+    FieldSpec(
+        ("special_processing", "default_job_lease_seconds"),
+        "特殊任务默认租约（秒）",
+        "int",
+        minimum=1,
+    ),
+    FieldSpec(("special_processing", "max_concurrency"), "特殊任务总并发", "int", minimum=1),
     *(FieldSpec(("modules", name), f"启动组件：{name}", "bool") for name in SUPERVISOR_MODULES),
     *(
         FieldSpec(("max_concurrency", name), f"最大并发：{name}", "int", minimum=1)
@@ -155,6 +165,34 @@ CRAWL_FIELDS = (
     FieldSpec(("urls",), "采集地址", "mapping", help="每行使用“名称 = URL”。"),
 )
 
+VIDEO_ARCHIVE_FIELDS = (
+    FieldSpec(("enabled",), "启用视频档案特殊模块", "bool"),
+    FieldSpec(("auto_start",), "自动进入（固定禁用）", "bool", editable=False),
+    FieldSpec(("download", "category"), "专用 qBittorrent 分类"),
+    FieldSpec(("download", "external_root"), "qBittorrent 可见下载根目录"),
+    FieldSpec(("download", "local_root"), "本机下载根目录"),
+    FieldSpec(("work", "workspace_root"), "转换工作根目录"),
+    FieldSpec(("work", "max_concurrency"), "模块最大并发", "int", minimum=1),
+    FieldSpec(("ffmpeg", "executable"), "ffmpeg 可执行文件"),
+    FieldSpec(("ffmpeg", "max_workers"), "ffmpeg 并行数", "int", minimum=1),
+    FieldSpec(("ffmpeg", "quality"), "WebP 质量", "int", minimum=0),
+    FieldSpec(("ffmpeg", "compression_level"), "WebP 压缩等级", "int", minimum=0),
+    FieldSpec(("ffmpeg", "loop"), "WebP 循环次数", "int", minimum=0),
+    FieldSpec(("ffmpeg", "file_timeout_seconds"), "单文件转换超时（秒）", "float", minimum=0.001),
+    FieldSpec(("ffmpeg", "max_output_bytes"), "单个 WebP 最大字节数", "int", minimum=1),
+    FieldSpec(("output", "include_original_mp4"), "最终 ZIP 保留原 MP4", "bool"),
+    FieldSpec(
+        ("output", "layout"),
+        "输出布局",
+        "choice",
+        options=("legacy_folders",),
+    ),
+    FieldSpec(("output", "cleanup_source_on_success"), "整合成功后删除源 Torrent", "bool"),
+    FieldSpec(("safety", "max_members"), "ZIP 最大成员数", "int", minimum=1),
+    FieldSpec(("safety", "max_single_file_bytes"), "ZIP 单文件最大字节数", "int", minimum=1),
+    FieldSpec(("safety", "max_expanded_bytes"), "ZIP 最大展开字节数", "int", minimum=1),
+)
+
 _SECTION_META = {
     "app": ("应用配置", "Web 和 Supervisor", APP_FIELDS),
     "supervisor": ("调度配置", "Supervisor", SUPERVISOR_FIELDS),
@@ -170,8 +208,17 @@ def load_config_sections(config_dir: str | Path) -> tuple[ConfigSection, ...]:
         "supervisor": _supervisor_values(supervisor),
         "crawl": _crawl_values(crawl),
     }
+    section_meta = dict(_SECTION_META)
+    video_path = config_dir / CONFIG_FILENAMES["video_archive"]
+    if video_path.is_file():
+        values["video_archive"] = _video_archive_values(load_video_archive_config(config_dir))
+        section_meta["video_archive"] = (
+            "视频档案特殊处理",
+            "Supervisor 与 Web",
+            VIDEO_ARCHIVE_FIELDS,
+        )
     sections: list[ConfigSection] = []
-    for name, (title, restart, specs) in _SECTION_META.items():
+    for name, (title, restart, specs) in section_meta.items():
         path = config_dir / CONFIG_FILENAMES[name]
         raw = path.read_bytes() if path.exists() else b""
         fields = tuple(_field_view(spec, _nested_value(values[name], spec.path)) for spec in specs)
@@ -195,14 +242,20 @@ def update_config_section(
     *,
     revision: str,
 ) -> ConfigUpdateResult:
-    if section_name not in _SECTION_META:
+    section_meta = dict(_SECTION_META)
+    section_meta["video_archive"] = (
+        "视频档案特殊处理",
+        "Supervisor 与 Web",
+        VIDEO_ARCHIVE_FIELDS,
+    )
+    if section_name not in section_meta:
         raise ConfigurationError("未知配置区域")
     config_dir = Path(config_dir)
     filename = CONFIG_FILENAMES[section_name]
     path = config_dir / filename
     if not path.is_file():
         raise ConfigurationError(f"配置文件不存在：{filename}")
-    _, restart, specs = _SECTION_META[section_name]
+    _, restart, specs = section_meta[section_name]
 
     with _CONFIG_WRITE_LOCK:
         original = path.read_bytes()
@@ -295,7 +348,48 @@ def _supervisor_values(config) -> dict[str, Any]:
     }
     values["modules"] = config.modules
     values["max_concurrency"] = config.max_concurrency
+    values["special_processing"] = {
+        "enabled": config.special_processing_enabled,
+        "poll_seconds": config.special_processing_poll_seconds,
+        "default_job_lease_seconds": config.special_job_lease_seconds,
+        "max_concurrency": config.special_max_concurrency,
+    }
     return values
+
+
+def _video_archive_values(config) -> dict[str, Any]:
+    return {
+        "enabled": config.enabled,
+        "auto_start": config.auto_start,
+        "download": {
+            "category": config.download.category,
+            "external_root": config.download.external_root,
+            "local_root": config.download.local_root,
+        },
+        "work": {
+            "workspace_root": config.work.workspace_root,
+            "max_concurrency": config.work.max_concurrency,
+        },
+        "ffmpeg": {
+            "executable": config.ffmpeg.executable,
+            "max_workers": config.ffmpeg.max_workers,
+            "quality": config.ffmpeg.quality,
+            "compression_level": config.ffmpeg.compression_level,
+            "loop": config.ffmpeg.loop,
+            "file_timeout_seconds": config.ffmpeg.file_timeout_seconds,
+            "max_output_bytes": config.ffmpeg.max_output_bytes,
+        },
+        "output": {
+            "include_original_mp4": config.output.include_original_mp4,
+            "layout": config.output.layout,
+            "cleanup_source_on_success": config.output.cleanup_source_on_success,
+        },
+        "safety": {
+            "max_members": config.safety.max_members,
+            "max_single_file_bytes": config.safety.max_single_file_bytes,
+            "max_expanded_bytes": config.safety.max_expanded_bytes,
+        },
+    }
 
 
 def _crawl_values(config) -> dict[str, Any]:
@@ -446,9 +540,13 @@ def _validate_candidate(config_dir: Path, filename: str, content: str) -> None:
             for source_name in CONFIG_FILENAMES.values():
                 source = config_dir / source_name
                 if source.is_file():
+                    (check_dir / source_name).parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(source, check_dir / source_name)
+            (check_dir / filename).parent.mkdir(parents=True, exist_ok=True)
             (check_dir / filename).write_text(content, encoding="utf-8")
             load_config(check_dir)
+            if filename == CONFIG_FILENAMES["video_archive"]:
+                load_video_archive_config(check_dir)
     except (OSError, TypeError, ValueError) as exc:
         raise ConfigurationError(f"配置校验失败：{exc}") from exc
 

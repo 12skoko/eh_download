@@ -74,6 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("url")
     add.add_argument("--priority", type=int, default=100)
     add.add_argument("--remark")
+    special = sub.add_parser("special")
+    special_kind = special.add_subparsers(dest="special_kind", required=True)
+    video_archive = special_kind.add_parser("video-archive")
+    video_archive.add_argument("special_action", choices=("collect-ready",))
     return parser
 
 
@@ -111,6 +115,23 @@ def main(argv: list[str] | None = None) -> int:
 
         TaskExecutor(database, config_dir=args.config_dir).run_batch(args.operation, args.limit)
         return 0
+    if args.command == "special":
+        from .special.service import SpecialWorkflowService
+
+        if args.special_kind == "video-archive" and args.special_action == "collect-ready":
+            with database.session() as session:
+                result = SpecialWorkflowService(
+                    session,
+                    actor="cli",
+                    config_dir=args.config_dir,
+                    app_config=app,
+                    trigger_source="cli",
+                ).dispatch_ready_checks()
+            print(
+                f"video-archive collect-ready found={result.found} "
+                f"queued={result.queued} skipped={result.skipped}"
+            )
+            return 0
     if args.command == "supervisor":
         from .supervisor.app import Supervisor
 

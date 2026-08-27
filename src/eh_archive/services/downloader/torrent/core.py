@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -21,6 +22,58 @@ class TorrentChoice:
     posted_at: datetime
     label: str
     page_order: int
+
+
+@dataclass(frozen=True)
+class TorrentOption:
+    choice_id: str
+    site_id: str
+    url: str
+    size: str
+    size_bytes: int
+    seeds: int
+    posted_at: datetime
+    label: str
+    page_order: int
+    outdated: bool
+    red_date: bool
+    resampled: bool
+    video: bool
+
+    @property
+    def suggested_role(self) -> str:
+        return "video" if self.video else "image"
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        values = []
+        if self.seeds == 0:
+            values.append("no_seeders")
+        if self.outdated:
+            values.append("outdated")
+        if self.red_date:
+            values.append("red_date")
+        if self.resampled:
+            values.append("resampled")
+        return tuple(values)
+
+    def public_snapshot(self) -> dict[str, Any]:
+        return {
+            "choice_id": self.choice_id,
+            "site_id": self.site_id,
+            "label": self.label,
+            "size": self.size,
+            "size_bytes": self.size_bytes,
+            "seeds": self.seeds,
+            "posted_at": self.posted_at.isoformat(),
+            "page_order": self.page_order,
+            "outdated": self.outdated,
+            "red_date": self.red_date,
+            "resampled": self.resampled,
+            "video": self.video,
+            "suggested_role": self.suggested_role,
+            "warnings": list(self.warnings),
+        }
 
 
 _SIZE_UNITS = {
@@ -144,6 +197,99 @@ def _parse_torrent_form(form: Any, page_order: int) -> tuple[TorrentChoice | Non
         ),
         outdated,
     )
+
+
+def parse_torrent_options(
+    html: str,
+    *,
+    excluded_resolutions: tuple[str, ...] = ("1280x", "800x", "1920x", "2560x"),
+    video_markers: tuple[str, ...] = ("mp4", "video"),
+) -> list[TorrentOption]:
+    """Parse every torrent row while keeping private download URLs server-side."""
+
+    soup = BeautifulSoup(html, "lxml")
+    options: list[TorrentOption] = []
+    outdated_section = False
+    page_order = 0
+    normalized_resolutions = tuple(value.casefold() for value in excluded_resolutions)
+    normalized_video = tuple(value.casefold() for value in video_markers)
+    for node in soup.find_all(["p", "form"]):
+        if node.name == "p":
+            if node.get_text(" ", strip=True).casefold() == "outdated torrents:":
+                outdated_section = True
+            continue
+        input_node = node.find("input", attrs={"name": "gtid"})
+        if input_node is None:
+            continue
+        posted_raw, posted_cell = _field_text(node, "Posted")
+        size_raw, _ = _field_text(node, "Size")
+        seeds_raw, _ = _field_text(node, "Seeds")
+        anchor = next(
+            (
+                item
+                for item in node.find_all("a", href=True)
+                if ".torrent" in str(item.get("href", ""))
+            ),
+            None,
+        )
+        if anchor is None:
+            raise ArchiveError(
+                "torrent_list_parse_error", "torrent row has no download link", ErrorClass.SYSTEM
+            )
+        url = _download_url(anchor)
+        label = anchor.get_text(" ", strip=True)
+        try:
+            posted_at = datetime.strptime(posted_raw, "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
+            seeds = int(seeds_raw)
+        except ValueError as exc:
+            raise ArchiveError(
+                "torrent_list_parse_error",
+                f"torrent row has invalid time or seed count: {posted_raw!r}, {seeds_raw!r}",
+                ErrorClass.SYSTEM,
+            ) from exc
+        if not url or not label or seeds < 0:
+            raise ArchiveError(
+                "torrent_list_parse_error",
+                "torrent row has an invalid URL, title, or seed count",
+                ErrorClass.SYSTEM,
+            )
+        red_date = any(
+            "color:red" in str(span.get("style", "")).replace(" ", "").casefold()
+            for span in posted_cell.find_all("span")
+        )
+        site_id = str(input_node.get("value", "")).strip()
+        stable = f"{site_id}\x1f{label}\x1f{posted_raw}\x1f{size_raw}"
+        choice_id = hashlib.sha256(stable.encode("utf-8")).hexdigest()[:32]
+        if not site_id:
+            site_id = f"derived-{choice_id}"
+        normalized_label = label.casefold()
+        options.append(
+            TorrentOption(
+                choice_id=choice_id,
+                site_id=site_id,
+                url=url,
+                size=size_raw,
+                size_bytes=_parse_size(size_raw, field="torrent"),
+                seeds=seeds,
+                posted_at=posted_at,
+                label=label,
+                page_order=page_order,
+                outdated=outdated_section or red_date,
+                red_date=red_date,
+                resampled=any(value in normalized_label for value in normalized_resolutions),
+                video=any(value in normalized_label for value in normalized_video),
+            )
+        )
+        page_order += 1
+    if not options:
+        if "There are no torrents for this gallery" in html:
+            raise ArchiveError("no_torrent", "gallery has no torrent", ErrorClass.ITEM)
+        raise ArchiveError(
+            "torrent_list_parse_error",
+            "torrent page contains no recognizable torrent rows",
+            ErrorClass.SYSTEM,
+        )
+    return options
 
 
 def select_torrent(

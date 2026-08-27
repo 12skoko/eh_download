@@ -18,6 +18,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import (
+    text as sql_text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -40,6 +43,7 @@ STATUS_VALUES = (
     "completed",
     "quarantined",
     "manual_review",
+    "special_processing",
     "skipped",
     "unavailable",
     "outdated",
@@ -50,6 +54,7 @@ STATUS_VALUES = (
     "cancelled",
 )
 DOWNLOAD_METHOD_VALUES = ("torrent", "direct", "hah", "aria2")
+JSON_OBJECT = JSON().with_variant(JSONB(), "postgresql")
 
 
 def _utcnow() -> datetime:
@@ -167,6 +172,9 @@ class MangaRecord(Base):
     info: Mapped[MangaInfoRecord | None] = relationship(
         "MangaInfoRecord", back_populates="manga", uselist=False
     )
+    special_workflows: Mapped[list[SpecialWorkflow]] = relationship(
+        "SpecialWorkflow", back_populates="manga", foreign_keys="SpecialWorkflow.manga_id"
+    )
 
 
 class MangaInfoRecord(Base):
@@ -240,6 +248,119 @@ class JobAttempt(Base):
     )
 
 
+class SpecialWorkflow(Base):
+    __tablename__ = "special_workflow"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'completed', 'failed', 'cancelled')",
+            name="ck_special_workflow_status",
+        ),
+        CheckConstraint("row_version >= 0", name="ck_special_workflow_row_version"),
+        Index(
+            "uq_special_workflow_active_manga",
+            "manga_id",
+            unique=True,
+            postgresql_where=sql_text("status = 'active'"),
+            sqlite_where=sql_text("status = 'active'"),
+        ),
+        Index("ix_special_workflow_status_updated", "status", "updated_at"),
+        Index("ix_special_workflow_kind_phase", "kind", "status", "phase"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    manga_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("manga.manga_id", ondelete="RESTRICT"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
+    phase: Mapped[str] = mapped_column(String(64), nullable=False)
+    resume_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON_OBJECT, default=dict, nullable=False)
+    progress: Mapped[dict[str, Any]] = mapped_column(JSON_OBJECT, default=dict, nullable=False)
+    row_version: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(Text)
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    manga: Mapped[MangaRecord] = relationship(
+        "MangaRecord", back_populates="special_workflows", foreign_keys=[manga_id]
+    )
+    jobs: Mapped[list[SpecialJob]] = relationship(
+        "SpecialJob", back_populates="workflow", foreign_keys="SpecialJob.workflow_id"
+    )
+
+
+class SpecialJob(Base):
+    __tablename__ = "special_job"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_id", "operation", "attempt_no", name="uq_special_job_operation_no"
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'abandoned', 'cancelled')",
+            name="ck_special_job_status",
+        ),
+        CheckConstraint(
+            "trigger_source IN ('web', 'cli', 'system')",
+            name="ck_special_job_trigger_source",
+        ),
+        CheckConstraint("attempt_no >= 1", name="ck_special_job_attempt_no"),
+        Index("ix_special_job_queue", "status", "next_run_at", "created_at"),
+        Index("ix_special_job_workflow_created", "workflow_id", "created_at"),
+        Index(
+            "uq_special_job_running_workflow",
+            "workflow_id",
+            unique=True,
+            postgresql_where=sql_text("status = 'running'"),
+            sqlite_where=sql_text("status = 'running'"),
+        ),
+        Index(
+            "uq_special_job_active_operation",
+            "workflow_id",
+            "operation",
+            unique=True,
+            postgresql_where=sql_text("status IN ('queued', 'running')"),
+            sqlite_where=sql_text("status IN ('queued', 'running')"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    workflow_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("special_workflow.id", ondelete="RESTRICT"), nullable=False
+    )
+    operation: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="queued", nullable=False)
+    trigger_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_by: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    next_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    lease_token: Mapped[str | None] = mapped_column(String(36))
+    lease_owner: Mapped[str | None] = mapped_column(Text)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    progress: Mapped[dict[str, Any]] = mapped_column(JSON_OBJECT, default=dict, nullable=False)
+    external_effect_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(Text)
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    workflow: Mapped[SpecialWorkflow] = relationship(
+        "SpecialWorkflow", back_populates="jobs", foreign_keys=[workflow_id]
+    )
+
+
 class EventLog(Base):
     __tablename__ = "event_log"
     __table_args__ = (
@@ -257,7 +378,7 @@ class EventLog(Base):
     run_id: Mapped[str | None] = mapped_column(String(36))
     component: Mapped[str] = mapped_column(String(32), nullable=False)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    operation: Mapped[str | None] = mapped_column(String(24))
+    operation: Mapped[str | None] = mapped_column(String(64))
     from_status: Mapped[str | None] = mapped_column(String(32))
     to_status: Mapped[str | None] = mapped_column(String(32))
     error_code: Mapped[str | None] = mapped_column(Text)

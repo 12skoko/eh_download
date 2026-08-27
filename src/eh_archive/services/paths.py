@@ -19,6 +19,14 @@ def _normalise_external_path(value: str | Path) -> str:
     return text
 
 
+def external_path_key(value: str | Path) -> str:
+    """Normalize a remote path using Windows/UNC or POSIX case semantics."""
+
+    text = _normalise_external_path(value)
+    windows_style = bool(re.match(r"^[A-Za-z]:/", text)) or text.startswith("//")
+    return text.casefold() if windows_style else text
+
+
 def map_external_path(
     external_path: str | Path,
     external_root: str | Path,
@@ -35,11 +43,14 @@ def map_external_path(
     root = _normalise_external_path(external_root)
     if not root:
         raise UnsafePathError("external artifact root is empty")
-    if external == root:
+    compared_external = external_path_key(external)
+    compared_root = external_path_key(root)
+    if compared_external == compared_root:
         relative = ""
     else:
         prefix = root if root.endswith("/") else root + "/"
-        if not external.startswith(prefix):
+        compared_prefix = external_path_key(prefix)
+        if not compared_external.startswith(compared_prefix):
             raise UnsafePathError(
                 f"external path {external_path!r} is outside configured root {external_root!r}"
             )

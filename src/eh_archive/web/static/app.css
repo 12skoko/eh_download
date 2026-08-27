@@ -88,6 +88,7 @@ h2 { margin-bottom: .25rem; font-size: 1.05rem; }
 .badge.large { padding: .4rem .8rem; font-size: .8rem; }
 .badge.running, .badge.healthy, .badge.succeeded, .status-completed, .status-uploaded, .status-downloaded, .status-deleted, .status-cancelled, .status-skipped { color: var(--green); background: var(--green-soft); }
 .badge.paused, .badge.draining, .badge.degraded, .badge.stale, .status-manual_review, .status-deferred, .status-force_delete_pending, .status-rename_pending, .status-discovered, .status-outdated, .status-cancel_requested { color: var(--amber); background: var(--amber-soft); }
+.status-special_processing { color: var(--blue); background: var(--blue-soft); }
 .badge.unavailable, .badge.failed, .badge.abandoned, .status-quarantined, .status-unavailable { color: var(--red); background: var(--red-soft); }
 .status-downloading, .status-validating, .status-preparing, .status-uploading { color: var(--blue); background: var(--blue-soft); }
 
@@ -105,7 +106,10 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgb(23 107 135 / 
 .metric-card:hover { color: var(--text); border-color: #aebec8; transform: translateY(-1px); }
 .metric-card.status-downloading, .metric-card.status-uploading, .metric-card.status-validating, .metric-card.status-preparing { border-top-color: var(--blue); }
 .metric-card.status-downloaded, .metric-card.status-uploaded, .metric-card.status-completed, .metric-card.status-deleted, .metric-card.status-cancelled, .metric-card.status-skipped { border-top-color: var(--green); }
-.metric-card.status-discovered, .metric-card.status-deferred, .metric-card.status-manual_review, .metric-card.status-rename_pending, .metric-card.status-force_delete_pending, .metric-card.status-outdated, .metric-card.status-cancel_requested { border-top-color: var(--amber); }
+.metric-card.status-discovered, .metric-card.status-deferred, .metric-card.status-manual_review, .metric-card.status-special_processing, .metric-card.status-rename_pending, .metric-card.status-force_delete_pending, .metric-card.status-outdated, .metric-card.status-cancel_requested { border-top-color: var(--amber); }
+
+.risk-confirmations { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .45rem .8rem; margin: 1rem 0; padding: .9rem; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); }
+.risk-confirmations p { grid-column: 1 / -1; margin: 0; }
 .metric-card.status-quarantined, .metric-card.status-unavailable { border-top-color: var(--red); }
 .metric-card span { color: var(--muted); }
 .metric-card strong { font-size: 1.75rem; letter-spacing: -.03em; }

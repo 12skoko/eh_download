@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from ....domain.errors import ArchiveError, ErrorClass
+from ...paths import external_path_key
 
 QBITTORRENT_CATEGORY = "eharchive"
 
@@ -58,12 +59,17 @@ class QBittorrentClient:
             ) from exc
 
     def add(
-        self, torrent_bytes: bytes, *, save_path: str | Path, display_name: str | None = None
+        self,
+        torrent_bytes: bytes,
+        *,
+        save_path: str | Path,
+        display_name: str | None = None,
+        category: str = QBITTORRENT_CATEGORY,
     ) -> str:
         options: dict[str, Any] = {
             "torrent_files": torrent_bytes,
             "save_path": str(save_path),
-            "category": QBITTORRENT_CATEGORY,
+            "category": category,
         }
         if display_name is not None:
             options["rename"] = display_name
@@ -75,8 +81,9 @@ class QBittorrentClient:
         # bounded and does not hold a database lease.
         for _ in range(10):
             for torrent in self._call("torrents_info"):
-                if _path_key(torrent.save_path) == _path_key(save_path) and is_managed_torrent(
-                    torrent
+                if (
+                    _path_key(torrent.save_path) == _path_key(save_path)
+                    and torrent_category(torrent) == category
                 ):
                     return str(torrent.hash)
             import time
@@ -98,6 +105,27 @@ class QBittorrentClient:
 
         return list(self._call("torrents_info", category=QBITTORRENT_CATEGORY))
 
+    def list_category(self, category: str) -> list[Any]:
+        return list(self._call("torrents_info", category=category))
+
+    def find_owned(
+        self,
+        *,
+        category: str,
+        save_path: str | Path,
+        display_name: str | None = None,
+    ) -> Any | None:
+        expected_path = _path_key(save_path)
+        for item in self.list_category(category):
+            if torrent_category(item) != category:
+                continue
+            if _path_key(getattr(item, "save_path", "")) != expected_path:
+                continue
+            if display_name is not None and str(getattr(item, "name", "")) != display_name:
+                continue
+            return item
+        return None
+
     def version(self) -> str:
         return str(self._call("app_version"))
 
@@ -106,4 +134,4 @@ class QBittorrentClient:
 
 
 def _path_key(value: str | Path) -> str:
-    return str(value).replace("\\", "/").rstrip("/").casefold()
+    return external_path_key(value)

@@ -132,9 +132,10 @@ Copy-Item 'config\app.sample.toml' 'config\app.toml'
 Copy-Item 'config\supervisor.sample.toml' 'config\supervisor.toml'
 Copy-Item 'config\crawl.sample.toml' 'config\crawl.toml'
 Copy-Item 'config\secrets.sample.toml' 'config\secrets.toml'
+Copy-Item 'config\special\video_archive.sample.toml' 'config\special\video_archive.toml'
 ```
 
-然后编辑四个本地 `.toml` 文件。`config/secrets.toml` 包含 Cookie、密码和 token，不能提交到 Git；`app.toml` 中的存储目录必须替换为实际绝对路径：
+然后编辑这些本地 `.toml` 文件。不使用视频特殊处理时可以不创建 `video_archive.toml`。`config/secrets.toml` 包含 Cookie、密码和 token，不能提交到 Git；`app.toml` 中的存储目录必须替换为实际绝对路径：
 
 ```toml
 database_url = "postgresql+psycopg://user:password@127.0.0.1:5432/eh_archive"
@@ -361,6 +362,7 @@ eharchive-supervisor --config-dir config
 - `http://服务器局域网IP:8787/`：中文管理控制台；
 - `/manga`：档案队列和搜索；
 - `/review`：人工复核和隔离工作台；
+- `/special`：特殊工作流、视频档案状态与人工批量检查；
 - `/events`：事件与错误；
 - `/config`：查看非敏感配置并修改允许从网页维护的字段；
 - `/docs`：FastAPI Swagger API 文档；
@@ -458,12 +460,35 @@ python scripts/cleanup_download_artifacts.py --config-dir config --apply
 
 每次运行都会在 `log_dir/tools` 生成 JSON 报告。应用模式先以 `delete_files=false` 移除匹配的 qBittorrent 任务，再删除本地数字 ID 目录；任务删除失败时保留对应 Torrent 目录。无法识别的名称、临时文件、符号链接、数据库不存在或非终态的项目全部跳过。
 
-### 7.5 缩略图再生成
+### 7.5 视频 Torrent 特殊处理
+
+普通 torrent 任务检测到视频候选时会让档案进入 `manual_review`，不会自动下载两个版本。打开档案详情后可以选择：
+
+- “进入视频种子下载与整合”：通用入口根据 `manual_review + video_torrent` 解析已启用模块，原子创建 `special_workflow` 和第一个 `special_job`；
+- “继续普通流程并跳过视频”：写入现有显式 `skip video` 选择并返回普通单 torrent 流程。
+
+进入特殊流程后，在候选页分别选择一个图片 torrent 和一个视频 torrent。带有无 Seeder、过时、红色日期或重采样标记的候选必须按角色确认风险。Web 只保存内部候选 ID；一次性 worker 会重新加载页面、确认候选没有过期，再把两个 torrent 提交给专用 qBittorrent category。两个 hash 保存成功后 worker 退出，下载由 qBittorrent 后台继续。
+
+认为下载接近完成时，打开 `/special` 并点击“批量检查已下载的视频档案”。也可以运行同一个服务层的 CLI：
+
+```powershell
+eharchive --config-dir config special video-archive collect-ready
+```
+
+未完成的档案只更新最近快照并继续等待，不会自动再次检查；稍后由用户再次运行批量操作。两个 torrent 都完成时，该档案自己的 job 会继续安全解压、把 MP4 转为动画 WebP、生成 `1_webp/2_pic`（可选 `3_video`）布局、打包和校验最终 ZIP，然后把 Manga 从 `special_processing` 恢复为 `downloaded`，交给现有 validate/upload/cleanup。
+
+工作流页面只在存在 `queued/running` job 时每 4 秒刷新数据库进度，并只读取模块的声明式启用配置；它不会读取下载目录、运行 ffmpeg 或查询 qBittorrent。ffmpeg、WebP 编码器和工作目录在用户手动创建 `check_and_compose_if_ready` job、且两个 Torrent 都完成后才检查。排队但尚未领取的 job 可以直接“取消排队并清理”，也可以选择“保留资源并退出”；后者会先取消排队 job，但不会删除外部任务或工作目录。取消或退出后会恢复进入前保存的 `video_torrent` 人工复核原因，因此之后仍可从档案详情重新进入模块。
+
+最终 ZIP 使用固定时间、权限和稳定成员顺序。即使出现“ZIP 已原子提升、数据库登记事务失败”，重试生成的 ZIP 仍有相同 SHA-1，可以安全接续登记而不会误判成 generation 冲突。源清理只接受同时匹配 workflow 中 hash、模块专用 category 和确定保存路径的 qBittorrent 任务；category 或路径被人工改动时会跳过并留下审计记录。
+
+`video_archive.toml` 中影响输出内容的质量、布局和是否保留 MP4 会在创建 workflow 时固化；之后修改配置不会静默改变正在重试的工作流。下载根、工作根、ffmpeg 路径和凭据仍在每次 worker 启动时读取当前配置。Remark 中显示的模块、阶段和进度只是数据库镜像，修改或删除它不会启动、暂停或改变任务。
+
+### 7.6 缩略图再生成
 
 每个 upload 子进程完成整个上传批次后，会统一调用一次 LANraragi 的
 `POST /api/regen_thumbs?force=0`。缩略图不再作为独立模块调度，也不为每本漫画维护单独状态。
 
-### 7.6 Picacg 导入
+### 7.7 Picacg 导入
 
 导出目录的每个子目录需要有 `cid.txt` 和 `index.html`：
 

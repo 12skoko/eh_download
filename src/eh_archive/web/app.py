@@ -19,6 +19,20 @@ from ..db import Database
 from ..db.models import EventLog, MangaRecord, SystemControl, SystemHealth
 from ..logging import configure_logging
 from ..services.paths import safe_filename
+from ..special.registry import VIDEO_ARCHIVE_KIND
+from ..special.remarks import PHASE_LABELS, user_remark
+from ..special.service import (
+    SpecialConflict,
+    SpecialInvalidRequest,
+    SpecialNotFound,
+    SpecialServiceError,
+    SpecialWorkflowService,
+    active_special_workflow,
+    list_video_workflows,
+    special_entry_for_manga,
+    special_module_health,
+    special_workflow_detail,
+)
 from .auth import (
     SESSION_COOKIE,
     SESSION_MAX_AGE_SECONDS,
@@ -118,6 +132,8 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
     templates.env.filters["manga_tab_id"] = _manga_tab_id
     templates.env.filters["attempt_progress"] = _attempt_progress
     templates.env.filters["duration"] = _format_duration
+    templates.env.filters["user_remark"] = user_remark
+    templates.env.filters["special_phase_label"] = lambda value: PHASE_LABELS.get(value, value)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.state.database = database
     app.state.auth_enabled = auth_enabled
@@ -522,13 +538,253 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             f"/config?notice={notice_value}&updated_file={quote(result.filename)}",
         )
 
+    @app.get("/special", response_class=HTMLResponse)
+    def special_page(
+        request: Request,
+        notice: str | None = None,
+        found: int | None = None,
+        queued: int | None = None,
+        skipped: int | None = None,
+    ):
+        with database.session() as session:
+            data = list_video_workflows(session)
+        module_health = special_module_health(VIDEO_ARCHIVE_KIND, config_dir)
+        return templates.TemplateResponse(
+            request=request,
+            name="special.html",
+            context=_context(
+                request,
+                **data,
+                module_health=module_health,
+                notice=notice,
+                batch_found=found,
+                batch_queued=queued,
+                batch_skipped=skipped,
+            ),
+        )
+
+    @app.post("/special/video-archive/collect-ready")
+    async def collect_ready_page(request: Request):
+        await _validated_form(request)
+        try:
+            with database.session() as session:
+                result = SpecialWorkflowService(
+                    session,
+                    actor=_actor(request),
+                    config_dir=config_dir,
+                    app_config=app_config,
+                ).dispatch_ready_checks()
+        except SpecialServiceError as exc:
+            return _special_error_response(request, templates, exc)
+        return _redirect_response(
+            request,
+            "/special?notice=batch-dispatched"
+            f"&found={result.found}&queued={result.queued}&skipped={result.skipped}",
+        )
+
+    @app.post("/special/start/{manga_id:path}")
+    async def start_special_page(request: Request, manga_id: str):
+        form = await _validated_form(request)
+        try:
+            with database.session() as session:
+                workflow = SpecialWorkflowService(
+                    session,
+                    actor=_actor(request),
+                    config_dir=config_dir,
+                    app_config=app_config,
+                ).start_for_manga(
+                    manga_id,
+                    row_version=int(str(form.get("row_version", ""))),
+                    load_options=True,
+                )
+        except (ValueError, SpecialServiceError) as exc:
+            error = (
+                exc
+                if isinstance(exc, SpecialServiceError)
+                else SpecialInvalidRequest("表单数据无效")
+            )
+            return _special_error_response(request, templates, error)
+        return _redirect_response(request, f"/special/workflows/{workflow.id}")
+
+    @app.get("/special/workflows/{workflow_id}", response_class=HTMLResponse)
+    def special_workflow_page(request: Request, workflow_id: int, notice: str | None = None):
+        try:
+            with database.session() as session:
+                detail = special_workflow_detail(session, workflow_id)
+            module_health = special_module_health(detail["workflow"].kind, config_dir)
+        except SpecialServiceError as exc:
+            return _special_error_response(request, templates, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="special_detail.html",
+            context=_context(
+                request,
+                **detail,
+                notice=notice,
+                module_health=module_health,
+            ),
+        )
+
+    @app.get(
+        "/partials/special-workflows/{workflow_id}",
+        response_class=HTMLResponse,
+    )
+    def special_workflow_partial(request: Request, workflow_id: int):
+        try:
+            with database.session() as session:
+                detail = special_workflow_detail(session, workflow_id)
+            # Only declarative module configuration is read here.  Dependency
+            # probes belong to the one-shot operation that needs them.
+            module_health = special_module_health(detail["workflow"].kind, config_dir)
+        except SpecialServiceError as exc:
+            return _special_error_response(request, templates, exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="_special_workflow_panel.html",
+            context=_context(
+                request,
+                **detail,
+                notice=None,
+                module_health=module_health,
+            ),
+        )
+
+    @app.post("/special/workflows/{workflow_id}/load")
+    async def special_load_page(request: Request, workflow_id: int):
+        form = await _validated_form(request)
+        return _special_page_update(
+            request,
+            templates,
+            database,
+            workflow_id,
+            lambda service: service.queue_load(
+                workflow_id, row_version=int(str(form.get("row_version", "")))
+            ),
+            config_dir=config_dir,
+            app_config=app_config,
+            notice="load-queued",
+        )
+
+    @app.post("/special/workflows/{workflow_id}/select")
+    async def special_select_page(request: Request, workflow_id: int):
+        form = await _validated_form(request)
+        return _special_page_update(
+            request,
+            templates,
+            database,
+            workflow_id,
+            lambda service: service.select_torrents(
+                workflow_id,
+                row_version=int(str(form.get("row_version", ""))),
+                image_choice_id=str(form.get("image_choice_id", "")),
+                video_choice_id=str(form.get("video_choice_id", "")),
+                confirmed_warnings=form.getlist("confirmed_warnings"),
+            ),
+            config_dir=config_dir,
+            app_config=app_config,
+            notice="selection-queued",
+        )
+
+    @app.post("/special/workflows/{workflow_id}/check")
+    async def special_check_page(request: Request, workflow_id: int):
+        form = await _validated_form(request)
+        return _special_page_update(
+            request,
+            templates,
+            database,
+            workflow_id,
+            lambda service: service.queue_check(
+                workflow_id, row_version=int(str(form.get("row_version", "")))
+            ),
+            config_dir=config_dir,
+            app_config=app_config,
+            notice="check-queued",
+        )
+
+    @app.post("/special/workflows/{workflow_id}/retry")
+    async def special_retry_page(request: Request, workflow_id: int):
+        form = await _validated_form(request)
+        return _special_page_update(
+            request,
+            templates,
+            database,
+            workflow_id,
+            lambda service: service.retry(
+                workflow_id, row_version=int(str(form.get("row_version", "")))
+            ),
+            config_dir=config_dir,
+            app_config=app_config,
+            notice="retry-queued",
+        )
+
+    @app.post("/special/workflows/{workflow_id}/cancel")
+    async def special_cancel_page(request: Request, workflow_id: int):
+        form = await _validated_form(request)
+        return _special_page_update(
+            request,
+            templates,
+            database,
+            workflow_id,
+            lambda service: service.cancel(
+                workflow_id, row_version=int(str(form.get("row_version", "")))
+            ),
+            config_dir=config_dir,
+            app_config=app_config,
+            notice="cancel-queued",
+        )
+
+    @app.post("/special/workflows/{workflow_id}/lease/release-expired")
+    async def special_release_lease_page(request: Request, workflow_id: int):
+        form = await _validated_form(request)
+        return _special_page_update(
+            request,
+            templates,
+            database,
+            workflow_id,
+            lambda service: service.release_expired_job(
+                workflow_id,
+                row_version=int(str(form.get("row_version", ""))),
+                reason=str(form.get("reason", "")),
+                confirmed=form.get("confirmed") == "yes",
+            ),
+            config_dir=config_dir,
+            app_config=app_config,
+            notice="lease-released",
+        )
+
+    @app.post("/special/workflows/{workflow_id}/exit-without-cleanup")
+    async def special_exit_without_cleanup_page(request: Request, workflow_id: int):
+        form = await _validated_form(request)
+        return _special_page_update(
+            request,
+            templates,
+            database,
+            workflow_id,
+            lambda service: service.exit_without_cleanup(
+                workflow_id,
+                row_version=int(str(form.get("row_version", ""))),
+                reason=str(form.get("reason", "")),
+                confirmed=form.get("confirmed") == "yes",
+            ),
+            config_dir=config_dir,
+            app_config=app_config,
+            notice="workflow-exited",
+        )
+
     @app.get("/manga/{manga_id:path}", response_class=HTMLResponse)
     def manga_page(request: Request, manga_id: str, notice: str | None = None):
         try:
             with database.session() as session:
                 detail = manga_detail(session, manga_id)
+                row = detail["row"]
+                workflow = (
+                    active_special_workflow(session, row.manga_id)
+                    if row.status == "special_processing"
+                    else None
+                )
         except WebServiceError as exc:
             return _error_response(request, templates, exc)
+        entry = special_entry_for_manga(row, config_dir)
         return templates.TemplateResponse(
             request=request,
             name="manga/detail.html",
@@ -536,6 +792,8 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 request,
                 **detail,
                 notice=notice,
+                special_entry=entry,
+                special_workflow=workflow,
                 artifact_directories=_manual_artifact_directories(app_config, manga_id),
             ),
         )
@@ -570,6 +828,21 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 row_version=int(str(form.get("row_version", ""))),
             ),
             "priority-updated",
+        )
+
+    @app.post("/manga/{manga_id:path}/skip-video")
+    async def skip_video_page(request: Request, manga_id: str):
+        form = await _validated_form(request)
+        return _page_update(
+            request,
+            templates,
+            database,
+            manga_id,
+            lambda service: service.skip_video_and_resume(
+                manga_id,
+                row_version=int(str(form.get("row_version", ""))),
+            ),
+            "video-skipped",
         )
 
     @app.post("/manga/{manga_id:path}/actions/{action}")
@@ -906,6 +1179,7 @@ def _context(request, **values):
         "allowed_actions": allowed_actions,
         "manual_status_targets": MANUAL_STATUS_TARGETS,
         "now": datetime.now(UTC),
+        "special_phase_labels": PHASE_LABELS,
         **values,
     }
 
@@ -941,6 +1215,46 @@ def _page_update(
         error = exc if isinstance(exc, WebServiceError) else InvalidRequest("表单数据无效")
         return _error_response(request, templates, error)
     return _redirect_response(request, f"/manga/{manga_id}?notice={notice}")
+
+
+def _special_page_update(
+    request,
+    templates,
+    database,
+    workflow_id,
+    callback,
+    *,
+    config_dir,
+    app_config,
+    notice,
+):
+    try:
+        with database.session() as session:
+            callback(
+                SpecialWorkflowService(
+                    session,
+                    actor=_actor(request),
+                    config_dir=config_dir,
+                    app_config=app_config,
+                )
+            )
+    except (ValueError, SpecialServiceError) as exc:
+        error = (
+            exc if isinstance(exc, SpecialServiceError) else SpecialInvalidRequest("表单数据无效")
+        )
+        return _special_error_response(request, templates, error)
+    return _redirect_response(request, f"/special/workflows/{workflow_id}?notice={notice}")
+
+
+def _special_error_response(request, templates, exc: SpecialServiceError):
+    if isinstance(exc, SpecialNotFound):
+        converted: WebServiceError = WebServiceError(str(exc))
+        converted.status_code = 404
+    elif isinstance(exc, SpecialConflict):
+        converted = Conflict(str(exc))
+    else:
+        converted = InvalidRequest(str(exc))
+    return _error_response(request, templates, converted)
 
 
 def _api_update(database, request, callback, *, app_config=None):

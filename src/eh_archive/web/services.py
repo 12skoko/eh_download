@@ -21,6 +21,7 @@ from ..db.models import (
 from ..db.repository import utcnow
 from ..domain.states import Status, can_transition, transition_target
 from ..services.paths import ArtifactPathService, UnsafePathError, safe_filename
+from ..special.remarks import replace_user_remark, user_remark
 
 CONTROL_COMPONENTS = ("supervisor", *SUPERVISOR_MODULES)
 DOWNLOAD_METHOD_LOCATIONS = {
@@ -44,6 +45,7 @@ STATUS_LABELS = {
     Status.COMPLETED.value: "已完成",
     Status.QUARANTINED.value: "已隔离",
     Status.MANUAL_REVIEW.value: "人工复核",
+    Status.SPECIAL_PROCESSING.value: "特殊处理中",
     Status.SKIPPED.value: "已跳过",
     Status.UNAVAILABLE.value: "不可用",
     Status.OUTDATED.value: "已过时",
@@ -65,6 +67,7 @@ COMPONENT_LABELS = {
     "upload": "上传",
     "cleanup": "清理",
     "delete": "档案删除",
+    "special_processing": "特殊处理",
     "qbittorrent": "qBittorrent",
     "lanraragi": "LANraragi",
 }
@@ -337,7 +340,7 @@ class WebService:
     def update_remark(self, manga_id: str, *, remark: str | None, row_version: int) -> MangaRecord:
         row = self._manga(manga_id)
         self._require_version(row, row_version)
-        row.remark = remark
+        row.remark = replace_user_remark(row.remark, remark)
         row.updated_at = utcnow()
         row.row_version += 1
         self._event(row, "remark", detail={"changed": True})
@@ -351,6 +354,40 @@ class WebService:
         row.updated_at = utcnow()
         row.row_version += 1
         self._event(row, "priority", detail={"from": previous, "to": priority})
+        return row
+
+    def skip_video_and_resume(self, manga_id: str, *, row_version: int) -> MangaRecord:
+        """Keep the existing explicit `skip video` override behind a dedicated action."""
+
+        row = self._manga(manga_id)
+        self._require_version(row, row_version)
+        if (
+            row.status != Status.MANUAL_REVIEW.value
+            or (row.last_error_code or "").casefold() != "video_torrent"
+        ):
+            raise InvalidRequest("当前档案不是等待处理的视频 Torrent")
+        if row.active_attempt_id is not None or row.lease_owner or row.lease_token:
+            raise Conflict("档案仍有活动任务或租约")
+        if "skip video" not in (row.remark or "").casefold():
+            manual = user_remark(row.remark)
+            row.remark = f"{manual}\nskip video".strip()
+        previous = row.status
+        row.status = transition_target(row.status, "resume_download").value
+        row.status_updated_at = row.updated_at = utcnow()
+        row.next_retry_at = None
+        row.last_error_operation = None
+        row.last_error_code = None
+        row.last_error_detail = None
+        row.last_error_at = None
+        row.queue_source = "manual"
+        row.row_version += 1
+        self._event(
+            row,
+            "skip_video",
+            from_status=previous,
+            to_status=row.status,
+            detail={"explicit_user_choice": True},
+        )
         return row
 
     def action(
@@ -424,6 +461,8 @@ class WebService:
             raise InvalidRequest("档案已经处于目标状态")
         if row.active_attempt_id is not None or row.lease_owner or row.lease_token:
             raise Conflict("档案仍有活动任务或租约，不能人工修改状态")
+        if row.status == Status.SPECIAL_PROCESSING.value:
+            raise Conflict("档案由活动的特殊工作流控制，不能使用通用状态修改")
 
         clean_reason = reason.strip() if reason and reason.strip() else None
         if (
@@ -544,9 +583,7 @@ class WebService:
         self._require_version(row, row_version)
         if row.status != Status.MANUAL_REVIEW.value:
             raise InvalidRequest("只有人工复核状态可以申请冲突改名")
-        duplicate_error = bool(
-            row.last_error_code and row.last_error_code.casefold() == "lrr_409"
-        )
+        duplicate_error = bool(row.last_error_code and row.last_error_code.casefold() == "lrr_409")
         if not duplicate_error and not row.rename_target_filename:
             raise InvalidRequest("只有 LANraragi 409 同名冲突可以使用这个操作")
         if row.active_attempt_id is not None or row.lease_owner or row.lease_token:
@@ -826,10 +863,7 @@ def list_manga(
         conditions.append(MangaRecord.last_error_at.is_(None))
     if query_text and query_text.strip():
         conditions.append(_manga_search_predicate(query_text))
-    total = (
-        session.scalar(select(func.count()).select_from(MangaRecord).where(*conditions))
-        or 0
-    )
+    total = session.scalar(select(func.count()).select_from(MangaRecord).where(*conditions)) or 0
     page = max(1, page)
     query = (
         select(MangaRecord)
@@ -862,10 +896,7 @@ def list_review_manga(
         conditions.append(MangaRecord.last_error_code == error_code.strip())
     if operation:
         conditions.append(MangaRecord.last_error_operation == operation.strip())
-    total = (
-        session.scalar(select(func.count()).select_from(MangaRecord).where(*conditions))
-        or 0
-    )
+    total = session.scalar(select(func.count()).select_from(MangaRecord).where(*conditions)) or 0
     page = max(1, page)
     query = (
         select(MangaRecord)
@@ -1069,7 +1100,9 @@ def manga_progress_data(session: Session, manga_id: str) -> dict[str, Any]:
     if row is None:
         raise NotFound("档案不存在")
     active_attempt = (
-        session.get(JobAttempt, row.active_attempt_id) if row.active_attempt_id is not None else None
+        session.get(JobAttempt, row.active_attempt_id)
+        if row.active_attempt_id is not None
+        else None
     )
     if active_attempt is not None and (
         active_attempt.manga_id != row.manga_id or active_attempt.status != "running"
@@ -1109,9 +1142,7 @@ def list_events(
         conditions.append(EventLog.operation == operation.strip())
     if error_only:
         conditions.append(EventLog.error_code.is_not(None))
-    total = (
-        session.scalar(select(func.count()).select_from(EventLog).where(*conditions)) or 0
-    )
+    total = session.scalar(select(func.count()).select_from(EventLog).where(*conditions)) or 0
     page = max(1, page)
     query = (
         select(EventLog)

@@ -17,6 +17,7 @@ class Status(StrEnum):
     COMPLETED = "completed"
     QUARANTINED = "quarantined"
     MANUAL_REVIEW = "manual_review"
+    SPECIAL_PROCESSING = "special_processing"
     SKIPPED = "skipped"
     UNAVAILABLE = "unavailable"
     OUTDATED = "outdated"
@@ -132,6 +133,7 @@ TRANSITIONS: dict[str, dict[str, str]] = {
         "cancel": Status.CANCEL_REQUESTED,
     },
     Status.MANUAL_REVIEW: {
+        "special_start": Status.SPECIAL_PROCESSING,
         "rename": Status.RENAME_PENDING,
         "resume_download": Status.DOWNLOAD_PENDING,
         "resume_validate": Status.VALIDATING,
@@ -139,6 +141,10 @@ TRANSITIONS: dict[str, dict[str, str]] = {
         "resume_outdated": Status.OUTDATED,
         "confirm_uploaded": Status.UPLOADED,
         "cancel": Status.CANCEL_REQUESTED,
+    },
+    Status.SPECIAL_PROCESSING: {
+        "special_downloaded": Status.DOWNLOADED,
+        "special_cancel": Status.MANUAL_REVIEW,
     },
     Status.CANCEL_REQUESTED: {"cancelled": Status.CANCELLED},
     Status.CANCELLED: {

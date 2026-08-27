@@ -29,6 +29,7 @@ SUPERVISOR_MODULES = (
     "upload",
     "cleanup",
     "delete",
+    "special_processing",
 )
 LEGACY_SUPERVISOR_MODULES = {"thumbnail"}
 
@@ -101,6 +102,10 @@ class SupervisorConfig:
     maintenance_retry_seconds: float = 30.0
     maintenance_recovery_timeout_seconds: float = 900.0
     health_check_interval_seconds: float = 60.0
+    special_processing_enabled: bool = True
+    special_processing_poll_seconds: float = 5.0
+    special_job_lease_seconds: int = 900
+    special_max_concurrency: int = 1
     modules: dict[str, bool] = field(
         default_factory=lambda: {name: True for name in SUPERVISOR_MODULES}
     )
@@ -170,6 +175,68 @@ class SecretsConfig:
         return dict(self.networks.get(role.network, {}))
 
 
+@dataclass(frozen=True)
+class VideoDownloadConfig:
+    category: str
+    external_root: str
+    local_root: Path
+
+
+@dataclass(frozen=True)
+class VideoWorkConfig:
+    workspace_root: Path
+    max_concurrency: int = 1
+
+
+@dataclass(frozen=True)
+class VideoFfmpegConfig:
+    executable: Path
+    max_workers: int = 2
+    quality: int = 75
+    compression_level: int = 6
+    loop: int = 0
+    file_timeout_seconds: float = 3600.0
+    max_output_bytes: int = 8 * 1024 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class VideoOutputConfig:
+    include_original_mp4: bool = False
+    layout: str = "legacy_folders"
+    cleanup_source_on_success: bool = False
+
+
+@dataclass(frozen=True)
+class VideoSafetyConfig:
+    max_members: int = 100_000
+    max_single_file_bytes: int = 16 * 1024 * 1024 * 1024
+    max_expanded_bytes: int = 64 * 1024 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class VideoArchiveConfig:
+    enabled: bool
+    auto_start: bool
+    download: VideoDownloadConfig
+    work: VideoWorkConfig
+    ffmpeg: VideoFfmpegConfig
+    output: VideoOutputConfig
+    safety: VideoSafetyConfig
+
+    def result_snapshot(self) -> dict[str, Any]:
+        """Return only non-secret settings that determine the generated archive."""
+
+        return {
+            "include_original_mp4": self.output.include_original_mp4,
+            "layout": self.output.layout,
+            "webp_quality": self.ffmpeg.quality,
+            "webp_compression_level": self.ffmpeg.compression_level,
+            "webp_loop": self.ffmpeg.loop,
+            "naming": "relative_path_with_video_prefix",
+            "ordering": "zip_member_name",
+        }
+
+
 def _read_toml(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -202,10 +269,48 @@ def _absolute_directory(value: Any, key: str) -> Path:
     return path
 
 
+def _config_table(value: Any, key: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise TypeError(f"{key} must be a TOML table")
+    return dict(value)
+
+
+def _reject_unknown_keys(value: dict[str, Any], key: str, allowed: set[str]) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported {key} entries: " + ", ".join(unknown))
+
+
+def _bool_value(value: Any, key: str, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if type(value) is not bool:
+        raise TypeError(f"{key} must be true or false")
+    return value
+
+
 def _is_absolute_external_path(value: str) -> bool:
     """Recognize Windows and POSIX absolute paths without using local Path rules."""
 
-    return value.startswith(("/", "\\\\")) or bool(re.match(r"^[A-Za-z]:[\\/]", value))
+    if "\x00" in value or not (
+        value.startswith(("/", "\\\\")) or re.match(r"^[A-Za-z]:[\\/]", value)
+    ):
+        return False
+    normalized = value.replace("\\", "/")
+    if normalized.startswith("//"):
+        # A UNC root needs both server and share names.  Empty, dot and
+        # parent segments would make the qBittorrent ownership boundary
+        # ambiguous on the remote host.
+        tail = normalized[2:].rstrip("/")
+        parts = tail.split("/") if tail else []
+        return len(parts) >= 2 and all(part not in {"", ".", ".."} for part in parts)
+    if re.match(r"^[A-Za-z]:/", normalized):
+        tail = normalized[3:].rstrip("/")
+    else:
+        tail = normalized[1:].rstrip("/")
+    return not tail or all(part not in {"", ".", ".."} for part in tail.split("/"))
 
 
 def _path_map(raw: dict[str, Any]) -> dict[str, Path]:
@@ -271,6 +376,135 @@ def _optional_clock_time(value: Any, key: str) -> clock_time | None:
 def _role(raw: dict[str, Any], key: str) -> SessionRole:
     value = raw.get(key, {}) or {}
     return SessionRole(str(value.get("account", "default")), str(value.get("network", "direct")))
+
+
+def load_video_archive_config(directory: str | Path = "config") -> VideoArchiveConfig:
+    """Load the non-sensitive configuration for the video-archive module."""
+
+    path = Path(directory) / "special" / "video_archive.toml"
+    if not path.is_file():
+        raise ValueError(f"special module config is missing: {path}")
+    raw = _read_toml(path)
+    unknown = sorted(
+        set(raw) - {"enabled", "auto_start", "download", "work", "ffmpeg", "output", "safety"}
+    )
+    if unknown:
+        raise ValueError("unsupported video_archive config sections: " + ", ".join(unknown))
+    download_raw = _config_table(raw.get("download"), "video_archive.download")
+    work_raw = _config_table(raw.get("work"), "video_archive.work")
+    ffmpeg_raw = _config_table(raw.get("ffmpeg"), "video_archive.ffmpeg")
+    output_raw = _config_table(raw.get("output"), "video_archive.output")
+    safety_raw = _config_table(raw.get("safety"), "video_archive.safety")
+    _reject_unknown_keys(
+        download_raw,
+        "video_archive.download",
+        {"category", "external_root", "local_root"},
+    )
+    _reject_unknown_keys(
+        work_raw,
+        "video_archive.work",
+        {"workspace_root", "max_concurrency"},
+    )
+    _reject_unknown_keys(
+        ffmpeg_raw,
+        "video_archive.ffmpeg",
+        {
+            "executable",
+            "max_workers",
+            "quality",
+            "compression_level",
+            "loop",
+            "file_timeout_seconds",
+            "max_output_bytes",
+        },
+    )
+    _reject_unknown_keys(
+        output_raw,
+        "video_archive.output",
+        {"include_original_mp4", "layout", "cleanup_source_on_success"},
+    )
+    _reject_unknown_keys(
+        safety_raw,
+        "video_archive.safety",
+        {"max_members", "max_single_file_bytes", "max_expanded_bytes"},
+    )
+    category = str(download_raw.get("category", "")).strip()
+    if not category or category == "eharchive":
+        raise ValueError("download.category must be a non-empty category reserved for this module")
+    external_root = str(download_raw.get("external_root", "")).strip()
+    if not _is_absolute_external_path(external_root):
+        raise ValueError("download.external_root must be an absolute qBittorrent path")
+    local_root = _absolute_directory(download_raw.get("local_root"), "download.local_root")
+    workspace_root = _absolute_directory(work_raw.get("workspace_root"), "work.workspace_root")
+    resolved_workspace = workspace_root.resolve()
+    resolved_download = local_root.resolve()
+    if (
+        resolved_workspace == resolved_download
+        or resolved_workspace.is_relative_to(resolved_download)
+        or resolved_download.is_relative_to(resolved_workspace)
+    ):
+        raise ValueError("work.workspace_root must not overlap download.local_root")
+    executable = Path(str(ffmpeg_raw.get("executable", "")).strip()).expanduser()
+    if not executable.is_absolute():
+        raise ValueError("ffmpeg.executable must be an absolute path")
+    layout = str(output_raw.get("layout", "legacy_folders"))
+    if layout != "legacy_folders":
+        raise ValueError("output.layout currently only supports legacy_folders")
+    enabled = _bool_value(raw.get("enabled"), "video_archive.enabled", default=True)
+    auto_start = _bool_value(raw.get("auto_start"), "video_archive.auto_start", default=False)
+    if auto_start:
+        raise ValueError("video_archive.auto_start must remain false")
+    config = VideoArchiveConfig(
+        enabled=enabled,
+        auto_start=False,
+        download=VideoDownloadConfig(category, external_root, local_root),
+        work=VideoWorkConfig(
+            workspace_root,
+            int(work_raw.get("max_concurrency", 1)),
+        ),
+        ffmpeg=VideoFfmpegConfig(
+            executable,
+            int(ffmpeg_raw.get("max_workers", 2)),
+            int(ffmpeg_raw.get("quality", 75)),
+            int(ffmpeg_raw.get("compression_level", 6)),
+            int(ffmpeg_raw.get("loop", 0)),
+            float(ffmpeg_raw.get("file_timeout_seconds", 3600)),
+            int(ffmpeg_raw.get("max_output_bytes", 8 * 1024 * 1024 * 1024)),
+        ),
+        output=VideoOutputConfig(
+            _bool_value(
+                output_raw.get("include_original_mp4"),
+                "video_archive.output.include_original_mp4",
+                default=False,
+            ),
+            layout,
+            _bool_value(
+                output_raw.get("cleanup_source_on_success"),
+                "video_archive.output.cleanup_source_on_success",
+                default=False,
+            ),
+        ),
+        safety=VideoSafetyConfig(
+            int(safety_raw.get("max_members", 100_000)),
+            int(safety_raw.get("max_single_file_bytes", 16 * 1024 * 1024 * 1024)),
+            int(safety_raw.get("max_expanded_bytes", 64 * 1024 * 1024 * 1024)),
+        ),
+    )
+    if config.work.max_concurrency <= 0 or config.ffmpeg.max_workers <= 0:
+        raise ValueError("video_archive concurrency values must be greater than zero")
+    if not 0 <= config.ffmpeg.quality <= 100:
+        raise ValueError("ffmpeg.quality must be between 0 and 100")
+    if not 0 <= config.ffmpeg.compression_level <= 6:
+        raise ValueError("ffmpeg.compression_level must be between 0 and 6")
+    if config.ffmpeg.file_timeout_seconds <= 0 or config.ffmpeg.max_output_bytes <= 0:
+        raise ValueError("ffmpeg time and output limits must be greater than zero")
+    if (
+        config.safety.max_members <= 0
+        or config.safety.max_single_file_bytes <= 0
+        or config.safety.max_expanded_bytes <= 0
+    ):
+        raise ValueError("video_archive safety limits must be greater than zero")
+    return config
 
 
 def load_config(
@@ -348,6 +582,7 @@ def load_config(
     if app.eh_unavailable_cooldown_seconds < 0:
         raise ValueError("eh_unavailable_cooldown_seconds must not be negative")
     limits = dict(supervisor_raw.get("max_concurrency", {}))
+    special_raw = dict(supervisor_raw.get("special_processing", {}))
     supervisor = SupervisorConfig(
         poll_seconds=float(supervisor_raw.get("poll_seconds", 5)),
         collect_interval_seconds=float(supervisor_raw.get("collect_interval_seconds", 10800)),
@@ -374,6 +609,10 @@ def load_config(
         health_check_interval_seconds=float(
             supervisor_raw.get("health_check_interval_seconds", 60)
         ),
+        special_processing_enabled=bool(special_raw.get("enabled", True)),
+        special_processing_poll_seconds=float(special_raw.get("poll_seconds", 5)),
+        special_job_lease_seconds=int(special_raw.get("default_job_lease_seconds", 900)),
+        special_max_concurrency=int(special_raw.get("max_concurrency", 1)),
         modules=_module_map(supervisor_raw.get("modules", {})),
         max_concurrency={
             **SupervisorConfig().max_concurrency,
@@ -403,6 +642,12 @@ def load_config(
         raise ValueError("maintenance_recovery_timeout_seconds must not be negative")
     if supervisor.health_check_interval_seconds <= 0:
         raise ValueError("health_check_interval_seconds must be greater than zero")
+    if supervisor.special_processing_poll_seconds < 0:
+        raise ValueError("special_processing.poll_seconds must not be negative")
+    if supervisor.special_job_lease_seconds <= 0:
+        raise ValueError("special_processing.default_job_lease_seconds must be greater than zero")
+    if supervisor.special_max_concurrency <= 0:
+        raise ValueError("special_processing.max_concurrency must be greater than zero")
     crawl = CrawlConfig(
         urls={str(k): str(v) for k, v in dict(crawl_raw.get("urls", {})).items()},
         collect_tags=_string_tuple(crawl_raw.get("collect_tags", []), "collect_tags"),

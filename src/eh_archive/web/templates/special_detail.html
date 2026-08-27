@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}特殊处理 #{{ workflow.id }} ▪ EH Archive控制台{% endblock %}
+{% block content %}
+<div class="page-head"><div><a class="back" href="/special">← 返回特殊处理</a><p class="eyebrow mono">workflow #{{ workflow.id }} · {{ manga.manga_id }}</p><h1>{{ manga.name or manga.real_name or manga.manga_id }}</h1></div><span class="badge large {{ workflow.status }}">{{ workflow.status }}</span></div>
+{% if notice %}<div class="alert success">操作已提交；Supervisor 将从数据库领取对应的一次性任务。</div>{% endif %}
+{% include "_special_workflow_panel.html" %}
+{% endblock %}

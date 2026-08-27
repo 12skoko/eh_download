@@ -12,11 +12,17 @@
     <div><dt>活动 attempt</dt><dd>{{ row.active_attempt_id or '—' }}</dd></div><div><dt>租约到期</dt><dd>{{ row.lease_until|datetime }}</dd></div>
   </dl></article>
   <article class="panel"><div class="section-head"><div><p class="eyebrow">人工编辑</p><h2>备注与优先级</h2></div></div>
-    <form method="post" action="/manga/{{ row.manga_id }}/remark" class="stack-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><label>备注<textarea name="remark" rows="3">{{ row.remark or '' }}</textarea></label><button type="submit">保存备注</button></form>
+    <form method="post" action="/manga/{{ row.manga_id }}/remark" class="stack-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><label>人工备注<textarea name="remark" rows="3">{{ row.remark|user_remark }}</textarea></label><p class="field-help">特殊处理摘要由系统维护，人工备注不会反向控制任务。</p><button type="submit">保存备注</button></form>
     <form method="post" action="/manga/{{ row.manga_id }}/priority" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><label>优先级<input type="number" name="priority" value="{{ row.priority }}"></label><button type="submit">更新</button></form>
   </article>
 </section>
 {% if row.last_error_code %}<section class="panel error-panel"><div class="section-head"><div><p class="eyebrow">最近故障</p><h2>{{ row.last_error_code }}</h2></div><span>{{ row.last_error_at|datetime }}</span></div><p>{{ row.last_error_detail }}</p><p class="mono">operation: {{ row.last_error_operation or '—' }}</p></section>{% endif %}
+{% if special_workflow %}
+<section class="panel special-panel"><div class="section-head"><div><p class="eyebrow">特殊处理</p><h2>{{ special_workflow.kind }}</h2></div><span class="badge {{ special_workflow.status }}">{{ special_workflow.status }}</span></div><dl class="facts two"><div><dt>阶段</dt><dd>{{ special_workflow.phase|special_phase_label }}</dd></div><div><dt>更新时间</dt><dd>{{ special_workflow.updated_at|datetime }}</dd></div></dl><div class="panel-actions"><a class="button primary" href="/special/workflows/{{ special_workflow.id }}">打开特殊处理工作流</a></div></section>
+{% endif %}
+{% if not special_workflow and row.status == 'manual_review' and row.last_error_code|lower == 'video_torrent' %}
+<section class="panel special-panel"><div class="section-head"><div><p class="eyebrow">视频 Torrent</p><h2>检测到需要人工处理的种子</h2></div><span class="badge warning">需要人工选择</span></div><p>启用的扩展模块可以接管这个档案；依赖检查会在对应的一次性任务真正执行时进行。</p><div class="panel-actions">{% if special_entry %}<form method="post" action="/special/start/{{ row.manga_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><button class="primary" type="submit">进入 {{ special_entry.label }}</button></form>{% endif %}<form method="post" action="/manga/{{ row.manga_id }}/skip-video"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><button type="submit">继续普通流程并跳过视频</button></form></div></section>
+{% endif %}
 {% if row.last_error_code|lower == 'lrr_409' or row.rename_target_filename %}
 <section class="panel table-panel filename-match-panel">
   <div class="section-head"><div><p class="eyebrow">重复排查</p><h2>同名档案</h2></div><span class="mono break">{{ row.artifact_filename or '未登记文件名' }}</span></div>
@@ -44,7 +50,7 @@
 </section>
 {% endif %}
 <section class="panel status-control-panel"><div class="section-head"><div><p class="eyebrow">人工处理</p><h2>状态调整</h2></div></div>
-  {% set execution_active = row.active_attempt_id or row.lease_owner or row.lease_token %}
+  {% set execution_active = row.active_attempt_id or row.lease_owner or row.lease_token or (special_workflow and special_workflow.status == 'active') %}
   {% if expired_attempt %}
   <div class="alert warning lease-warning"><div><strong>活动任务的租约已经过期</strong><p>确认旧进程和外部系统状态后，可解除租约并转入人工复核。</p></div><button type="button" class="warning-button" data-open-dialog="release-expired-lease-dialog">解除过期租约</button></div>
   <dialog id="release-expired-lease-dialog" class="status-dialog">

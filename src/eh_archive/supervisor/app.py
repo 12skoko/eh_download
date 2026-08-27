@@ -28,6 +28,8 @@ from ..logging import (
     get_logger,
     session_log_path,
 )
+from ..special import SpecialRepository
+from ..special.handlers import enabled_module_capabilities
 
 log = get_logger(__name__)
 
@@ -74,6 +76,7 @@ class Supervisor:
         self.failed_operations: set[str] = set()
         self.last_collect = 0.0
         self.last_health_check = 0.0
+        self.next_special_start_at = 0.0
         self.health_checks_enabled = True
         self.maintenance_active = False
         self.maintenance_idle_logged = False
@@ -83,6 +86,18 @@ class Supervisor:
         disabled = [name for name, enabled in self.config.modules.items() if not enabled]
         if disabled:
             log.info("supervisor modules disabled by config: %s", ", ".join(disabled))
+        self.special_enabled_kinds: tuple[str, ...] = ()
+        self.special_concurrency_limit = 0
+        if self.config.special_processing_enabled and self.config.modules.get(
+            "special_processing", True
+        ):
+            capabilities = enabled_module_capabilities(config_dir)
+            self.special_enabled_kinds = tuple(item.kind for item in capabilities)
+            if capabilities:
+                self.special_concurrency_limit = min(
+                    self.config.special_max_concurrency,
+                    min(item.max_concurrency for item in capabilities),
+                )
 
     def stop(self, *_args) -> None:
         self.stopping = True
@@ -109,6 +124,7 @@ class Supervisor:
             return
         self._complete_cancellations()
         self._maybe_collect()
+        self._maybe_special_jobs()
         for operation in TASK_OPERATIONS:
             if not self.config.modules[operation] or self._paused(operation):
                 continue
@@ -384,6 +400,7 @@ class Supervisor:
                     child.returncode,
                 )
                 self.children.pop(operation, None)
+                special_child = operation.startswith("special:")
                 if operation in TASK_OPERATIONS:
                     self.next_start_at[operation] = (
                         time.monotonic() + self.config.module_restart_delay_seconds
@@ -399,19 +416,52 @@ class Supervisor:
                     continue
                 if child.returncode == EH_SITE_UNAVAILABLE_EXIT_CODE:
                     cooldown = self.app.eh_unavailable_cooldown_seconds
+                    affected_operation = "special_processing" if special_child else operation
                     if cooldown == 0:
+                        if special_child:
+                            self.next_special_start_at = max(
+                                self.next_special_start_at,
+                                time.monotonic() + self.config.module_restart_delay_seconds,
+                            )
+                            log.error(
+                                "special module site access failed while cooldown is disabled; "
+                                "ordinary Supervisor scheduling continues"
+                            )
+                            continue
                         self._enter_draining(
-                            operation,
+                            affected_operation,
                             2,
                             "E-Hentai/ExHentai unavailable and module cooldown is disabled",
                         )
                         continue
-                    self.next_start_at[operation] = time.monotonic() + cooldown
+                    cooldown_until = time.monotonic() + cooldown
+                    if special_child:
+                        self.next_special_start_at = max(
+                            self.next_special_start_at,
+                            cooldown_until,
+                        )
+                    else:
+                        self.next_start_at[operation] = cooldown_until
                     log.warning(
                         "E-Hentai/ExHentai unavailable; submodule cooling down: "
                         "operation=%s cooldown_seconds=%s; other modules continue",
-                        operation,
+                        affected_operation,
                         cooldown,
+                    )
+                    continue
+                if special_child:
+                    # Extension failures are confined to their persisted job.
+                    # The worker records the failure for retry/exit in Web; an
+                    # optional module must never drain the ordinary pipeline.
+                    self.next_special_start_at = max(
+                        self.next_special_start_at,
+                        time.monotonic() + self.config.module_restart_delay_seconds,
+                    )
+                    log.error(
+                        "special worker failed without draining Supervisor: "
+                        "operation=%s returncode=%s",
+                        operation,
+                        child.returncode,
                     )
                     continue
                 if child.returncode not in SEVERE_CHILD_EXIT_CODES:
@@ -421,7 +471,7 @@ class Supervisor:
                         child.returncode,
                     )
                 self._enter_draining(
-                    operation,
+                    "special_processing" if special_child else operation,
                     int(child.returncode),
                     f"task exited with severe code {child.returncode}",
                 )
@@ -510,6 +560,73 @@ class Supervisor:
             [sys.executable, "-m", "eh_archive.tasks.collect", "--config-dir", self.config_dir],
         )
         self.last_collect = now
+
+    def _maybe_special_jobs(self) -> None:
+        enabled_kinds = getattr(self, "special_enabled_kinds", ())
+        if not enabled_kinds or self._paused("special_processing"):
+            return
+        now = time.monotonic()
+        if now < self.next_special_start_at:
+            return
+        running = sum(
+            1
+            for key, child in self.children.items()
+            if key.startswith("special:") and child.poll() is None
+        )
+        capacity = getattr(self, "special_concurrency_limit", 0) - running
+        while capacity > 0:
+            with self.database.session() as session:
+                claim = SpecialRepository(
+                    session, run_id=self.run_id, timezone=self.app.timezone
+                ).claim_next(
+                    owner=self.owner,
+                    lease_seconds=self.config.special_job_lease_seconds,
+                    enabled_kinds=enabled_kinds,
+                )
+            if claim is None:
+                break
+            key = f"special:{claim.job_id}"
+            try:
+                self._start_child(
+                    key,
+                    [
+                        sys.executable,
+                        "-m",
+                        "eh_archive.special.worker",
+                        "--job-id",
+                        str(claim.job_id),
+                        "--workflow-id",
+                        str(claim.workflow_id),
+                        "--lease-token",
+                        claim.lease_token,
+                        "--lease-owner",
+                        claim.lease_owner,
+                        "--config-dir",
+                        self.config_dir,
+                        "--run-id",
+                        self.run_id,
+                        "--log-path",
+                        str(
+                            session_log_path(
+                                self.app.log_dir,
+                                f"special-{claim.job_id}",
+                                timezone=self.app.timezone,
+                                run_id=self.run_id,
+                            )
+                        ),
+                    ],
+                )
+            except OSError as exc:
+                with self.database.session() as session:
+                    SpecialRepository(session, run_id=self.run_id, timezone=self.app.timezone).fail(
+                        claim,
+                        error_code="special_worker_start_failed",
+                        error_detail=str(exc),
+                    )
+                log.exception("failed to start special worker: job_id=%s", claim.job_id)
+                break
+            capacity -= 1
+        self.next_special_start_at = now + self.config.special_processing_poll_seconds
 
     def _complete_cancellations(self) -> None:
         with self.database.session() as session:

@@ -19,6 +19,7 @@
       <a class="{{ 'active' if request.url.path == '/' else '' }}" href="/">总览</a>
       <a class="{{ 'active' if request.url.path.startswith('/manga') else '' }}" href="/manga">档案队列</a>
       <a class="{{ 'active' if request.url.path == '/review' else '' }}" href="/review">人工复核</a>
+      <a class="{{ 'active' if request.url.path.startswith('/special') else '' }}" href="/special">特殊处理</a>
       <a class="{{ 'active' if request.url.path == '/events' else '' }}" href="/events">事件与错误</a>
       <a class="{{ 'active' if request.url.path == '/config' else '' }}" href="/config">配置</a>
     </nav>

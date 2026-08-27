@@ -151,7 +151,7 @@ special_processing
 进入过程不是脚本通过 remark 自动触发，而是用户在 Web 点击明确的模块操作，例如：
 
 ```text
-[进入视频档案特殊处理]
+[进入视频种子下载与整合]
 ```
 
 Web 在一个数据库事务中完成：
@@ -170,8 +170,7 @@ Web 在一个数据库事务中完成：
 
 进入特殊处理与启动第一个 worker 是两个概念：
 
-- 通用入口只创建 workflow 并切换 Manga 状态，初始 phase 可以等待用户继续操作；
-- 专用页面可以提供“进入并加载 Torrent 列表”的组合按钮，在同一事务中额外创建第一个 queued `special_job`；
+- 通用入口根据结构化状态和错误代码解析具体模块，创建 workflow、切换 Manga 状态，并为视频模块创建第一个 queued `special_job`；
 - 无论采用哪个按钮，Supervisor 只根据 `special_job` 领取 worker，不根据 Manga 状态或 remark 猜测要运行什么。
 
 进入 `special_processing` 后，普通下载、校验、上传和清理 worker 都不再领取该 Manga。Web 的特殊处理面板成为该档案的主要控制入口，直到 workflow 成功、取消或人工退出。
@@ -1122,7 +1121,7 @@ worker 每次启动时重新加载：
 - category、下载根目录、工作根目录和输出布局修改应显示明显警告；
 - 配置更新必须先构造候选配置并完整校验，再原子替换文件。
 
-所有本地目录必须是绝对路径。模块配置加载失败、ffmpeg 不可用或根目录健康检查失败时，Web 可以展示推荐模块，但必须禁用“进入特殊处理”按钮并说明原因。
+所有本地目录必须是绝对路径。普通档案详情只在模块配置存在且 `enabled=true`、档案处于 `manual_review` 且结构化错误代码为 `video_torrent` 时展示通用特殊处理入口；它不检查 ffmpeg、下载文件或工作目录。加载 Torrent 时检查 EH 能力，提交选择时检查 qBittorrent，手动整理任务确认两个 Torrent 完成后才检查本地内容、ffmpeg、WebP 编码器和工作目录。
 
 ## 14. 错误、恢复与人工处理
 
@@ -1184,13 +1183,15 @@ Web 只展示清理后的错误摘要，不直接展示完整路径、私有 URL
 
 ### 15.3 健康状态
 
-可增加：
+按实际操作阶段记录或展示，不从普通档案详情页探测：
 
 - ffmpeg 可执行与编码器健康；
 - special download root 可读写和可用空间；
 - special work root 可读写和可用空间；
 - 视频特殊模块 paused/running 状态；
 - 活动 workflow 数、queued/running/failed job 数。
+
+特殊 Worker 的模块级失败只更新对应 job/workflow 并设置特殊调度冷却，不得让普通 Supervisor 进入 draining。
 
 ## 16. 测试计划
 
