@@ -29,6 +29,7 @@ class WorkflowDefinition:
     cancel_status: str
     operations: dict[str, OperationDefinition]
     entry_error_codes: frozenset[str] = frozenset()
+    entry_remark_tokens: frozenset[str] = frozenset()
     auto_start: bool = False
 
 
@@ -59,6 +60,7 @@ VIDEO_ARCHIVE = WorkflowDefinition(
     success_status="downloaded",
     cancel_status="manual_review",
     entry_error_codes=frozenset({"video_torrent"}),
+    entry_remark_tokens=frozenset({"video_torrent"}),
     operations={
         LOAD_TORRENT_OPTIONS: OperationDefinition(
             LOAD_TORRENT_OPTIONS,
@@ -111,16 +113,21 @@ def eligible_workflow_definitions(
     *,
     status: str,
     error_code: str | None,
+    remark: str | None = None,
 ) -> tuple[WorkflowDefinition, ...]:
     """Match extension entry points using persisted archive fields only."""
 
     normalized_error = (error_code or "").casefold()
+    normalized_remark = (remark or "").casefold()
     return tuple(
         definition
         for definition in WORKFLOW_REGISTRY.values()
         if status in definition.entry_statuses
         and (
-            not definition.entry_error_codes
+            (not definition.entry_error_codes and not definition.entry_remark_tokens)
             or normalized_error in definition.entry_error_codes
+            or any(
+                token.casefold() in normalized_remark for token in definition.entry_remark_tokens
+            )
         )
     )

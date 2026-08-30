@@ -29,7 +29,7 @@ from .registry import (
     eligible_workflow_definitions,
     get_operation,
 )
-from .remarks import restore_entry_error, sync_remark
+from .remarks import restore_entry_error, sync_remark, user_remark
 from .repository import SpecialRepository
 
 
@@ -101,6 +101,7 @@ def special_entry_for_manga(
     matches = eligible_workflow_definitions(
         status=manga.status,
         error_code=manga.last_error_code,
+        remark=user_remark(manga.remark),
     )
     for definition in matches:
         if special_module_health(definition.kind, config_dir).available:
@@ -152,6 +153,7 @@ class SpecialWorkflowService:
         matches = eligible_workflow_definitions(
             status=manga.status,
             error_code=manga.last_error_code,
+            remark=user_remark(manga.remark),
         )
         enabled = [
             definition
@@ -165,7 +167,11 @@ class SpecialWorkflowService:
         definition = enabled[0]
         if definition.kind != VIDEO_ARCHIVE.kind:
             raise SpecialInvalidRequest("当前特殊处理模块尚未实现 Web 入口")
-        return self._start_video_archive_locked(manga, load_options=load_options)
+        return self._start_video_archive_locked(
+            manga,
+            load_options=load_options,
+            entry_reason=self._video_archive_entry_reason(manga) or "manual_video_archive",
+        )
 
     def start_video_archive(
         self,
@@ -185,13 +191,18 @@ class SpecialWorkflowService:
         self._require_version(manga.row_version, row_version)
         if manga.status not in VIDEO_ARCHIVE.entry_statuses:
             raise SpecialInvalidRequest("只有人工复核状态可以进入视频档案特殊处理")
-        return self._start_video_archive_locked(manga, load_options=load_options)
+        return self._start_video_archive_locked(
+            manga,
+            load_options=load_options,
+            entry_reason=self._video_archive_entry_reason(manga) or "manual_video_archive",
+        )
 
     def _start_video_archive_locked(
         self,
         manga: MangaRecord,
         *,
         load_options: bool,
+        entry_reason: str,
     ) -> SpecialWorkflow:
         module = load_video_archive_config(self.config_dir)
         if manga.active_attempt_id is not None or manga.lease_owner or manga.lease_token:
@@ -202,7 +213,7 @@ class SpecialWorkflowService:
         previous = manga.status
         payload = {
             "entry": {
-                "reason": "video_torrent_detected",
+                "reason": entry_reason,
                 "source_error_code": manga.last_error_code,
                 "source_error_operation": manga.last_error_operation,
                 "source_error_detail": manga.last_error_detail,
@@ -238,7 +249,11 @@ class SpecialWorkflowService:
             operation=None,
             from_status=previous,
             to_status=manga.status,
-            detail={"load_options": load_options, "source_error_code": manga.last_error_code},
+            detail={
+                "load_options": load_options,
+                "entry_reason": entry_reason,
+                "source_error_code": manga.last_error_code,
+            },
         )
         if load_options:
             self.repository.queue_job(
@@ -248,6 +263,14 @@ class SpecialWorkflowService:
                 requested_by=self.actor,
             )
         return workflow
+
+    @staticmethod
+    def _video_archive_entry_reason(manga: MangaRecord) -> str | None:
+        if (manga.last_error_code or "").casefold() == "video_torrent":
+            return "video_torrent_detected"
+        if "video_torrent" in user_remark(manga.remark).casefold():
+            return "video_torrent_marked_by_user"
+        return None
 
     def queue_load(self, workflow_id: int, *, row_version: int) -> SpecialJob:
         self._require_module_enabled()

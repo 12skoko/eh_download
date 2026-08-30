@@ -393,7 +393,7 @@ Web 不执行以下动作：
 
 ### 8.2 档案详情页特殊处理面板
 
-当 Manga 为 `manual_review` 且错误为 `video_torrent` 时，显示：
+当 Manga 为 `manual_review`，并且错误为 `video_torrent` 或用户 Remark 包含 `video_torrent` 时，显示（程序维护的特殊处理摘要不参与 Remark 匹配）：
 
 ```text
 检测到视频 Torrent

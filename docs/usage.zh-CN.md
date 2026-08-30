@@ -464,7 +464,7 @@ python scripts/cleanup_download_artifacts.py --config-dir config --apply
 
 普通 torrent 任务检测到视频候选时会让档案进入 `manual_review`，不会自动下载两个版本。打开档案详情后可以选择：
 
-- “进入视频种子下载与整合”：通用入口根据 `manual_review + video_torrent` 解析已启用模块，原子创建 `special_workflow` 和第一个 `special_job`；
+- “进入视频种子下载与整合”：通用入口根据 `manual_review`，以及 `last_error_code=video_torrent` 或用户 Remark 包含 `video_torrent`，解析已启用模块并原子创建 `special_workflow` 和第一个 `special_job`；程序维护的特殊处理摘要不参与 Remark 匹配；
 - “继续普通流程并跳过视频”：写入现有显式 `skip video` 选择并返回普通单 torrent 流程。
 
 进入特殊流程后，在候选页分别选择一个图片 torrent 和一个视频 torrent。带有无 Seeder、过时、红色日期或重采样标记的候选必须按角色确认风险。Web 只保存内部候选 ID；一次性 worker 会重新加载页面、确认候选没有过期，再把两个 torrent 提交给专用 qBittorrent category。两个 hash 保存成功后 worker 退出，下载由 qBittorrent 后台继续。
