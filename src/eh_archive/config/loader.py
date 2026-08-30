@@ -21,6 +21,7 @@ DEFAULT_LOCATIONS = (
 
 SUPERVISOR_MODULES = (
     "collect",
+    "screen",
     "details",
     "torrent_download",
     "direct_download",
@@ -112,6 +113,7 @@ class SupervisorConfig:
     max_concurrency: dict[str, int] = field(
         default_factory=lambda: {
             "collect": 1,
+            "screen": 1,
             "torrent_download": 1,
             "direct_download": 1,
             "validate": 1,

@@ -9,7 +9,7 @@ from .models import (
     SystemControl,
     SystemHealth,
 )
-from .repository import ArchiveRepository, ClaimedAttempt, ScreenDecision
+from .repository import ArchiveRepository, ClaimedAttempt
 from .session import Database, create_database
 
 __all__ = [
@@ -21,7 +21,6 @@ __all__ = [
     "JobAttempt",
     "MangaInfoRecord",
     "MangaRecord",
-    "ScreenDecision",
     "SpecialJob",
     "SpecialWorkflow",
     "SystemControl",

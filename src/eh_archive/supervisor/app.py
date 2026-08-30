@@ -35,6 +35,7 @@ log = get_logger(__name__)
 
 
 TASK_OPERATIONS = (
+    "screen",
     "details",
     "torrent_download",
     "direct_download",
@@ -142,12 +143,23 @@ class Supervisor:
                     continue
             # One bounded child per operation. qBittorrent's own background
             # transfer count is intentionally not controlled here.
+            task_module = "eh_archive.tasks.screen" if operation == "screen" else self.runner_module
             self._start_child(
                 operation,
                 [
                     sys.executable,
                     "-m",
-                    self.runner_module,
+                    task_module,
+                    "--config-dir",
+                    self.config_dir,
+                    "--limit",
+                    str(self.config.batch_size_for(operation)),
+                ]
+                if operation == "screen"
+                else [
+                    sys.executable,
+                    "-m",
+                    task_module,
                     "--operation",
                     operation,
                     "--config-dir",

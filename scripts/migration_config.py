@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 from typing import Any
-import tomllib
 
 from sqlalchemy.engine import URL
 
@@ -19,13 +19,13 @@ def _database_url(
 ) -> URL:
     section = raw.get(section_name)
     if not isinstance(section, dict):
-        raise ValueError(f"missing [{section_name}] section")
+        raise TypeError(f"missing [{section_name}] section")
     host = _required_text(section, "host", section_name)
     username = _required_text(section, "username", section_name)
     database = _required_text(section, "database", section_name)
     password = section.get("password", "")
     if not isinstance(password, str):
-        raise ValueError(f"[{section_name}] password must be a string")
+        raise TypeError(f"[{section_name}] password must be a string")
     port = section.get("port", default_port)
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise ValueError(f"[{section_name}] port must be an integer between 1 and 65535")
@@ -49,7 +49,7 @@ def load_migration_config(path: str | Path) -> tuple[URL, URL]:
     except tomllib.TOMLDecodeError as exc:
         raise ValueError(f"invalid TOML in migration config: {config_path}: {exc}") from exc
     if not isinstance(raw, dict):
-        raise ValueError("migration config must contain TOML tables")
+        raise TypeError("migration config must contain TOML tables")
     mysql = _database_url(
         raw, section_name="mysql", drivername="mysql+pymysql", default_port=3306
     )

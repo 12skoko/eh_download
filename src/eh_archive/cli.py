@@ -50,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     task.add_argument(
         "operation",
         choices=(
+            "screen",
             "details",
             "torrent_download",
             "direct_download",
@@ -97,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("两次输入的密码不一致")
         print(hash_password(password))
         return 0
-    app, _, crawl, secrets = load_config(args.config_dir)
+    app, supervisor_config, crawl, secrets = load_config(args.config_dir)
     session_run_id = str(uuid.uuid4())
     component = args.command if args.command in {"supervisor", "web"} else "cli"
     main_log_path = configure_logging(
@@ -114,6 +115,21 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         return 0 if database.ping() else 1
     if args.command == "task":
+        if args.operation == "screen":
+            from .services.screening import ScreeningService
+
+            with database.session() as session:
+                result = ScreeningService(ArchiveRepository(session), crawl).run_batch(
+                    args.limit
+                    if args.limit is not None
+                    else supervisor_config.batch_size_for("screen"),
+                    actor="cli",
+                )
+            print(
+                f"screen processed={result.processed} queued={result.queued} "
+                f"filtered_out={result.filtered_out} skipped={result.skipped}"
+            )
+            return 0
         from .tasks.runner import TaskExecutor
 
         TaskExecutor(database, config_dir=args.config_dir).run_batch(args.operation, args.limit)
@@ -211,13 +227,9 @@ def main(argv: list[str] | None = None) -> int:
                         "stop_mode": args.stop_mode or "full",
                         "end": end,
                         "observation_days": crawl.observation_days,
-                        "name_keywords": list(crawl.name_keywords),
-                        "tag_keywords": list(crawl.tag_keywords),
-                        "exclude_categories": list(crawl.exclude_categories),
                     },
                 )
                 Collector(repository, app, crawl, secrets).collect_url(url, end=end)
-                repository.screenall()
                 repository.finish_collect_run("succeeded", detail={"end": end})
             print(f"collect run_id={run_id}")
             return 0

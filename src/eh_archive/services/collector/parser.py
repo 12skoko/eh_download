@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 import html
 import json
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -83,12 +82,6 @@ def _parse_datetime(value: str | None) -> datetime | None:
     return None
 
 
-def observation_deadline(posted_at: datetime | None, observation_days: int) -> datetime | None:
-    if posted_at is None:
-        return None
-    return posted_at + timedelta(days=observation_days)
-
-
 def _int_text(value: str, default: int | None = None) -> int | None:
     found = re.search(r"-?\d+", value or "")
     return int(found.group()) if found else default
@@ -131,6 +124,13 @@ def parse_metadata(tr_soup: Any) -> Manga:
         torrent_link = str(metadata_divs[5].find("a").get("href", ""))
     tag_node = name_node.find_next_sibling("div") if name_node else None
     posted_at = _parse_datetime(posted_text)
+    if posted_at is None:
+        raise ArchiveError(
+            "collection_posted_at_invalid",
+            f"gallery {manga_id} has a missing or invalid posted_at value",
+            ErrorClass.SYSTEM,
+            detail={"manga_id": manga_id, "posted_at_raw": posted_text},
+        )
     return Manga(
         manga_id=manga_id,
         name=html.unescape(name),
@@ -267,115 +267,3 @@ class EhTagTranslation:
                 f"{self.group_names.get(row, row)}:{self.values.get(row_index, {}).get(tag, tag)}"
             )
         return ",".join(result)
-
-
-def contains_key(text: str, keyword: str) -> bool:
-    return bool(re.search(r"\b" + re.escape(keyword) + r"\b", text))
-
-
-def screen(similar_flag_list: list[float]) -> list[int]:
-    """Apply the legacy ``eh_utils.screen`` selection algorithm.
-
-    The integer tens digit is the quality tier (3, then 2, then 1).  Within
-    the selected tier, each unit digit represents an independent variant and
-    the highest fractional score wins.  Consequently a group can select more
-    than one gallery when several unit variants are present.
-    """
-
-    result = [0] * len(similar_flag_list)
-    tiers: dict[int, list[tuple[float, int]]] = {1: [], 2: [], 3: []}
-    for index, value in enumerate(similar_flag_list):
-        tier = int(value // 10)
-        if tier in tiers:
-            fraction = round(value - tier * 10, 12)
-            tiers[tier].append((fraction, index))
-    selected = tiers[3] or tiers[2] or tiers[1]
-    by_variant: dict[int, list[tuple[float, int]]] = {}
-    for fraction, index in selected:
-        variant = int(fraction)
-        by_variant.setdefault(variant, []).append((round(fraction - variant, 12), index))
-    for candidates in by_variant.values():
-        # ``sorted(..., reverse=True)`` is stable in Python. The legacy helper
-        # therefore keeps the first row when fractional scores tie.
-        _score, index = max(candidates, key=lambda item: item[0])
-        result[index] = 1
-    return result
-
-
-def screen_group_id(real_name: str) -> str:
-    """Return a stable replacement for the legacy random relation id."""
-
-    # Group membership itself remains an exact ``real_name`` match, as in the
-    # legacy query. Do not case-fold here or two legacy groups could collide.
-    digest = hashlib.sha1(real_name.encode("utf-8")).hexdigest()
-    return f"screen-{digest}"
-
-
-def screen_priority(manga: Manga) -> float:
-    """Calculate the legacy screenall priority for one gallery."""
-
-    chinese = "chinese" in manga.tags_raw.lower()
-    uncensored = "無修正" in manga.name or "无修正" in manga.name
-    rating = manga.rating or 0
-    if uncensored:
-        if chinese:
-            base = 31 if rating > 30 else 22
-        else:
-            base = 21
-    elif chinese:
-        base = 23 if rating > 30 else 12
-    else:
-        base = 11
-    posted_at = manga.posted_at
-    if posted_at is not None and posted_at.tzinfo is None:
-        posted_at = posted_at.replace(tzinfo=UTC)
-    timestamp = int(posted_at.timestamp()) if posted_at else 0
-    return base + rating * 0.01 + timestamp * 0.000000000001
-
-
-def judge_screen_flag(
-    manga: Manga,
-    name_keywords: tuple[str, ...] | list[str] = (),
-    tag_keywords: tuple[str, ...] | list[str] = (),
-    *,
-    observation_days: int = 1,
-    now: datetime | None = None,
-) -> int:
-    languages = {
-        "english",
-        "korean",
-        "russian",
-        "french",
-        "dutch",
-        "hungarian",
-        "italian",
-        "polish",
-        "portuguese",
-        "spanish",
-        "thai",
-        "vietnamese",
-        "ukrainian",
-    }
-    lowered_tags = manga.tags_raw.lower()
-    if (
-        "translated" in lowered_tags
-        and "chinese" not in lowered_tags
-        and any(language in lowered_tags for language in languages)
-    ):
-        return 0
-    if any(contains_key(manga.name.lower(), keyword.lower()) for keyword in name_keywords):
-        return 2
-    if any(contains_key(manga.tags_raw.lower(), keyword.lower()) for keyword in tag_keywords):
-        return 2
-    if manga.category in {"Manga", "Doujinshi"} and (
-        "chinese" in lowered_tags or (manga.rating or 0) >= 30
-    ):
-        current = now or datetime.now(UTC)
-        posted_at = manga.posted_at
-        if posted_at is not None and posted_at.tzinfo is None:
-            posted_at = posted_at.replace(tzinfo=UTC)
-        if current.tzinfo is None:
-            current = current.replace(tzinfo=UTC)
-        age = (current - posted_at).total_seconds() if posted_at else 0
-        return 1 if age >= observation_days * 86400 else -1
-    return 0

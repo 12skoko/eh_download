@@ -6,7 +6,6 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     BigInteger,
-    Boolean,
     CheckConstraint,
     DateTime,
     Float,
@@ -44,6 +43,7 @@ STATUS_VALUES = (
     "quarantined",
     "manual_review",
     "special_processing",
+    "filtered_out",
     "skipped",
     "unavailable",
     "outdated",
@@ -102,7 +102,6 @@ class MangaRecord(Base):
         Index("ix_manga_lease_until", "lease_until"),
         Index("ix_manga_external_download_id", "external_download_id"),
         Index("ix_manga_lrr_archive_id", "lrr_archive_id"),
-        Index("ix_manga_screen_pending", "screen_pending", "status"),
     )
 
     manga_id: Mapped[str] = mapped_column(String(100), primary_key=True)
@@ -121,12 +120,6 @@ class MangaRecord(Base):
     queue_source: Mapped[str] = mapped_column(String(16), default="automatic")
 
     status: Mapped[str] = mapped_column(String(32), default="discovered", nullable=False)
-    # ``screen_pending`` is the explicit replacement for legacy autostate=1.
-    # A discovered row with this flag set participates in screenall; a plain
-    # discovered row was legacy state=1/autostate=NULL and is only recorded.
-    screen_pending: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="false", nullable=False
-    )
     screen_group_id: Mapped[str | None] = mapped_column(String(64))
     priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     download_method: Mapped[str | None] = mapped_column(String(16))

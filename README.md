@@ -13,8 +13,8 @@ recoverable services driven by PostgreSQL state.
 
 The complete Chinese setup and operations guide is [docs/usage.zh-CN.md](docs/usage.zh-CN.md).
 
-The Supervisor runs bounded collection/download/validation/upload/cleanup
-workers. After each upload worker finishes its batch, it requests one global
+The Supervisor runs periodic collection and bounded on-demand
+screen/download/validation/upload/cleanup workers. After each upload worker finishes its batch, it requests one global
 LANraragi thumbnail regeneration pass.
 
 The Web “特殊处理” area provides persistent, user-driven one-shot workflows.

@@ -25,6 +25,7 @@ max_concurrency = 1
 
 [modules]
 collect = true
+screen = true
 details = true
 torrent_download = true
 direct_download = true
@@ -37,6 +38,7 @@ special_processing = true
 
 [max_concurrency]
 collect = 1
+screen = 1
 torrent_download = 1
 direct_download = 1
 validate = 1

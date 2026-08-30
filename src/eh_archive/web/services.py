@@ -46,6 +46,7 @@ STATUS_LABELS = {
     Status.QUARANTINED.value: "已隔离",
     Status.MANUAL_REVIEW.value: "人工复核",
     Status.SPECIAL_PROCESSING.value: "特殊处理中",
+    Status.FILTERED_OUT.value: "筛选排除",
     Status.SKIPPED.value: "已跳过",
     Status.UNAVAILABLE.value: "不可用",
     Status.OUTDATED.value: "已过时",
@@ -59,6 +60,7 @@ STATUS_LABELS = {
 COMPONENT_LABELS = {
     "supervisor": "Supervisor",
     "collect": "采集",
+    "screen": "筛选",
     "details": "详情补全",
     "torrent_download": "Torrent 下载",
     "direct_download": "直接下载",
@@ -168,6 +170,7 @@ FORCE_DELETE_SOURCE_STATUSES = frozenset(
 _ACTION_EVENTS: dict[str, dict[str, str]] = {
     "retry": {
         Status.UNAVAILABLE.value: "retry",
+        Status.FILTERED_OUT.value: "rescreen",
         Status.SKIPPED.value: "override",
         Status.QUARANTINED.value: "redownload",
         Status.CANCELLED.value: "resume",
@@ -183,6 +186,7 @@ _ACTION_EVENTS: dict[str, dict[str, str]] = {
             Status.DOWNLOADING,
             Status.DOWNLOADED,
             Status.UPLOAD_PENDING,
+            Status.FILTERED_OUT,
             Status.SKIPPED,
             Status.UNAVAILABLE,
             Status.QUARANTINED,
@@ -319,6 +323,7 @@ class WebService:
         row.priority = priority
         row.remark = remark
         if row.status in {
+            Status.FILTERED_OUT.value,
             Status.SKIPPED.value,
             Status.UNAVAILABLE.value,
             Status.MANUAL_REVIEW.value,
@@ -535,7 +540,6 @@ class WebService:
         previous_status = row.status
         row.rename_target_filename = None
         if target_status == Status.DISCOVERED.value:
-            row.screen_pending = False
             row.screen_group_id = None
         row.status = target_status
         row.defer_until = None
@@ -1179,7 +1183,6 @@ def serialize_manga(row: MangaRecord) -> dict[str, Any]:
         "remark",
         "queue_source",
         "status",
-        "screen_pending",
         "screen_group_id",
         "priority",
         "download_method",

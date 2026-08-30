@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import argparse
 import uuid
-from collections import defaultdict
 from pathlib import Path
 
 from ..config import load_config
-from ..db import ArchiveRepository, Database, ScreenDecision
+from ..db import ArchiveRepository, Database
 from ..domain.errors import EH_SITE_UNAVAILABLE_EXIT_CODE, ErrorClass, classify_exception
 from ..logging import RunReport, clean_report_value, configure_logging, get_logger
 from ..services.collector import CollectionResult, Collector
@@ -21,9 +20,7 @@ def _collect_item_line(item) -> str:
         f"category={clean_report_value(item.category)}",
         f"status={item.status}",
     ]
-    if item.screen_pending:
-        fields.append("screen_pending=true")
-    if item.remark and not item.screen_pending:
+    if item.remark:
         fields.append(f"reason={clean_report_value(item.remark)}")
     return " | ".join(fields)
 
@@ -31,9 +28,6 @@ def _collect_item_line(item) -> str:
 def _write_collect_report(
     report: RunReport,
     source_results: list[tuple[str, CollectionResult]],
-    decisions: list[ScreenDecision],
-    *,
-    screened: int,
 ) -> None:
     report.section("crawl")
     combined = CollectionResult()
@@ -55,41 +49,14 @@ def _write_collect_report(
         f"pages={len(combined.pages)}, found={combined.discovered}, "
         f"created={sum(item.action == 'created' for item in combined.items)}, "
         f"updated={sum(item.action == 'updated' for item in combined.items)}, "
-        f"queued={combined.queued}, "
-        f"screen_pending={sum(item.screen_pending for item in combined.items)}, "
         f"deferred={combined.deferred}, "
-        "excluded="
-        f"{sum(item.remark in {'excluded_category', 'screen_not_eligible'} for item in combined.items)}, "
+        f"awaiting_screen={sum(item.status == 'discovered' for item in combined.items)}, "
         f"errors={combined.errors}"
     )
-
-    report.section("screen")
-    grouped: dict[str, list[ScreenDecision]] = defaultdict(list)
-    for decision in decisions:
-        grouped[decision.screen_group_id].append(decision)
-    for group in grouped.values():
-        first = group[0]
-        report.write(
-            f"group: {first.screen_group_id} | {clean_report_value(first.real_name)} | "
-            f"candidates={first.candidate_count}"
-        )
-        for decision in group:
-            outcome = "selected" if decision.selected else "rejected"
-            report.write(
-                f"{outcome}: {clean_report_value(decision.manga_id)} | "
-                f"status={decision.resulting_status} | priority={decision.priority:.6f}"
-            )
-        report.write("")
-    report.write(
-        f"screen summary: groups={len(grouped)}, processed={screened}, "
-        f"selected={sum(decision.selected for decision in decisions)}, "
-        f"rejected={sum(not decision.selected for decision in decisions)}"
-    )
-
     report.finish(
         {
             "status": "succeeded",
-            "queued_total": combined.queued + sum(decision.selected for decision in decisions),
+            "awaiting_screen": sum(item.status == "discovered" for item in combined.items),
         }
     )
 
@@ -108,10 +75,8 @@ def run(config_dir: str | Path = "config", *, end: int | None = None) -> int:
     report = RunReport(app.log_dir, "collect", timezone=app.timezone, run_id=run_id)
     report.fields({"config_dir": config_dir, "sources": len(crawl.collection_urls())})
     collect_end: int | None = None
-    screened = 0
     collection_urls = crawl.collection_urls()
     source_results: list[tuple[str, CollectionResult]] = []
-    screen_decisions: list[ScreenDecision] = []
     current_source: str | None = None
     try:
         with database.session() as session:
@@ -138,9 +103,6 @@ def run(config_dir: str | Path = "config", *, end: int | None = None) -> int:
                     "observation_days": crawl.observation_days,
                     "collect_end_days": crawl.collect_end_days,
                     "collect_end_offset": crawl.collect_end_offset,
-                    "name_keywords": list(crawl.name_keywords),
-                    "tag_keywords": list(crawl.tag_keywords),
-                    "exclude_categories": list(crawl.exclude_categories),
                 },
             )
             log.info(
@@ -157,8 +119,6 @@ def run(config_dir: str | Path = "config", *, end: int | None = None) -> int:
                     url, source="automatic", actor="collector", end=collect_end
                 )
                 source_results.append((url, result))
-            screened = repository.screenall(decisions=screen_decisions)
-            log.info("screenall completed: %s rows resolved run_id=%s", screened, run_id)
             repository.finish_collect_run("succeeded", detail={"end": collect_end})
     except Exception as exc:
         error = classify_exception(exc)
@@ -178,12 +138,11 @@ def run(config_dir: str | Path = "config", *, end: int | None = None) -> int:
             else 1
         )
 
-    _write_collect_report(report, source_results, screen_decisions, screened=screened)
+    _write_collect_report(report, source_results)
     log.info(
-        "automatic collection finished: run_id=%s end=%s screened=%s status=succeeded",
+        "automatic collection finished: run_id=%s end=%s status=succeeded",
         run_id,
         collect_end,
-        screened,
     )
     return 2 if report.write_failed else 0
 

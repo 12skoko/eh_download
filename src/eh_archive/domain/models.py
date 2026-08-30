@@ -23,7 +23,6 @@ class Manga:
     remark: str | None = None
     queue_source: QueueSource = QueueSource.AUTOMATIC
     status: Status = Status.DISCOVERED
-    screen_pending: bool = False
     screen_group_id: str | None = None
     priority: int = 0
     download_method: DownloadMethod | None = None

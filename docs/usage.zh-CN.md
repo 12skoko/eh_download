@@ -245,7 +245,7 @@ exclude_categories = ["Western"]
 latest = "https://e-hentai.org/?f_search=..."
 ```
 
-自动采集会跟随列表的下一页，并从最近 `collect_end_days` 天内最早的 `deferred` 记录计算终点：画廊 ID 减去 `collect_end_offset`。默认值与旧程序一致，分别是 6 天和 3000；找不到符合条件的记录时会抓到网站最后一页。`judge_screen_flag=0` 的条目保留为普通 `discovered`，`judge_screen_flag=1` 的条目保存为 `discovered` 并等待旧版 `screenall` 的同名版本筛选；只有进入 `screenall` 后未被选中的候选才会变为 `skipped`。命中关键词的条目直接进入 `download_pending`，新发布条目进入 `deferred`。观察期从画廊的 `posted_at` 开始计算，重复抓取不会重新计时。
+自动采集会跟随列表的下一页，并从最近 `collect_end_days` 天内最早的 `deferred` 记录计算终点：画廊 ID 减去 `collect_end_offset`。默认值与旧程序一致，分别是 6 天和 3000；找不到符合条件的记录时会抓到网站最后一页。Collect 只根据 `posted_at + observation_days` 维护时间状态：尚未到期的条目为 `deferred`，已经到期的条目为 `discovered`。观察期从画廊的 `posted_at` 开始计算，重复抓取不会重新计时。关键词、分类、语言、评分和同名版本选择全部由独立的 Screen 模块处理。
 
 `collect_tags` 会将标签转换为 ExHentai 标签页 URL，例如 `artist:tamano kedama` 转换为 `https://exhentai.org/tag/artist:tamano+kedama`，然后与 `[urls]` 合并并去重。它负责主动抓取标签页；`tag_keywords` 只负责条目抓取后的筛选，两者用途不同。
 
@@ -288,7 +288,7 @@ Supervisor 会在 05:30 停止启动新子模块，等待已有子模块自然�
 direct_download = false
 ```
 
-未写出的模块仍然默认启用。修改 `[modules]` 后需要重启 Supervisor；开关只影响 Supervisor 自动调度，显式执行 `eharchive task direct_download` 等手动命令仍然可用。关闭模块不会把等待中的条目标记成失败，例如关闭 `direct_download` 后，回退到直接下载、H@H 或 aria2 的条目会保留在 `download_pending`，重新启用后继续处理。
+未写出的模块仍然默认启用。修改 `[modules]` 后需要重启 Supervisor；开关只影响 Supervisor 自动调度，显式执行 `eharchive task screen`、`eharchive task direct_download` 等手动命令仍然可用。关闭模块不会把等待中的条目标记成失败，例如关闭 `screen` 后记录会保留在 `discovered`，关闭 `direct_download` 后回退到直接下载、H@H 或 aria2 的条目会保留在 `download_pending`，重新启用后继续处理。
 
 ## 5. 初始化数据库并检查连接
 
@@ -395,9 +395,17 @@ eharchive --config-dir config collect 'https://e-hentai.org/?f_search=...' --sto
 eharchive --config-dir config collect 'https://e-hentai.org/?f_search=...' --end 3000000
 ```
 
-`--stop-mode` 与 `--end` 互斥。不写 `--stop-mode` 时，手动 `collect` 仍默认抓到最后一页。采集使用 browse 会话；Cookie、代理或 EH 返回登录页时，错误会记录在日志和档案事件中。
+`--stop-mode` 与 `--end` 互斥。不写 `--stop-mode` 时，手动 `collect` 仍默认抓到最后一页。采集使用 browse 会话；Cookie、代理或 EH 返回登录页时，错误会记录在日志和档案事件中。列表条目缺少合法 `posted_at` 表示来源页面结构或日期格式已经异常，Collect 会以 `collection_posted_at_invalid` 系统错误中止并回滚本次事务，不会保存不可靠的数据。
 
-再次抓到数据库中已有的 `manga_id` 时，程序只刷新名称、链接、发布时间、分类、标签、页数、评分和上传者等网页元数据，不会重置正在下载、已上传、已完成或已删除等工作流状态。`deferred` 是唯一会在再次采集到时重新判断的已有状态：程序使用更新后的网页元数据重新执行 `judge_screen_flag`，可能回到普通 `discovered`、进入 screenall、直接进入 `download_pending`，或再次延后。Supervisor 不会仅因为 `defer_until` 已到而恢复记录；没有再次采集到的记录会一直保持 `deferred`。
+再次抓到数据库中已有的 `manga_id` 时，程序只刷新名称、链接、发布时间、分类、标签、页数、评分和上传者等网页元数据，不会重置正在下载、已上传、已完成或已删除等工作流状态。`deferred` 是唯一会在再次采集到时重新判断的已有状态：当前时间尚未达到 `posted_at + observation_days` 时继续保持 `deferred`，到期后变为 `discovered`。Supervisor 不会仅因为 `defer_until` 已到而恢复记录；没有再次采集到的记录会一直保持 `deferred`。
+
+Screen 不按固定周期运行。Supervisor 发现数据库中存在 `discovered` 后，按 `batch_size` 启动一个有界 Screen 子任务。也可以手工执行：
+
+```powershell
+eharchive --config-dir config task screen --limit 100
+```
+
+Screen 命中名称或标签关键词时进入 `download_pending`；不符合分类、语言、评分等基本收录规则时进入 `filtered_out`；符合规则但在同名版本比较中落选时进入 `skipped`；胜出版本进入 `download_pending`。`filtered_out` 表示未通过筛选准入，`skipped` 只表示参加版本比较后落选。
 
 ### 7.2 手工加入单个画廊
 
@@ -413,16 +421,15 @@ eharchive --config-dir config collect 'https://e-hentai.org/?f_search=...' --end
 ### 7.3 典型处理链路
 
 ```text
-discovered (screen_pending)
-        -> screenall -> download_pending / skipped
-discovered/deferred
-        -> download_pending
+collect -> deferred --再次采集且观察期已到--> discovered
+discovered -> screen -> filtered_out / skipped / download_pending / manual_review
+download_pending
         -> downloading -> downloaded
         -> validating -> preparing -> upload_pending
         -> uploading -> uploaded -> completed
 ```
 
-Supervisor 会自动运行 `details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。首次选择种子前必须取得完整 MangaInfo。程序忽略 `Outdated Torrents` 和红色时间的过时种子以及明确的 `1280x/800x/1920x/2560x` 重采样；仅剩这些种子时根据 `fallback_method` 切换 direct/H@H/aria2。非过时种子中出现视频标记时进入 `manual_review`，即使它同时是重采样；只有 remark 包含 `skip video` 时才把视频种子当作普通种子。小于预计大小 60% 的种子视为异常。其余候选用“同时更大且更新”淘汰旧版本；胜出版本没有 Seeder 或不同大小版本无法比较时进入 `manual_review`；剩余候选大小相同时依次按 Seeder 数和发布时间选择。
+Supervisor 会按需运行 `screen`、`details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。首次选择种子前必须取得完整 MangaInfo。程序忽略 `Outdated Torrents` 和红色时间的过时种子以及明确的 `1280x/800x/1920x/2560x` 重采样；仅剩这些种子时根据 `fallback_method` 切换 direct/H@H/aria2。非过时种子中出现视频标记时进入 `manual_review`，即使它同时是重采样；只有 remark 包含 `skip video` 时才把视频种子当作普通种子。小于预计大小 60% 的种子视为异常。其余候选用“同时更大且更新”淘汰旧版本；胜出版本没有 Seeder 或不同大小版本无法比较时进入 `manual_review`；剩余候选大小相同时依次按 Seeder 数和发布时间选择。
 
 qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的任务按 `torrent_poll_seconds` 延迟后再次检查，`stalledDL` 超过 `torrent_stall_seconds` 后会自动删除任务并切换 fallback。提交的新任务使用 manga ID 的数字部分作为 qBittorrent 显示名称，不改变种子内文件名。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小和 CRC，再为最终 ZIP 计算 LANraragi 所需的 SHA-1。
 

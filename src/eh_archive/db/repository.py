@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import and_, desc, exists, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from ..domain.models import Manga, MangaInfo
+from ..domain.models import MangaInfo
 from ..domain.states import (
     REPLACEMENT_DELETE_READY_STATUSES,
     TRANSITIONS,
@@ -33,18 +33,8 @@ class ClaimedAttempt:
     artifact_generation: int | None
 
 
-@dataclass(frozen=True)
-class ScreenDecision:
-    screen_group_id: str
-    real_name: str
-    manga_id: str
-    candidate_count: int
-    selected: bool
-    priority: float
-    resulting_status: str
-
-
 OPERATION_STATES: dict[str, tuple[tuple[str, ...], str | None]] = {
+    "screen": ((Status.DISCOVERED.value,), None),
     "details": (
         (
             Status.DOWNLOAD_PENDING.value,
@@ -258,8 +248,7 @@ class ArchiveRepository:
             current.status = record.status
             current.remark = record.remark
             current.defer_until = record.defer_until
-            current.screen_pending = record.screen_pending
-            current.screen_group_id = record.screen_group_id
+            current.screen_group_id = None
             current.updated_at = utcnow()
             current.row_version += 1
             if current.status != previous:
@@ -272,7 +261,12 @@ class ArchiveRepository:
                     to_status=current.status,
                     detail={"reason": "deferred_reclassified"},
                 )
-        if current.status in (Status.DISCOVERED.value, Status.DEFERRED.value, Status.SKIPPED.value):
+        if current.status in (
+            Status.DISCOVERED.value,
+            Status.DEFERRED.value,
+            Status.FILTERED_OUT.value,
+            Status.SKIPPED.value,
+        ):
             current.updated_at = utcnow()
         self.session.flush()
         if self.run_id is not None:
@@ -365,120 +359,12 @@ class ArchiveRepository:
         )
         return list(self.session.scalars(query))
 
-    @staticmethod
-    def _screen_manga(row: MangaRecord) -> Manga:
-        return Manga(
-            manga_id=row.manga_id,
-            name=row.name,
-            link=row.link,
-            real_name=row.real_name,
-            posted_at=row.posted_at,
-            category=row.category,
-            tags_raw=row.tags_raw,
-            pages=row.pages,
-            rating=row.rating,
-            uploader=row.uploader,
-        )
-
-    def _apply_screen_flag(
-        self,
-        row: MangaRecord,
-        *,
-        name_keywords: tuple[str, ...],
-        tag_keywords: tuple[str, ...],
-        observation_days: int,
-        exclude_categories: tuple[str, ...],
-        now: datetime,
-        actor: str,
-        reason: str,
-    ) -> int:
-        """Apply judge_screen_flag while preserving the legacy state split."""
-
-        from ..services.collector.parser import judge_screen_flag, observation_deadline
-
-        flag = judge_screen_flag(
-            self._screen_manga(row),
-            name_keywords,
-            tag_keywords,
-            observation_days=observation_days,
-            now=now,
-        )
-        if row.category in exclude_categories or flag == 0:
-            target = Status.DISCOVERED.value
-            pending = False
-            defer_until = None
-            remark = (
-                "excluded_category" if row.category in exclude_categories else "screen_not_eligible"
-            )
-        elif flag == -1:
-            deadline = observation_deadline(row.posted_at, observation_days)
-            if deadline is None:
-                target = Status.MANUAL_REVIEW.value
-                pending = False
-                defer_until = None
-                remark = "missing_posted_at"
-            else:
-                target = Status.DEFERRED.value
-                pending = False
-                defer_until = deadline
-                remark = "observation_period"
-        elif flag == 1:
-            target = Status.DISCOVERED.value
-            pending = True
-            defer_until = None
-            remark = "screen_pending"
-        else:
-            target = Status.DOWNLOAD_PENDING.value
-            pending = False
-            defer_until = None
-            remark = "screen_direct_queue"
-
-        previous = row.status
-        target_group_id = row.screen_group_id if pending else None
-        changed = (
-            previous != target
-            or row.screen_pending != pending
-            or row.defer_until != defer_until
-            or row.remark != remark
-            or row.screen_group_id != target_group_id
-        )
-        row.status = target
-        row.screen_pending = pending
-        row.defer_until = defer_until
-        row.remark = remark
-        row.screen_group_id = target_group_id
-        if changed:
-            row.status_updated_at = row.updated_at = now
-            row.row_version += 1
-            self._event(
-                row.manga_id,
-                "status_changed",
-                actor=actor,
-                from_status=previous,
-                to_status=target,
-                detail={"reason": reason, "screen_flag": flag},
-            )
-        return flag
-
-    def rescreen_discovered(
-        self,
-        *,
-        name_keywords: tuple[str, ...] = (),
-        tag_keywords: tuple[str, ...] = (),
-        observation_days: int = 1,
-        exclude_categories: tuple[str, ...] = (),
-        limit: int = 100,
-    ) -> int:
-        """Re-evaluate plain automatic discovered rows on operator request."""
-
-        now = utcnow()
-        rows = list(
+    def list_screen_candidates(self, *, limit: int = 100) -> list[MangaRecord]:
+        return list(
             self.session.scalars(
                 select(MangaRecord)
                 .where(
                     MangaRecord.status == Status.DISCOVERED.value,
-                    MangaRecord.screen_pending.is_(False),
-                    MangaRecord.queue_source == "automatic",
                     ~MangaRecord.manga_id.like("picacg/%"),
                 )
                 .order_by(desc(MangaRecord.priority), MangaRecord.created_at)
@@ -486,128 +372,52 @@ class ArchiveRepository:
                 .limit(limit)
             )
         )
-        for row in rows:
-            self._apply_screen_flag(
-                row,
-                name_keywords=name_keywords,
-                tag_keywords=tag_keywords,
-                observation_days=observation_days,
-                exclude_categories=exclude_categories,
-                now=now,
-                actor="supervisor",
-                reason="automatic_rescreen",
+
+    def list_screen_group(self, real_name: str) -> list[MangaRecord]:
+        return list(
+            self.session.scalars(
+                select(MangaRecord)
+                .where(
+                    MangaRecord.real_name == real_name,
+                    MangaRecord.category.in_(("Manga", "Doujinshi")),
+                )
+                .order_by(MangaRecord.created_at, MangaRecord.manga_id)
+                .with_for_update()
             )
-        return len(rows)
-
-    def screenall(
-        self,
-        *,
-        limit: int | None = None,
-        actor: str = "screenall",
-        decisions: list[ScreenDecision] | None = None,
-    ) -> int:
-        """Run the legacy same-title version selection for pending rows.
-
-        Rows with ``screen_pending=False`` are deliberately left alone. This
-        preserves the distinction between legacy autostate=1 (screenall input)
-        and state=1/autostate=NULL (recorded but not screened).
-        """
-
-        from ..services.collector.parser import screen, screen_group_id, screen_priority
-
-        query = (
-            select(MangaRecord)
-            .where(
-                MangaRecord.status == Status.DISCOVERED.value,
-                MangaRecord.screen_pending.is_(True),
-                ~MangaRecord.manga_id.like("picacg/%"),
-            )
-            .order_by(desc(MangaRecord.priority), MangaRecord.created_at)
-            .with_for_update(skip_locked=True)
         )
-        if limit is not None:
-            query = query.limit(limit)
-        pending_rows = list(self.session.scalars(query))
-        processed = 0
-        visited: set[str] = set()
+
+    def apply_screen_outcome(
+        self,
+        row: MangaRecord,
+        *,
+        status: Status,
+        reason: str,
+        actor: str = "screen",
+        screen_group_id: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        if row.status != Status.DISCOVERED.value:
+            return
+        previous = row.status
         now = utcnow()
-        for pending in pending_rows:
-            group_key = pending.real_name
-            if group_key in visited:
-                continue
-            visited.add(group_key)
-            similar = list(
-                self.session.scalars(
-                    select(MangaRecord)
-                    .where(
-                        MangaRecord.real_name == group_key,
-                        MangaRecord.category.in_(("Manga", "Doujinshi")),
-                    )
-                    .order_by(MangaRecord.created_at, MangaRecord.manga_id)
-                )
-            )
-            if not similar:
-                similar = [pending]
-            relation = screen_group_id(group_key)
-            for row in similar:
-                previous_relation = row.screen_group_id
-                row.screen_group_id = relation
-                if self.run_id is not None and previous_relation != relation:
-                    self._event(
-                        row.manga_id,
-                        "collect_touched",
-                        actor=actor,
-                        operation="collect",
-                        from_status=row.status,
-                        to_status=row.status,
-                        detail={"created": False, "reason": "screen_group_assigned"},
-                    )
-
-            priorities = [screen_priority(self._screen_manga(row)) for row in similar]
-            if len(similar) == 1:
-                selected = {0}
-            else:
-                selected = {index for index, value in enumerate(screen(priorities)) if value}
-
-            for index, row in enumerate(similar):
-                if row.status != Status.DISCOVERED.value or not row.screen_pending:
-                    continue
-                previous = row.status
-                row.screen_pending = False
-                row.defer_until = None
-                row.status = (
-                    Status.DOWNLOAD_PENDING.value if index in selected else Status.SKIPPED.value
-                )
-                row.remark = "screen_selected" if index in selected else "screen_rejected"
-                row.status_updated_at = row.updated_at = now
-                row.row_version += 1
-                self._event(
-                    row.manga_id,
-                    "status_changed",
-                    actor=actor,
-                    from_status=previous,
-                    to_status=row.status,
-                    detail={
-                        "reason": "screenall",
-                        "screen_group_id": relation,
-                        "selected": index in selected,
-                        "candidate_count": len(similar),
-                    },
-                )
-                if decisions is not None:
-                    decisions.append(
-                        ScreenDecision(
-                            screen_group_id=relation,
-                            real_name=group_key,
-                            manga_id=row.manga_id,
-                            candidate_count=len(similar),
-                            selected=index in selected,
-                            priority=priorities[index],
-                            resulting_status=row.status,
-                        )
-                    )
-                processed += 1
-        return processed
+        row.status = status.value
+        row.remark = reason
+        row.defer_until = None
+        row.screen_group_id = screen_group_id
+        row.status_updated_at = row.updated_at = now
+        row.row_version += 1
+        event_detail = {"reason": reason}
+        if detail:
+            event_detail.update(detail)
+        self._event(
+            row.manga_id,
+            "status_changed",
+            actor=actor,
+            operation="screen",
+            from_status=previous,
+            to_status=row.status,
+            detail=event_detail,
+        )
 
     def complete_cancellations(self, *, now: datetime | None = None, limit: int = 100) -> int:
         now = now or utcnow()

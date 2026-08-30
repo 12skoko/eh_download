@@ -87,6 +87,7 @@ h2 { margin-bottom: .25rem; font-size: 1.05rem; }
 .badge { display: inline-flex; align-items: center; width: fit-content; padding: .22rem .55rem; border-radius: 999px; color: var(--badge-fg); background: var(--badge-bg); font-size: .72rem; font-weight: 750; white-space: nowrap; }
 .badge.large { padding: .4rem .8rem; font-size: .8rem; }
 .badge.running, .badge.healthy, .badge.succeeded, .status-completed, .status-uploaded, .status-downloaded, .status-deleted, .status-cancelled, .status-skipped { color: var(--green); background: var(--green-soft); }
+.status-filtered_out { color: var(--muted); background: var(--surface-strong); }
 .badge.paused, .badge.draining, .badge.degraded, .badge.stale, .status-manual_review, .status-deferred, .status-force_delete_pending, .status-rename_pending, .status-discovered, .status-outdated, .status-cancel_requested { color: var(--amber); background: var(--amber-soft); }
 .status-special_processing { color: var(--blue); background: var(--blue-soft); }
 .badge.unavailable, .badge.failed, .badge.abandoned, .status-quarantined, .status-unavailable { color: var(--red); background: var(--red-soft); }
