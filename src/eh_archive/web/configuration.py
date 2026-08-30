@@ -169,8 +169,6 @@ VIDEO_ARCHIVE_FIELDS = (
     FieldSpec(("enabled",), "启用视频档案特殊模块", "bool"),
     FieldSpec(("auto_start",), "自动进入（固定禁用）", "bool", editable=False),
     FieldSpec(("download", "category"), "专用 qBittorrent 分类"),
-    FieldSpec(("download", "external_root"), "qBittorrent 可见下载根目录"),
-    FieldSpec(("download", "local_root"), "本机下载根目录"),
     FieldSpec(("work", "workspace_root"), "转换工作根目录"),
     FieldSpec(("work", "max_concurrency"), "模块最大并发", "int", minimum=1),
     FieldSpec(("ffmpeg", "executable"), "ffmpeg 可执行文件"),
@@ -363,8 +361,6 @@ def _video_archive_values(config) -> dict[str, Any]:
         "auto_start": config.auto_start,
         "download": {
             "category": config.download.category,
-            "external_root": config.download.external_root,
-            "local_root": config.download.local_root,
         },
         "work": {
             "workspace_root": config.work.workspace_root,

@@ -34,10 +34,11 @@ requires editing `config/app.toml`.
 ## Video archive special processing
 
 Copy `config/special/video_archive.sample.toml` to
-`config/special/video_archive.toml` and create both configured directories.
-`download.external_root` is the path qBittorrent sees;
-`download.local_root` is the local/mounted path that reaches the same files.
-`work.workspace_root` must be a separate writable directory. Configure an
+`config/special/video_archive.toml` and create the configured workspace.
+The module reuses `app.qbit_torrent_path` as the path qBittorrent sees and
+`app.roots.torrent_download` as the local/mounted path that reaches the same
+files. `work.workspace_root` must be a separate writable directory that does
+not overlap `roots.torrent_download`. Configure an
 absolute ffmpeg executable that provides the `libwebp` encoder. Secrets remain
 in the existing `secrets.toml`; never copy qBittorrent credentials or EH
 cookies into the module file.
@@ -58,7 +59,7 @@ The module uses the exact qBittorrent category configured in
 `download.category`; reserve it exclusively for EH Archive. The default
 `cleanup_source_on_success=false` retains both source downloads after a
 successful combination for manual recovery. Set it to true only after testing
-path mapping and deletion ownership on the deployment host.
+the shared APP path mapping and deletion ownership on the deployment host.
 
 Before production cutover:
 

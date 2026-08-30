@@ -827,11 +827,11 @@ eharchive-video-special
 
 ```text
 显示名称：{id}-image / {id}-video
-保存路径：special_video_download/{safe_manga_id}/image
-          special_video_download/{safe_manga_id}/video
+保存路径：qbit_torrent_path/{safe_manga_id}/image
+          qbit_torrent_path/{safe_manga_id}/video
 ```
 
-如果 qBittorrent 位于其他主机，需要像现有 torrent root 一样区分 qBittorrent 可见根路径和本机读取根路径，并安全映射相对路径。
+模块直接复用现有 `app.qbit_torrent_path` 与 `app.roots.torrent_download` 的远端/本地路径映射；不在模块配置中重复声明下载根目录。
 
 提交顺序不能假设原子性：
 
@@ -1040,7 +1040,7 @@ special_processing = true
 - 所有特殊 worker 的总并发；
 - 整体组件暂停和恢复。
 
-具体 kind 的 ffmpeg、目录、输出规则等不能放入 `supervisor.toml`。
+具体 kind 的 ffmpeg、工作目录、输出规则等不能放入 `supervisor.toml`。
 
 ### 13.3 视频模块配置
 
@@ -1052,8 +1052,6 @@ auto_start = false
 
 [download]
 category = "eharchive-video-special"
-external_root = "D:/special-video-download"
-local_root = "D:/special-video-download"
 
 [work]
 workspace_root = "D:/special-video-work"
@@ -1074,13 +1072,15 @@ layout = "legacy_folders"
 视频模块继续复用现有公共配置和敏感配置：
 
 - qBittorrent URL：现有 AppConfig；
+- qBittorrent 可见下载根：现有 `app.qbit_torrent_path`；
+- EH Archive 本地下载根：现有 `app.roots.torrent_download`；
 - qBittorrent 用户名和密码：现有 `secrets.toml`；
 - EH Cookie、代理和 browse session：现有配置；
 - 数据库、日志目录和时区：现有配置。
 
 不得在模块 TOML 中重复保存账号、Cookie、代理密码、Authorization 或数据库密码。
 
-`download.external_root` 是 qBittorrent 主机看到的绝对根路径，`download.local_root` 是 EH Archive 本机读取同一内容的绝对根路径。两者可以相同，也可以通过相对后缀安全映射。`work.workspace_root` 是本机转换和打包工作目录，不能与 qBittorrent 做种目录混用。
+视频模块按照与普通 Torrent 相同的规则，把 qBittorrent 返回的 `app.qbit_torrent_path` 后缀安全映射到 `app.roots.torrent_download`。`work.workspace_root` 是本机转换和打包工作目录，不能与 `app.roots.torrent_download` 相同或互相包含。
 
 ### 13.4 配置生效与 Workflow 参数快照
 
@@ -1118,7 +1118,7 @@ worker 每次启动时重新加载：
 - 视频模块无论配置如何都不启用自动入口，`auto_start=false` 作为固定约束；
 - Web 配置页面只开放 allowlist 中的非敏感字段；
 - ffmpeg 路径、并发和质量可以开放；
-- category、下载根目录、工作根目录和输出布局修改应显示明显警告；
+- category、工作根目录和输出布局修改应显示明显警告；
 - 配置更新必须先构造候选配置并完整校验，再原子替换文件。
 
 所有本地目录必须是绝对路径。普通档案详情只在模块配置存在且 `enabled=true`、档案处于 `manual_review` 且结构化错误代码为 `video_torrent` 时展示通用特殊处理入口；它不检查 ffmpeg、下载文件或工作目录。加载 Torrent 时检查 EH 能力，提交选择时检查 qBittorrent，手动整理任务确认两个 Torrent 完成后才检查本地内容、ffmpeg、WebP 编码器和工作目录。
@@ -1186,7 +1186,7 @@ Web 只展示清理后的错误摘要，不直接展示完整路径、私有 URL
 按实际操作阶段记录或展示，不从普通档案详情页探测：
 
 - ffmpeg 可执行与编码器健康；
-- special download root 可读写和可用空间；
+- APP 的 `roots.torrent_download` 可读取 qBittorrent 完成内容；
 - special work root 可读写和可用空间；
 - 视频特殊模块 paused/running 状态；
 - 活动 workflow 数、queued/running/failed job 数。

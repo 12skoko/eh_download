@@ -251,16 +251,12 @@ web_port = 8787
     special_dir = config_dir / "special"
     special_dir.mkdir(exist_ok=True)
     module_root = Path(tempfile.gettempdir()) / "eharchive-web-demo-video"
-    download_root = module_root / "download"
     workspace_root = module_root / "workspace"
-    download_root.mkdir(parents=True, exist_ok=True)
     workspace_root.mkdir(parents=True, exist_ok=True)
     module_config = special_dir / "video_archive.toml"
     module_config.write_text(
         "enabled = true\nauto_start = false\n"
-        f'[download]\ncategory = "eharchive-demo-video"\n'
-        f'external_root = "{download_root.as_posix()}"\n'
-        f'local_root = "{download_root.as_posix()}"\n'
+        '[download]\ncategory = "eharchive-demo-video"\n'
         f'[work]\nworkspace_root = "{workspace_root.as_posix()}"\nmax_concurrency = 1\n'
         f'[ffmpeg]\nexecutable = "{(module_root / "ffmpeg-placeholder").as_posix()}"\n'
         "max_workers = 1\nquality = 75\ncompression_level = 6\n"

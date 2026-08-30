@@ -178,8 +178,6 @@ class SecretsConfig:
 @dataclass(frozen=True)
 class VideoDownloadConfig:
     category: str
-    external_root: str
-    local_root: Path
 
 
 @dataclass(frozen=True)
@@ -398,7 +396,7 @@ def load_video_archive_config(directory: str | Path = "config") -> VideoArchiveC
     _reject_unknown_keys(
         download_raw,
         "video_archive.download",
-        {"category", "external_root", "local_root"},
+        {"category"},
     )
     _reject_unknown_keys(
         work_raw,
@@ -431,19 +429,7 @@ def load_video_archive_config(directory: str | Path = "config") -> VideoArchiveC
     category = str(download_raw.get("category", "")).strip()
     if not category or category == "eharchive":
         raise ValueError("download.category must be a non-empty category reserved for this module")
-    external_root = str(download_raw.get("external_root", "")).strip()
-    if not _is_absolute_external_path(external_root):
-        raise ValueError("download.external_root must be an absolute qBittorrent path")
-    local_root = _absolute_directory(download_raw.get("local_root"), "download.local_root")
     workspace_root = _absolute_directory(work_raw.get("workspace_root"), "work.workspace_root")
-    resolved_workspace = workspace_root.resolve()
-    resolved_download = local_root.resolve()
-    if (
-        resolved_workspace == resolved_download
-        or resolved_workspace.is_relative_to(resolved_download)
-        or resolved_download.is_relative_to(resolved_workspace)
-    ):
-        raise ValueError("work.workspace_root must not overlap download.local_root")
     executable = Path(str(ffmpeg_raw.get("executable", "")).strip()).expanduser()
     if not executable.is_absolute():
         raise ValueError("ffmpeg.executable must be an absolute path")
@@ -457,7 +443,7 @@ def load_video_archive_config(directory: str | Path = "config") -> VideoArchiveC
     config = VideoArchiveConfig(
         enabled=enabled,
         auto_start=False,
-        download=VideoDownloadConfig(category, external_root, local_root),
+        download=VideoDownloadConfig(category),
         work=VideoWorkConfig(
             workspace_root,
             int(work_raw.get("max_concurrency", 1)),

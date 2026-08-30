@@ -4,8 +4,6 @@ auto_start = false
 
 [download]
 category = "eharchive-video-special"
-external_root = "D:/eharchive-data/special-video-download"
-local_root = "D:/eharchive-data/special-video-download"
 
 [work]
 workspace_root = "D:/eharchive-data/special-video-work"

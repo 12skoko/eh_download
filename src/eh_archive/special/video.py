@@ -250,17 +250,24 @@ class VideoArchiveExecutor:
 
     def _special_paths(self, manga_id: str, role: str) -> tuple[str, Path, str]:
         safe_id = safe_manga_id(manga_id)
+        external_root, local_root = self._download_roots()
         separator = (
             "\\"
-            if "\\" in self.module.download.external_root
-            and "/" not in self.module.download.external_root
+            if "\\" in external_root and "/" not in external_root
             else "/"
         )
-        external = self.module.download.external_root.rstrip("\\/")
+        external = external_root.rstrip("\\/")
         external_path = f"{external}{separator}{safe_id}{separator}{role}"
-        local_path = self.module.download.local_root / safe_id / role
+        local_path = local_root / safe_id / role
         display_name = f"{manga_id.split('/', 1)[0]}-{role}"
         return external_path, local_path, display_name
+
+    def _download_roots(self) -> tuple[str, Path]:
+        """Return the shared qBittorrent and local roots from app.toml."""
+
+        local_root = self.app.root("torrent_download").resolve()
+        external_root = self.app.qbit_torrent_path or str(local_root)
+        return external_root, local_root
 
     def _download_torrent(self, manga: MangaRecord, option: Any) -> bytes:
         response = self.http.get(
@@ -452,13 +459,14 @@ class VideoArchiveExecutor:
             )
             return
         local_content: dict[str, Path] = {}
+        external_root, local_root = self._download_roots()
         for role in ("image", "video"):
             raw = str(_value(infos[role], "content_path", ""))
             try:
                 local_content[role] = map_external_path(
                     raw,
-                    self.module.download.external_root,
-                    self.module.download.local_root,
+                    external_root,
+                    local_root,
                 )
             except UnsafePathError as exc:
                 raise ArchiveError(
@@ -503,7 +511,10 @@ class VideoArchiveExecutor:
                 "workflow output layout is no longer supported",
                 ErrorClass.ITEM,
             )
-        validate_compose_dependencies(effective_config)
+        validate_compose_dependencies(
+            effective_config,
+            download_root=self.app.root("torrent_download"),
+        )
         generation = (self.claim.artifact_generation or 0) + 1
         workspace_root = self.module.work.workspace_root.resolve()
         job_root = (

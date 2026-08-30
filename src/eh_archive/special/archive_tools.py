@@ -22,12 +22,27 @@ class VideoArchiveError(ValueError):
         self.code = code
 
 
-def validate_compose_dependencies(config: VideoArchiveConfig) -> None:
+def validate_compose_dependencies(
+    config: VideoArchiveConfig,
+    *,
+    download_root: str | Path,
+) -> None:
     """Probe conversion-only dependencies immediately before composition."""
 
     if not config.ffmpeg.executable.is_file():
         raise VideoArchiveError("ffmpeg_unavailable", "ffmpeg executable does not exist")
     workspace = config.work.workspace_root
+    resolved_workspace = workspace.resolve()
+    resolved_download = Path(download_root).resolve()
+    if (
+        resolved_workspace == resolved_download
+        or resolved_workspace.is_relative_to(resolved_download)
+        or resolved_download.is_relative_to(resolved_workspace)
+    ):
+        raise VideoArchiveError(
+            "special_workspace_overlap",
+            "video conversion workspace must not overlap roots.torrent_download",
+        )
     if not workspace.is_dir():
         raise VideoArchiveError(
             "special_workspace_unavailable",

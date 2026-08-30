@@ -481,7 +481,7 @@ eharchive --config-dir config special video-archive collect-ready
 
 最终 ZIP 使用固定时间、权限和稳定成员顺序。即使出现“ZIP 已原子提升、数据库登记事务失败”，重试生成的 ZIP 仍有相同 SHA-1，可以安全接续登记而不会误判成 generation 冲突。源清理只接受同时匹配 workflow 中 hash、模块专用 category 和确定保存路径的 qBittorrent 任务；category 或路径被人工改动时会跳过并留下审计记录。
 
-`video_archive.toml` 中影响输出内容的质量、布局和是否保留 MP4 会在创建 workflow 时固化；之后修改配置不会静默改变正在重试的工作流。下载根、工作根、ffmpeg 路径和凭据仍在每次 worker 启动时读取当前配置。Remark 中显示的模块、阶段和进度只是数据库镜像，修改或删除它不会启动、暂停或改变任务。
+`video_archive.toml` 中影响输出内容的质量、布局和是否保留 MP4 会在创建 workflow 时固化；之后修改配置不会静默改变正在重试的工作流。视频模块直接复用 `app.qbit_torrent_path` 和 `app.roots.torrent_download`；工作根、ffmpeg 路径和凭据仍在每次 worker 启动时读取当前配置。Remark 中显示的模块、阶段和进度只是数据库镜像，修改或删除它不会启动、暂停或改变任务。
 
 ### 7.6 缩略图再生成
 
