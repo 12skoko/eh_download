@@ -475,11 +475,11 @@ python scripts/cleanup_download_artifacts.py --config-dir config --apply
 eharchive --config-dir config special video-archive collect-ready
 ```
 
-未完成的档案只更新最近快照并继续等待，不会自动再次检查；稍后由用户再次运行批量操作。两个 torrent 都完成时，该档案自己的 job 会继续安全解压、把 MP4 转为动画 WebP、生成 `1_webp/2_pic`（可选 `3_video`）布局、打包和校验最终 ZIP，然后把 Manga 从 `special_processing` 恢复为 `downloaded`，交给现有 validate/upload/cleanup。
+未完成的档案只更新最近快照并继续等待，不会自动再次检查；稍后由用户再次运行批量操作。两个 torrent 都完成时，该档案自己的 job 会继续安全解压、把 MP4 转为动画 WebP、生成 `1_webp/2_pic`（可选 `3_video`）布局、打包和校验最终 ZIP。下载目录使用 `qbit_torrent_path/<数字 ID>/image|video`，工作目录使用 `workspace_root/<数字 ID>/w<workflow ID>`，最终 ZIP 与直接下载一样命名为 `[数字 ID]档案名.zip`。随后 Manga 从 `special_processing` 恢复为 `downloaded`，交给现有 validate/upload/cleanup。
 
 工作流页面只在存在 `queued/running` job 时每 4 秒刷新数据库进度，并只读取模块的声明式启用配置；它不会读取下载目录、运行 ffmpeg 或查询 qBittorrent。ffmpeg、WebP 编码器和工作目录在用户手动创建 `check_and_compose_if_ready` job、且两个 Torrent 都完成后才检查。排队但尚未领取的 job 可以直接“取消排队并清理”，也可以选择“保留资源并退出”；后者会先取消排队 job，但不会删除外部任务或工作目录。取消或退出后会恢复进入前保存的 `video_torrent` 人工复核原因，因此之后仍可从档案详情重新进入模块。
 
-最终 ZIP 使用固定时间、权限和稳定成员顺序。即使出现“ZIP 已原子提升、数据库登记事务失败”，重试生成的 ZIP 仍有相同 SHA-1，可以安全接续登记而不会误判成 generation 冲突。源清理只接受同时匹配 workflow 中 hash、模块专用 category 和确定保存路径的 qBittorrent 任务；category 或路径被人工改动时会跳过并留下审计记录。
+最终 ZIP 使用固定时间、权限和稳定成员顺序。即使出现“ZIP 已原子提升、数据库登记事务失败”，重试生成的 ZIP 仍有相同 SHA-1，可以安全接续登记而不会误判成 generation 冲突。整合完成时不会删除源 Torrent；普通 validate/upload/cleanup 完全不理解特殊模块。Manga 到达 `completed` 后，在 `/special` 点击“批量清理已完成档案的源文件”，或运行 `eharchive --config-dir config special video-archive cleanup-completed`。这次人工操作为每个档案创建独立 `cleanup_sources_after_complete` job；Supervisor 不会自动创建。源清理只接受同时匹配 workflow 中 hash、模块专用 category 和数字 ID 保存路径的任务；category 或路径被人工改动时整次清理失败，不会误删，之后可以人工重试。
 
 `video_archive.toml` 中影响输出内容的质量、布局和是否保留 MP4 会在创建 workflow 时固化；之后修改配置不会静默改变正在重试的工作流。视频模块直接复用 `app.qbit_torrent_path` 和 `app.roots.torrent_download`；工作根、ffmpeg 路径和凭据仍在每次 worker 启动时读取当前配置。Remark 中显示的模块、阶段和进度只是数据库镜像，修改或删除它不会启动、暂停或改变任务。
 

@@ -21,9 +21,6 @@ max_output_bytes = 8589934592
 [output]
 include_original_mp4 = false
 layout = "legacy_folders"
-# false preserves the two qBittorrent downloads for manual recovery.
-cleanup_source_on_success = false
-
 [safety]
 max_members = 100000
 max_single_file_bytes = 17179869184

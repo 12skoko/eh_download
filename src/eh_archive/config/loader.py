@@ -201,7 +201,6 @@ class VideoFfmpegConfig:
 class VideoOutputConfig:
     include_original_mp4: bool = False
     layout: str = "legacy_folders"
-    cleanup_source_on_success: bool = False
 
 
 @dataclass(frozen=True)
@@ -419,7 +418,7 @@ def load_video_archive_config(directory: str | Path = "config") -> VideoArchiveC
     _reject_unknown_keys(
         output_raw,
         "video_archive.output",
-        {"include_original_mp4", "layout", "cleanup_source_on_success"},
+        {"include_original_mp4", "layout"},
     )
     _reject_unknown_keys(
         safety_raw,
@@ -464,11 +463,6 @@ def load_video_archive_config(directory: str | Path = "config") -> VideoArchiveC
                 default=False,
             ),
             layout,
-            _bool_value(
-                output_raw.get("cleanup_source_on_success"),
-                "video_archive.output.cleanup_source_on_success",
-                default=False,
-            ),
         ),
         safety=VideoSafetyConfig(
             int(safety_raw.get("max_members", 100_000)),

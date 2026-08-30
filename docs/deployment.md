@@ -56,10 +56,12 @@ before applying it. Restart both Web and Supervisor after changing the module
 configuration or the `[special_processing]` Supervisor settings.
 
 The module uses the exact qBittorrent category configured in
-`download.category`; reserve it exclusively for EH Archive. The default
-`cleanup_source_on_success=false` retains both source downloads after a
-successful combination for manual recovery. Set it to true only after testing
-the shared APP path mapping and deletion ownership on the deployment host.
+`download.category`; reserve it exclusively for EH Archive. A successful
+combination always retains both source downloads until the Manga reaches
+`completed`. Cleanup is then manually queued from Web or with
+`eharchive --config-dir config special video-archive cleanup-completed`.
+Supervisor never creates this cleanup job from a status change. Test the shared
+APP path mapping and deletion ownership on the deployment host before using it.
 
 Before production cutover:
 

@@ -6,14 +6,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..db.models import EventLog, MangaRecord, SpecialJob, SpecialWorkflow
 from ..db.repository import utcnow
 from ..domain.states import Status
 from ..services.validator.artifact import ArtifactFingerprint
-from .registry import get_operation
+from .registry import CLEANUP_SOURCES_AFTER_COMPLETE, get_operation
 from .remarks import restore_entry_error, sync_remark
 
 
@@ -60,7 +60,13 @@ class SpecialRepository:
         next_run_at: datetime | None = None,
     ) -> tuple[SpecialJob, bool]:
         get_operation(workflow.kind, operation)
-        if workflow.status != "active":
+        if operation == CLEANUP_SOURCES_AFTER_COMPLETE:
+            if workflow.status != "completed" or workflow.phase != "ready":
+                raise ValueError("completed source cleanup requires a ready workflow")
+            manga = self.session.get(MangaRecord, workflow.manga_id)
+            if manga is None or manga.status != Status.COMPLETED.value:
+                raise ValueError("completed source cleanup requires a completed manga")
+        elif workflow.status != "active":
             raise ValueError("special workflow is not active")
         existing = self.session.scalar(
             select(SpecialJob)
@@ -111,9 +117,8 @@ class SpecialRepository:
                     SpecialJob.status == "queued",
                     SpecialJob.next_run_at <= now,
                     SpecialJob.lease_until.is_(None),
-                    SpecialWorkflow.status == "active",
                     SpecialWorkflow.kind.in_(tuple(enabled_kinds)),
-                    MangaRecord.status == Status.SPECIAL_PROCESSING.value,
+                    self._claimable_state(),
                 )
                 .limit(1)
             )
@@ -136,9 +141,8 @@ class SpecialRepository:
                 SpecialJob.status == "queued",
                 SpecialJob.next_run_at <= now,
                 SpecialJob.lease_until.is_(None),
-                SpecialWorkflow.status == "active",
                 SpecialWorkflow.kind.in_(tuple(enabled_kinds)),
-                MangaRecord.status == Status.SPECIAL_PROCESSING.value,
+                self._claimable_state(),
             )
             .order_by(SpecialJob.next_run_at, SpecialJob.created_at)
             .with_for_update(skip_locked=True)
@@ -192,7 +196,22 @@ class SpecialRepository:
         job.error_code = None
         job.error_detail = None
         workflow.phase = operation.running_phase
-        workflow.progress = {"message": operation.running_phase}
+        if job.operation == CLEANUP_SOURCES_AFTER_COMPLETE:
+            payload = dict(workflow.payload or {})
+            cleanup = dict(payload.get("source_cleanup") or {})
+            cleanup.update(
+                {
+                    "status": "running",
+                    "job_id": job.id,
+                    "started_at": now.isoformat(),
+                    "last_error": None,
+                }
+            )
+            payload["source_cleanup"] = cleanup
+            workflow.payload = payload
+            workflow.progress = {"message": "source_cleanup_running"}
+        else:
+            workflow.progress = {"message": operation.running_phase}
         workflow.error_code = None
         workflow.error_detail = None
         workflow.row_version += 1
@@ -239,10 +258,13 @@ class SpecialRepository:
             return None
         workflow = self.session.get(SpecialWorkflow, workflow_id)
         manga = self.session.get(MangaRecord, workflow.manga_id) if workflow else None
-        if (
-            workflow is None
-            or manga is None
-            or workflow.status != "active"
+        if workflow is None or manga is None:
+            return None
+        if job.operation == CLEANUP_SOURCES_AFTER_COMPLETE:
+            if workflow.status != "completed" or manga.status != Status.COMPLETED.value:
+                return None
+        elif (
+            workflow.status != "active"
             or manga.status != Status.SPECIAL_PROCESSING.value
         ):
             return None
@@ -418,6 +440,43 @@ class SpecialRepository:
             return False
         job, workflow, manga = values
         now = utcnow()
+        if job.operation == CLEANUP_SOURCES_AFTER_COMPLETE:
+            job.status = "failed"
+            job.finished_at = now
+            job.lease_until = None
+            job.error_code = error_code
+            job.error_detail = error_detail[:4000]
+            payload_value = dict(payload if payload is not None else workflow.payload or {})
+            cleanup = dict(payload_value.get("source_cleanup") or {})
+            cleanup.update(
+                {
+                    "status": "failed",
+                    "job_id": job.id,
+                    "last_error": error_detail[:4000],
+                    "last_error_code": error_code,
+                    "finished_at": now.isoformat(),
+                }
+            )
+            payload_value["source_cleanup"] = cleanup
+            workflow.payload = payload_value
+            workflow.phase = "ready"
+            workflow.progress = {"message": "source_cleanup_failed"}
+            workflow.error_code = error_code
+            workflow.error_detail = error_detail[:4000]
+            workflow.row_version += 1
+            workflow.updated_at = now
+            manga.updated_at = now
+            manga.row_version += 1
+            sync_remark(manga, workflow, timezone=self.timezone)
+            self._event(
+                workflow,
+                "special_source_cleanup_failed",
+                operation=job.operation,
+                actor=claim.lease_owner,
+                error_code=error_code,
+                detail={"job_id": job.id, "summary": error_detail[:500]},
+            )
+            return True
         job.status = "failed"
         job.finished_at = now
         job.lease_until = None
@@ -570,35 +629,73 @@ class SpecialRepository:
         )
         return True
 
-    def record_source_cleanup(
+    def complete_source_cleanup(
         self,
-        workflow_id: int,
+        claim: ClaimedSpecialJob,
         *,
-        status: str,
         detail: dict[str, Any],
-        error_code: str | None = None,
     ) -> bool:
-        workflow = self.session.scalar(
-            select(SpecialWorkflow).where(SpecialWorkflow.id == workflow_id).with_for_update()
+        values = self.validate_claim(
+            claim.job_id,
+            workflow_id=claim.workflow_id,
+            lease_token=claim.lease_token,
+            lease_owner=claim.lease_owner,
         )
-        if workflow is None or workflow.status != "completed":
+        if values is None:
             return False
+        job, workflow, manga = values
         now = utcnow()
         payload = dict(workflow.payload or {})
-        payload["source_cleanup"] = status
-        payload["source_cleanup_detail"] = dict(detail)
+        cleanup = dict(payload.get("source_cleanup") or {})
+        cleanup.update(
+            {
+                "status": "completed",
+                "job_id": job.id,
+                "last_error": None,
+                "last_error_code": None,
+                "finished_at": now.isoformat(),
+                "detail": dict(detail),
+            }
+        )
+        payload["source_cleanup"] = cleanup
+        job.status = "succeeded"
+        job.finished_at = now
+        job.lease_until = None
+        job.progress = {"message": "source_cleanup_completed", "completed": 1, "total": 1}
         workflow.payload = payload
+        workflow.phase = "ready"
+        workflow.progress = {"message": "source_cleanup_completed", "completed": 1, "total": 1}
+        workflow.error_code = None
+        workflow.error_detail = None
         workflow.updated_at = now
         workflow.row_version += 1
+        manga.updated_at = now
+        manga.row_version += 1
+        sync_remark(manga, workflow, timezone=self.timezone)
         self._event(
             workflow,
-            "special_source_cleanup",
-            operation="source_cleanup",
-            actor=self.run_id or "special_worker",
-            error_code=error_code,
-            detail={"status": status, **detail},
+            "special_source_cleanup_completed",
+            operation=job.operation,
+            actor=claim.lease_owner,
+            detail={"job_id": job.id, **detail},
         )
         return True
+
+    @staticmethod
+    def _claimable_state():
+        return or_(
+            and_(
+                SpecialJob.operation != CLEANUP_SOURCES_AFTER_COMPLETE,
+                SpecialWorkflow.status == "active",
+                MangaRecord.status == Status.SPECIAL_PROCESSING.value,
+            ),
+            and_(
+                SpecialJob.operation == CLEANUP_SOURCES_AFTER_COMPLETE,
+                SpecialWorkflow.status == "completed",
+                SpecialWorkflow.phase == "ready",
+                MangaRecord.status == Status.COMPLETED.value,
+            ),
+        )
 
     def _event(
         self,

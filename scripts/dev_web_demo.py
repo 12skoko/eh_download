@@ -260,8 +260,7 @@ web_port = 8787
         f'[work]\nworkspace_root = "{workspace_root.as_posix()}"\nmax_concurrency = 1\n'
         f'[ffmpeg]\nexecutable = "{(module_root / "ffmpeg-placeholder").as_posix()}"\n'
         "max_workers = 1\nquality = 75\ncompression_level = 6\n"
-        "[output]\ninclude_original_mp4 = false\nlayout = \"legacy_folders\"\n"
-        "cleanup_source_on_success = false\n",
+        "[output]\ninclude_original_mp4 = false\nlayout = \"legacy_folders\"\n",
         encoding="utf-8",
     )
     return config_dir

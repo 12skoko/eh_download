@@ -7,7 +7,7 @@ recoverable services driven by PostgreSQL state.
 ## Quick start
 
 1. Create a Python 3.11+ environment (this repository uses Conda environment `eh`: `conda create -n eh python=3.11`) and install `pip install -e ".[dev]"`; qBittorrent support is part of the base installation.
-2. Copy the four top-level `config/*.sample.toml` files to matching `.toml` paths. To use video-archive special processing, also copy `config/special/video_archive.sample.toml` to `config/special/video_archive.toml`. Fill in PostgreSQL, service, crawl, storage, ffmpeg and special download/work roots. Runtime `.toml` files are local-only and ignored by Git.
+2. Copy the four top-level `config/*.sample.toml` files to matching `.toml` paths. To use video-archive special processing, also copy `config/special/video_archive.sample.toml` to `config/special/video_archive.toml`. Fill in PostgreSQL, service, crawl, storage, ffmpeg and the special work root; video downloads reuse the APP qBittorrent and local torrent roots. Runtime `.toml` files are local-only and ignored by Git.
 3. Run `eharchive db upgrade` (or `python -m eh_archive.cli db upgrade`).
 4. Start `eharchive-web` and `eharchive-supervisor` as separate processes.
 

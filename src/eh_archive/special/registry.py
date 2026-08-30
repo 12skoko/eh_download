@@ -8,6 +8,7 @@ LOAD_TORRENT_OPTIONS = "load_torrent_options"
 SUBMIT_SELECTED_TORRENTS = "submit_selected_torrents"
 CHECK_AND_COMPOSE = "check_and_compose_if_ready"
 CANCEL_VIDEO_ARCHIVE = "cancel_video_archive"
+CLEANUP_SOURCES_AFTER_COMPLETE = "cleanup_sources_after_complete"
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,11 @@ VIDEO_ARCHIVE = WorkflowDefinition(
             CANCEL_VIDEO_ARCHIVE,
             VIDEO_ARCHIVE_PHASES - {"ready", "cancelled", "cancelling"},
             "cancelling",
+        ),
+        CLEANUP_SOURCES_AFTER_COMPLETE: OperationDefinition(
+            CLEANUP_SOURCES_AFTER_COMPLETE,
+            frozenset({"ready"}),
+            "ready",
         ),
     },
 )

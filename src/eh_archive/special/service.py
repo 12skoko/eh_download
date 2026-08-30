@@ -22,6 +22,7 @@ from .handlers import module_capability
 from .registry import (
     CANCEL_VIDEO_ARCHIVE,
     CHECK_AND_COMPOSE,
+    CLEANUP_SOURCES_AFTER_COMPLETE,
     LOAD_TORRENT_OPTIONS,
     SUBMIT_SELECTED_TORRENTS,
     VIDEO_ARCHIVE,
@@ -403,6 +404,111 @@ class SpecialWorkflowService:
         )
         return BatchDispatchResult(len(workflows), queued, skipped)
 
+    def queue_source_cleanup(
+        self,
+        workflow_id: int,
+        *,
+        row_version: int,
+    ) -> tuple[SpecialJob, bool]:
+        self._require_module_enabled()
+        workflow, manga = self._locked_completed_workflow(workflow_id)
+        self._require_version(workflow.row_version, row_version)
+        return self._queue_source_cleanup_locked(workflow, manga)
+
+    def dispatch_source_cleanups(self) -> BatchDispatchResult:
+        self._require_module_enabled()
+        rows = list(
+            self.session.execute(
+                select(SpecialWorkflow, MangaRecord)
+                .join(MangaRecord, MangaRecord.manga_id == SpecialWorkflow.manga_id)
+                .where(
+                    SpecialWorkflow.kind == VIDEO_ARCHIVE.kind,
+                    SpecialWorkflow.status == "completed",
+                    SpecialWorkflow.phase == "ready",
+                    MangaRecord.status == Status.COMPLETED.value,
+                )
+                .order_by(SpecialWorkflow.updated_at, SpecialWorkflow.id)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        eligible = [
+            (workflow, manga)
+            for workflow, manga in rows
+            if str(dict((workflow.payload or {}).get("source_cleanup") or {}).get("status", ""))
+            in {"pending", "failed"}
+        ]
+        queued = 0
+        skipped = 0
+        for workflow, manga in eligible:
+            try:
+                with self.session.begin_nested():
+                    _, created = self._queue_source_cleanup_locked(workflow, manga)
+            except (IntegrityError, ValueError) as exc:
+                skipped += 1
+                self._event(
+                    workflow,
+                    "special_batch_item_skipped",
+                    operation=CLEANUP_SOURCES_AFTER_COMPLETE,
+                    error_code="special_batch_item_conflict",
+                    detail={"error_type": type(exc).__name__},
+                )
+                continue
+            queued += int(created)
+            skipped += int(not created)
+        self.session.add(
+            EventLog(
+                manga_id=None,
+                component="special_processing",
+                event_type="special_cleanup_batch_dispatched",
+                operation=CLEANUP_SOURCES_AFTER_COMPLETE,
+                actor=self.actor,
+                detail={"found": len(eligible), "queued": queued, "skipped": skipped},
+            )
+        )
+        return BatchDispatchResult(len(eligible), queued, skipped)
+
+    def _queue_source_cleanup_locked(
+        self,
+        workflow: SpecialWorkflow,
+        manga: MangaRecord,
+    ) -> tuple[SpecialJob, bool]:
+        cleanup = dict((workflow.payload or {}).get("source_cleanup") or {})
+        status = str(cleanup.get("status", ""))
+        if status == "completed":
+            raise SpecialInvalidRequest("特殊源文件已经清理完成")
+        if status not in {"pending", "failed", "queued", "running"}:
+            raise SpecialInvalidRequest("当前工作流没有可清理的特殊源文件")
+        job, created = self.repository.queue_job(
+            workflow,
+            CLEANUP_SOURCES_AFTER_COMPLETE,
+            trigger_source=self.trigger_source,
+            requested_by=self.actor,
+        )
+        if created:
+            now = utcnow()
+            payload = dict(workflow.payload or {})
+            cleanup.update(
+                {
+                    "status": "queued",
+                    "job_id": job.id,
+                    "queued_at": now.isoformat(),
+                    "requested_by": self.actor,
+                    "last_error": None,
+                    "last_error_code": None,
+                }
+            )
+            payload["source_cleanup"] = cleanup
+            workflow.payload = payload
+            workflow.progress = {"message": "source_cleanup_queued"}
+            workflow.error_code = None
+            workflow.error_detail = None
+            workflow.updated_at = now
+            workflow.row_version += 1
+            manga.updated_at = now
+            manga.row_version += 1
+            sync_remark(manga, workflow, timezone=self.app_config.timezone)
+        return job, created
+
     def retry(self, workflow_id: int, *, row_version: int) -> SpecialJob:
         self._require_module_enabled()
         workflow, _ = self._locked_workflow(workflow_id)
@@ -491,7 +597,16 @@ class SpecialWorkflowService:
         reason: str,
         confirmed: bool,
     ) -> SpecialJob:
-        workflow, manga = self._locked_workflow(workflow_id)
+        workflow = self.session.scalar(
+            select(SpecialWorkflow).where(SpecialWorkflow.id == workflow_id).with_for_update()
+        )
+        if workflow is None or workflow.kind != VIDEO_ARCHIVE.kind:
+            raise SpecialNotFound("特殊工作流不存在")
+        manga = self.session.scalar(
+            select(MangaRecord).where(MangaRecord.manga_id == workflow.manga_id).with_for_update()
+        )
+        if manga is None:
+            raise SpecialNotFound("特殊工作流所属档案不存在")
         self._require_version(workflow.row_version, row_version)
         if not confirmed or not reason.strip():
             raise SpecialInvalidRequest("必须确认旧进程已经停止并填写原因")
@@ -515,17 +630,34 @@ class SpecialWorkflowService:
         job.lease_owner = None
         job.lease_until = None
         payload = dict(workflow.payload or {})
-        payload["retry_operation"] = job.operation
-        workflow.payload = payload
-        workflow.phase = "failed"
+        if job.operation == CLEANUP_SOURCES_AFTER_COMPLETE:
+            cleanup = dict(payload.get("source_cleanup") or {})
+            cleanup.update(
+                {
+                    "status": "failed",
+                    "job_id": job.id,
+                    "last_error": reason.strip(),
+                    "last_error_code": "lease_released",
+                    "finished_at": now.isoformat(),
+                }
+            )
+            payload["source_cleanup"] = cleanup
+            workflow.payload = payload
+            workflow.phase = "ready"
+            workflow.progress = {"message": "source_cleanup_failed"}
+        else:
+            payload["retry_operation"] = job.operation
+            workflow.payload = payload
+            workflow.phase = "failed"
         workflow.error_code = "lease_released"
         workflow.error_detail = reason.strip()
         workflow.row_version += 1
         workflow.updated_at = now
-        manga.last_error_operation = "special_processing"
-        manga.last_error_code = "lease_released"
-        manga.last_error_detail = reason.strip()
-        manga.last_error_at = now
+        if job.operation != CLEANUP_SOURCES_AFTER_COMPLETE:
+            manga.last_error_operation = "special_processing"
+            manga.last_error_code = "lease_released"
+            manga.last_error_detail = reason.strip()
+            manga.last_error_at = now
         manga.row_version += 1
         manga.updated_at = now
         sync_remark(manga, workflow, timezone=self.app_config.timezone)
@@ -568,7 +700,7 @@ class SpecialWorkflowService:
             job.status = "cancelled"
             job.finished_at = now
         payload = dict(workflow.payload or {})
-        payload["source_cleanup"] = "retained_on_forced_exit"
+        payload["source_cleanup"] = {"status": "retained_on_forced_exit"}
         payload["exit_reason"] = reason.strip()
         workflow.payload = payload
         workflow.status = "cancelled"
@@ -609,6 +741,30 @@ class SpecialWorkflowService:
             raise SpecialNotFound("特殊工作流所属档案不存在")
         if manga.status != Status.SPECIAL_PROCESSING.value:
             raise SpecialConflict("档案状态与特殊工作流不一致")
+        return workflow, manga
+
+    def _locked_completed_workflow(
+        self,
+        workflow_id: int,
+    ) -> tuple[SpecialWorkflow, MangaRecord]:
+        workflow = self.session.scalar(
+            select(SpecialWorkflow).where(SpecialWorkflow.id == workflow_id).with_for_update()
+        )
+        if workflow is None:
+            raise SpecialNotFound("特殊工作流不存在")
+        if (
+            workflow.kind != VIDEO_ARCHIVE.kind
+            or workflow.status != "completed"
+            or workflow.phase != "ready"
+        ):
+            raise SpecialInvalidRequest("只有整合完成的视频工作流可以清理源文件")
+        manga = self.session.scalar(
+            select(MangaRecord).where(MangaRecord.manga_id == workflow.manga_id).with_for_update()
+        )
+        if manga is None:
+            raise SpecialNotFound("特殊工作流所属档案不存在")
+        if manga.status != Status.COMPLETED.value:
+            raise SpecialInvalidRequest("档案尚未完成普通上传和清理流程")
         return workflow, manga
 
     def _require_module_enabled(self) -> None:
@@ -682,12 +838,22 @@ def special_workflow_detail(session: Session, workflow_id: int) -> dict[str, Any
         else None
     )
     payload = dict(workflow.payload or {})
+    raw_cleanup = payload.get("source_cleanup")
+    source_cleanup = dict(raw_cleanup) if isinstance(raw_cleanup, dict) else {}
     return {
         "workflow": workflow,
         "manga": manga,
         "jobs": jobs,
         "events": events,
         "payload": payload,
+        "source_cleanup": source_cleanup,
+        "source_cleanup_eligible": bool(
+            workflow.status == "completed"
+            and workflow.phase == "ready"
+            and manga is not None
+            and manga.status == Status.COMPLETED.value
+            and source_cleanup.get("status") in {"pending", "failed"}
+        ),
         "choices": list((payload.get("torrent_snapshot") or {}).get("choices", [])),
         "torrents": list(payload.get("torrents", [])),
         "expired_job": expired_job,
@@ -718,4 +884,27 @@ def list_video_workflows(session: Session, *, limit: int = 200) -> dict[str, Any
         )
         for status in ("queued", "running", "failed")
     }
-    return {"workflows": rows, "job_counts": counts}
+    manga_statuses = {
+        manga.manga_id: manga.status
+        for manga in session.scalars(
+            select(MangaRecord).where(MangaRecord.manga_id.in_([row.manga_id for row in rows]))
+        )
+    }
+    cleanup_pending = 0
+    cleanup_waiting = 0
+    for workflow in rows:
+        raw_cleanup = (workflow.payload or {}).get("source_cleanup")
+        cleanup = dict(raw_cleanup) if isinstance(raw_cleanup, dict) else {}
+        if cleanup.get("status") not in {"pending", "failed"}:
+            continue
+        if manga_statuses.get(workflow.manga_id) == Status.COMPLETED.value:
+            cleanup_pending += 1
+        else:
+            cleanup_waiting += 1
+    return {
+        "workflows": rows,
+        "job_counts": counts,
+        "manga_statuses": manga_statuses,
+        "cleanup_pending": cleanup_pending,
+        "cleanup_waiting": cleanup_waiting,
+    }

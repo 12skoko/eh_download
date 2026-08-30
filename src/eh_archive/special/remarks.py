@@ -31,6 +31,15 @@ PHASE_LABELS = {
     "cancelled": "已取消",
 }
 
+SOURCE_CLEANUP_LABELS = {
+    "pending": "等待档案完成后手动清理",
+    "queued": "已手动排队",
+    "running": "正在清理",
+    "completed": "已清理",
+    "failed": "清理失败，等待手动重试",
+    "retained_on_forced_exit": "已退出并保留资源",
+}
+
 
 def user_remark(value: str | None) -> str:
     return _BLOCK.sub("", value or "").strip()
@@ -93,6 +102,13 @@ def workflow_summary(workflow: SpecialWorkflow, *, timezone: str = "UTC") -> str
         f"进度：{progress_text}",
         f"最后更新：{updated_text}",
     ]
+    raw_cleanup = payload.get("source_cleanup")
+    cleanup = dict(raw_cleanup) if isinstance(raw_cleanup, dict) else {}
+    cleanup_status = str(cleanup.get("status", ""))
+    if cleanup_status:
+        lines.append(
+            "源文件清理：" + SOURCE_CLEANUP_LABELS.get(cleanup_status, cleanup_status)
+        )
     if result:
         lines.append(f"结果：{result}")
     lines.append(END_MARKER)

@@ -185,7 +185,6 @@ VIDEO_ARCHIVE_FIELDS = (
         "choice",
         options=("legacy_folders",),
     ),
-    FieldSpec(("output", "cleanup_source_on_success"), "整合成功后删除源 Torrent", "bool"),
     FieldSpec(("safety", "max_members"), "ZIP 最大成员数", "int", minimum=1),
     FieldSpec(("safety", "max_single_file_bytes"), "ZIP 单文件最大字节数", "int", minimum=1),
     FieldSpec(("safety", "max_expanded_bytes"), "ZIP 最大展开字节数", "int", minimum=1),
@@ -378,7 +377,6 @@ def _video_archive_values(config) -> dict[str, Any]:
         "output": {
             "include_original_mp4": config.output.include_original_mp4,
             "layout": config.output.layout,
-            "cleanup_source_on_success": config.output.cleanup_source_on_success,
         },
         "safety": {
             "max_members": config.safety.max_members,

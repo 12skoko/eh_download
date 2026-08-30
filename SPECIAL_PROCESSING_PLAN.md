@@ -575,6 +575,7 @@ load_torrent_options
 submit_selected_torrents
 check_and_compose_if_ready
 cancel_video_archive
+cleanup_sources_after_complete
 ```
 
 registry 决定：
@@ -585,6 +586,8 @@ registry 决定：
 - 默认租约；
 - 并发上限；
 - 严重错误处理规则。
+
+本模块的五种 operation 都只能由 Web 或受控 CLI 的用户操作创建。Supervisor 只领取已经写入数据库的 queued job，不根据 Manga、workflow 或 remark 状态自动创建特殊任务。
 
 禁止将数据库中的字符串直接拼成 shell 命令。Supervisor 使用参数数组和当前 Python 解释器启动固定模块，并传入 job ID、workflow ID、lease token、config directory、run ID 和日志路径。
 
@@ -762,6 +765,7 @@ load_torrent_options
 submit_selected_torrents
 check_and_compose_if_ready
 cancel_video_archive
+cleanup_sources_after_complete
 ```
 
 可选的人工 `refresh_torrent_options` 可以复用 `load_torrent_options`，不必增加新的 handler。
@@ -827,8 +831,8 @@ eharchive-video-special
 
 ```text
 显示名称：{id}-image / {id}-video
-保存路径：qbit_torrent_path/{safe_manga_id}/image
-          qbit_torrent_path/{safe_manga_id}/video
+保存路径：qbit_torrent_path/{数字 ID}/image
+          qbit_torrent_path/{数字 ID}/video
 ```
 
 模块直接复用现有 `app.qbit_torrent_path` 与 `app.roots.torrent_download` 的远端/本地路径映射；不在模块配置中重复声明下载根目录。
@@ -878,10 +882,10 @@ eharchive-video-special
 special_video_work
 ```
 
-每次 compose 使用 generation 和 job ID 专属目录：
+每个 workflow 使用一个稳定工作目录；artifact generation 仍作为普通产物的数据库 fencing 字段，但不再重复进入特殊工作路径：
 
 ```text
-special_video_work/{safe_manga_id}/g{generation}/j{job_id}/
+special_video_work/{数字 ID}/w{workflow_id}/
     source_image/
     source_video/
     output/
@@ -960,7 +964,7 @@ ffmpeg 调用由专门适配层负责：
 
 ### 12.11 最终 ZIP 与回归普通流水线
 
-最终 ZIP 使用现有 generation/attempt 思路：
+最终 ZIP 使用现有 generation fencing，但文件名与直接下载保持一致，为 `[数字 ID]档案名.zip`：
 
 1. 写入 job 专属临时 ZIP；
 2. 使用 `ZIP_STORED` 或明确配置的压缩策略；
@@ -977,17 +981,17 @@ ffmpeg 调用由专门适配层负责：
 
 ### 12.12 源资源清理
 
-建议采用保守策略：
+采用“普通上传完成后，由用户手动清理”的策略：
 
-- 最终 ZIP 未校验和提升前，不删除任何源 torrent 或解压内容；
-- 最终 ZIP 成功后，可以停止并删除两个特殊 qBittorrent 任务及其源文件；
-- 如果希望保留到 LANraragi 上传成功，应增加明确的后续清理动作，不能指望普通 cleanup 理解特殊 hash；
-- 任意清理必须检查精确 category、hash 和受控根目录；
-- 清理重复执行应幂等；
-- category 已被用户移走时不删除任务，转人工确认；
-- 工作目录只删除当前 workflow/generation/job 对应路径。
-
-实施前需在“组合成功即清理源文件”和“上传成功后再清理源文件”之间做最终选择。后者更保守，但需要 workflow 在普通上传完成后仍保留待清理资源，或增加一个特殊 cleanup job。
+- 最终 ZIP 登记成功时写入 `source_cleanup.status=pending`，保留两个特殊 Torrent、下载文件和 workflow 工作目录；
+- Manga 回到 `downloaded`，完整经过原有 validate、upload 和 cleanup；普通 cleanup 不查询 special 表，也不理解两个特殊 hash；
+- Manga 到达 `completed` 后，Web 显示可清理数量，用户可以在单档案页面点击清理，或运行批量清理；
+- Web 批量入口和 `eharchive special video-archive cleanup-completed` 只为每个符合条件的 workflow 创建独立 `cleanup_sources_after_complete` job，本身不访问 qBittorrent 或文件系统；
+- Supervisor 不自动创建清理 job，只领取用户已经排队的 job；
+- 清理前必须同时验证 workflow 中的 hash、模块专用 category 和确定性保存路径。任一仍存在的任务所有权不匹配时，整次操作失败且不会开始删除；
+- qBittorrent 任务或工作目录已经不存在时按幂等成功处理；失败后由用户手动重试；
+- 清理只更新 special job、workflow payload、事件和展示 remark，不改变已完成 Manga 的普通状态和错误字段；
+- 工作目录只删除 `special_video_work/{数字 ID}/w{workflow_id}`。
 
 ## 13. 配置变化
 
@@ -1336,7 +1340,7 @@ Web 只展示清理后的错误摘要，不直接展示完整路径、私有 URL
 ### 阶段 7：回归、清理与运维
 
 - 接回正常 validate/upload/cleanup。
-- 完成特殊源资源清理策略。
+- 实现由用户手动排队的 `cleanup_sources_after_complete` 单档案与批量入口。
 - 增加健康检查、配置页面、部署说明和完整回归测试。
 
 ## 18. 实施前必须确认的产品决策
@@ -1348,7 +1352,7 @@ Web 只展示清理后的错误摘要，不直接展示完整路径、私有 URL
 3. 是否保留 `1_webp/2_pic/3_video` 目录结构。
 4. 无 Seeder、过时、重采样 torrent 是否允许人工强制选择。
 5. 批量检查入口同时提供 Web 模块管理页和受控 CLI，还是只提供其中一种；建议两者调用同一服务层。
-6. 最终 ZIP 成功后立即清理源 torrent，还是等 LANraragi 上传成功后再清理。
+6. 源 Torrent 在 Manga `completed` 后由用户通过单档案或批量入口手动清理；不自动排队。
 7. 视频转换失败一个文件时是否整档失败，建议整档失败并人工复核。
 8. ffmpeg 默认并发数、质量、超时和最大输出限制。
 9. qBittorrent 远端根路径与本机共享目录的最终配置方式。
@@ -1380,4 +1384,5 @@ Web 只展示清理后的错误摘要，不直接展示完整路径、私有 URL
 - 解压、MP4 转 WebP、目录整理和打包均可恢复且受路径约束。
 - 最终 ZIP 只有在完整校验和 fencing 成功后才登记。
 - Manga 能从 `special_processing` 回到 `downloaded`，并由现有流水线完成校验、上传和清理。
+- Manga 到达 `completed` 后，用户能手动批量创建独立源文件清理 job；Supervisor 不会自动创建它们。
 - 普通档案的现有行为不发生变化。

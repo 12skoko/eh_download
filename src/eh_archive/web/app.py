@@ -582,6 +582,25 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             f"&found={result.found}&queued={result.queued}&skipped={result.skipped}",
         )
 
+    @app.post("/special/video-archive/cleanup-completed")
+    async def cleanup_completed_page(request: Request):
+        await _validated_form(request)
+        try:
+            with database.session() as session:
+                result = SpecialWorkflowService(
+                    session,
+                    actor=_actor(request),
+                    config_dir=config_dir,
+                    app_config=app_config,
+                ).dispatch_source_cleanups()
+        except SpecialServiceError as exc:
+            return _special_error_response(request, templates, exc)
+        return _redirect_response(
+            request,
+            "/special?notice=cleanup-dispatched"
+            f"&found={result.found}&queued={result.queued}&skipped={result.skipped}",
+        )
+
     @app.post("/special/start/{manga_id:path}")
     async def start_special_page(request: Request, manga_id: str):
         form = await _validated_form(request)
@@ -699,6 +718,22 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             config_dir=config_dir,
             app_config=app_config,
             notice="check-queued",
+        )
+
+    @app.post("/special/workflows/{workflow_id}/cleanup-sources")
+    async def special_cleanup_sources_page(request: Request, workflow_id: int):
+        form = await _validated_form(request)
+        return _special_page_update(
+            request,
+            templates,
+            database,
+            workflow_id,
+            lambda service: service.queue_source_cleanup(
+                workflow_id, row_version=int(str(form.get("row_version", "")))
+            ),
+            config_dir=config_dir,
+            app_config=app_config,
+            notice="cleanup-queued",
         )
 
     @app.post("/special/workflows/{workflow_id}/retry")

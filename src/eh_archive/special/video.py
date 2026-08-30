@@ -14,14 +14,14 @@ from ..db import Database
 from ..db.models import MangaRecord, SpecialWorkflow
 from ..domain.errors import ArchiveError, ErrorClass
 from ..integrations.http import RoleSession
-from ..logging import get_logger
 from ..services.downloader.torrent import parse_torrent_options, torrent_category
 from ..services.paths import (
     ArtifactPathService,
     UnsafePathError,
+    direct_archive_filename,
     external_path_key,
     map_external_path,
-    safe_manga_id,
+    safe_filename,
 )
 from ..services.validator import validate_artifact
 from .archive_tools import (
@@ -35,6 +35,7 @@ from .archive_tools import (
 from .registry import (
     CANCEL_VIDEO_ARCHIVE,
     CHECK_AND_COMPOSE,
+    CLEANUP_SOURCES_AFTER_COMPLETE,
     LOAD_TORRENT_OPTIONS,
     SUBMIT_SELECTED_TORRENTS,
     get_operation,
@@ -44,8 +45,6 @@ from .repository import (
     SpecialCancellationRequested,
     SpecialRepository,
 )
-
-log = get_logger(__name__)
 
 
 def _value(item: Any, name: str, default: Any = None) -> Any:
@@ -133,6 +132,8 @@ class VideoArchiveExecutor:
                 self.check_and_compose_if_ready()
             elif self.claim.operation == CANCEL_VIDEO_ARCHIVE:
                 self.cancel_video_archive()
+            elif self.claim.operation == CLEANUP_SOURCES_AFTER_COMPLETE:
+                self.cleanup_sources_after_complete()
             else:
                 raise ArchiveError(
                     "unsupported_special_operation", self.claim.operation, ErrorClass.SYSTEM
@@ -249,7 +250,7 @@ class VideoArchiveExecutor:
         )
 
     def _special_paths(self, manga_id: str, role: str) -> tuple[str, Path, str]:
-        safe_id = safe_manga_id(manga_id)
+        numeric_id = safe_filename(manga_id.split("/", 1)[0])
         external_root, local_root = self._download_roots()
         separator = (
             "\\"
@@ -257,9 +258,9 @@ class VideoArchiveExecutor:
             else "/"
         )
         external = external_root.rstrip("\\/")
-        external_path = f"{external}{separator}{safe_id}{separator}{role}"
-        local_path = local_root / safe_id / role
-        display_name = f"{manga_id.split('/', 1)[0]}-{role}"
+        external_path = f"{external}{separator}{numeric_id}{separator}{role}"
+        local_path = local_root / numeric_id / role
+        display_name = f"{numeric_id}-{role}"
         return external_path, local_path, display_name
 
     def _download_roots(self) -> tuple[str, Path]:
@@ -517,12 +518,8 @@ class VideoArchiveExecutor:
         )
         generation = (self.claim.artifact_generation or 0) + 1
         workspace_root = self.module.work.workspace_root.resolve()
-        job_root = (
-            workspace_root
-            / safe_manga_id(manga.manga_id)
-            / f"w{self.claim.workflow_id}"
-            / f"g{generation}"
-        )
+        numeric_id = safe_filename(manga.manga_id.split("/", 1)[0])
+        job_root = workspace_root / numeric_id / f"w{self.claim.workflow_id}"
         try:
             job_root.resolve().relative_to(workspace_root)
         except ValueError as exc:
@@ -584,12 +581,15 @@ class VideoArchiveExecutor:
             progress={"message": "packing", **counts},
             event_type="special_pack_started",
         )
-        paths = ArtifactPathService(self.app).for_attempt(
-            manga_id=manga.manga_id,
-            generation=generation,
-            attempt_id=self.claim.job_id,
-            location="prepared",
-            extension=".zip",
+        artifact_paths = ArtifactPathService(self.app)
+        final_name = direct_archive_filename(
+            manga.manga_id,
+            manga.name or manga.real_name or manga.manga_id,
+        )
+        final_path = artifact_paths.resolve("prepared", final_name)
+        temporary_path = artifact_paths.resolve(
+            "prepared",
+            safe_filename(f"{final_name}.j{self.claim.job_id}.tmp"),
         )
 
         def before_promote() -> None:
@@ -610,14 +610,14 @@ class VideoArchiveExecutor:
                 if (values[1].payload or {}).get("cancel_requested"):
                     raise SpecialCancellationRequested
 
-        if paths.final.exists():
-            existing = validate_artifact(paths.final, expected_kind="zip")
-            candidate = paths.final.with_name(f".{paths.final.name}.j{self.claim.job_id}.candidate")
+        if final_path.exists():
+            existing = validate_artifact(final_path, expected_kind="zip")
+            candidate = final_path.with_name(f".{final_path.name}.j{self.claim.job_id}.candidate")
             candidate.unlink(missing_ok=True)
             try:
                 expected = prepare_deterministic_zip(
                     output_root,
-                    paths.temporary,
+                    temporary_path,
                     candidate,
                     before_promote=before_promote,
                 )
@@ -632,16 +632,20 @@ class VideoArchiveExecutor:
         else:
             fingerprint = prepare_deterministic_zip(
                 output_root,
-                paths.temporary,
-                paths.final,
+                temporary_path,
+                final_path,
                 before_promote=before_promote,
             )
-        payload["source_cleanup"] = (
-            "requested_on_success" if self.module.output.cleanup_source_on_success else "retained"
-        )
+        payload["source_cleanup"] = {
+            "status": "pending",
+            "job_id": None,
+            "last_error": None,
+            "last_error_code": None,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
         payload["workspace"] = {
-            "generation": generation,
-            "job_id": self.claim.job_id,
+            "workflow_id": self.claim.workflow_id,
+            "relative_path": f"{numeric_id}/w{self.claim.workflow_id}",
             "counts": counts,
         }
         with self.database.session() as session:
@@ -650,49 +654,13 @@ class VideoArchiveExecutor:
                 payload=payload,
                 fingerprint=fingerprint,
                 generation=generation,
-                detail={"source_cleanup": payload["source_cleanup"], **counts},
+                detail={"source_cleanup": "pending", **counts},
             ):
                 raise ArchiveError(
                     "stale_special_job",
                     "final artifact database fencing failed",
                     ErrorClass.TEMPORARY,
                 )
-        if self.module.output.cleanup_source_on_success:
-            self._cleanup_after_success(payload, job_root)
-
-    def _cleanup_after_success(self, payload: dict[str, Any], job_root: Path) -> None:
-        detail: dict[str, Any] = {"deleted": [], "skipped": [], "workspace_removed": False}
-        failures: list[str] = []
-        try:
-            detail.update(self._cleanup_qbit(payload))
-        except Exception as exc:
-            failures.append(error_code(exc)[0])
-            log.exception(
-                "post-completion qBittorrent cleanup failed: job_id=%s", self.claim.job_id
-            )
-        try:
-            if job_root.exists():
-                shutil.rmtree(job_root)
-            detail["workspace_removed"] = True
-        except OSError as exc:
-            failures.append(error_code(exc)[0])
-            log.exception("post-completion workspace cleanup failed: job_id=%s", self.claim.job_id)
-        if failures:
-            status = "failed"
-        elif detail["skipped"]:
-            status = "partial"
-        else:
-            status = "completed"
-        if failures:
-            detail["error_codes"] = sorted(set(failures))
-        with self.database.session() as session:
-            SpecialRepository(session, timezone=self.app.timezone).record_source_cleanup(
-                self.claim.workflow_id,
-                status=status,
-                detail=detail,
-                error_code=failures[0] if failures else None,
-            )
-
     def _cleanup_qbit(self, payload: dict[str, Any]) -> dict[str, Any]:
         deleted: list[str] = []
         skipped: list[str] = []
@@ -720,7 +688,8 @@ class VideoArchiveExecutor:
         self._begin_external()
         cleanup = self._cleanup_qbit(payload)
         root = self.module.work.workspace_root.resolve()
-        workflow_root = root / safe_manga_id(self.claim.manga_id) / f"w{self.claim.workflow_id}"
+        numeric_id = safe_filename(self.claim.manga_id.split("/", 1)[0])
+        workflow_root = root / numeric_id / f"w{self.claim.workflow_id}"
         try:
             workflow_root.resolve().relative_to(root)
         except ValueError as exc:
@@ -736,10 +705,72 @@ class VideoArchiveExecutor:
                     "stale_special_job", "special job fencing failed", ErrorClass.TEMPORARY
                 )
 
+    def cleanup_sources_after_complete(self) -> None:
+        _, _, payload = self._state()
+        self._begin_external()
+        cleanup = self._cleanup_qbit_strict(payload)
+        root = self.module.work.workspace_root.resolve()
+        numeric_id = safe_filename(self.claim.manga_id.split("/", 1)[0])
+        manga_root = root / numeric_id
+        workflow_root = manga_root / f"w{self.claim.workflow_id}"
+        try:
+            workflow_root.resolve().relative_to(root)
+        except ValueError as exc:
+            raise ArchiveError("special_workspace_escape", str(exc), ErrorClass.SYSTEM) from exc
+        workspace_removed = not workflow_root.exists()
+        if workflow_root.exists():
+            shutil.rmtree(workflow_root)
+            workspace_removed = True
+        if manga_root.exists() and not any(manga_root.iterdir()):
+            manga_root.rmdir()
+        detail = {"torrent_cleanup": cleanup, "workspace_removed": workspace_removed}
+        with self.database.session() as session:
+            if not SpecialRepository(session, timezone=self.app.timezone).complete_source_cleanup(
+                self.claim,
+                detail=detail,
+            ):
+                raise ArchiveError(
+                    "stale_special_job", "special job fencing failed", ErrorClass.TEMPORARY
+                )
 
-def error_code(exc: BaseException) -> tuple[str, str]:
-    if isinstance(exc, VideoArchiveError):
-        return exc.code, str(exc)
-    if isinstance(exc, ArchiveError):
-        return exc.info.code, exc.info.message
-    return "unexpected_special_error", str(exc) or type(exc).__name__
+    def _cleanup_qbit_strict(self, payload: dict[str, Any]) -> dict[str, Any]:
+        owned: list[tuple[str, str]] = []
+        missing: list[str] = []
+        torrents = {
+            str(item.get("role")): item
+            for item in payload.get("torrents", [])
+            if isinstance(item, dict) and item.get("external_id")
+        }
+        if set(torrents) != {"image", "video"}:
+            raise ArchiveError(
+                "special_torrent_state_missing",
+                "both owned torrent hashes are required for source cleanup",
+                ErrorClass.ITEM,
+            )
+        for item in (torrents["image"], torrents["video"]):
+            role = str(item.get("role", "unknown"))
+            torrent_hash = str(item["external_id"])
+            info = self.qbit.info(torrent_hash)
+            if info is None:
+                missing.append(role)
+                continue
+            expected_path, _, _ = self._special_paths(self.claim.manga_id, role)
+            observed_path = str(_value(info, "save_path", ""))
+            if torrent_category(info) != self.module.download.category:
+                raise ArchiveError(
+                    "special_torrent_ownership_lost",
+                    f"the {role} torrent category no longer belongs to this module",
+                    ErrorClass.ITEM,
+                )
+            if external_path_key(observed_path) != external_path_key(expected_path):
+                raise ArchiveError(
+                    "special_torrent_path_changed",
+                    f"the {role} torrent save path no longer matches its owned path",
+                    ErrorClass.ITEM,
+                )
+            owned.append((role, torrent_hash))
+        deleted: list[str] = []
+        for role, torrent_hash in owned:
+            self.qbit.delete(torrent_hash, delete_files=True)
+            deleted.append(role)
+        return {"deleted": deleted, "missing": missing}

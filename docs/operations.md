@@ -52,6 +52,16 @@ through safe extraction, MP4-to-WebP conversion, deterministic packing and
 artifact registration, then returns the Manga to `downloaded` for the ordinary
 validator.
 
+The completed workflow retains both special Torrents and its workspace while
+the Manga passes through the unchanged ordinary validate, upload and cleanup
+pipeline. After the Manga reaches `completed`, use the Web source-cleanup
+button or run `eharchive --config-dir config special video-archive
+cleanup-completed`. This manual dispatcher creates one
+`cleanup_sources_after_complete` job per eligible workflow. Supervisor never
+creates special jobs from status changes. The cleanup worker verifies the
+stored hashes, exact category and numeric-ID save paths before deleting the two
+qBittorrent tasks/files and `workspace_root/<numeric-id>/w<workflow-id>`.
+
 While a job is queued or running, the HTMX workflow panel reads persisted
 PostgreSQL workflow/job state and declarative module enablement only. It never
 probes the filesystem, starts ffmpeg, or polls qBittorrent. The manual compose

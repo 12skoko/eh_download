@@ -77,7 +77,10 @@ def build_parser() -> argparse.ArgumentParser:
     special = sub.add_parser("special")
     special_kind = special.add_subparsers(dest="special_kind", required=True)
     video_archive = special_kind.add_parser("video-archive")
-    video_archive.add_argument("special_action", choices=("collect-ready",))
+    video_archive.add_argument(
+        "special_action",
+        choices=("collect-ready", "cleanup-completed"),
+    )
     return parser
 
 
@@ -129,6 +132,20 @@ def main(argv: list[str] | None = None) -> int:
                 ).dispatch_ready_checks()
             print(
                 f"video-archive collect-ready found={result.found} "
+                f"queued={result.queued} skipped={result.skipped}"
+            )
+            return 0
+        if args.special_kind == "video-archive" and args.special_action == "cleanup-completed":
+            with database.session() as session:
+                result = SpecialWorkflowService(
+                    session,
+                    actor="cli",
+                    config_dir=args.config_dir,
+                    app_config=app,
+                    trigger_source="cli",
+                ).dispatch_source_cleanups()
+            print(
+                f"video-archive cleanup-completed found={result.found} "
                 f"queued={result.queued} skipped={result.skipped}"
             )
             return 0
