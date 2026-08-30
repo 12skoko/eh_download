@@ -75,7 +75,7 @@ class Supervisor:
         self._last_graceful_children: tuple[str, ...] | None = None
         self.exit_code = 0
         self.failed_operations: set[str] = set()
-        self.last_collect = 0.0
+        self.next_collect_at = time.monotonic() + self.config.collect_initial_delay_seconds
         self.last_health_check = 0.0
         self.next_special_start_at = 0.0
         self.health_checks_enabled = True
@@ -565,13 +565,13 @@ class Supervisor:
         child = self.children.get("collect")
         if child is not None and child.poll() is None:
             return
-        if now - self.last_collect < self.config.collect_interval_seconds:
+        if now < self.next_collect_at:
             return
         self._start_child(
             "collect",
             [sys.executable, "-m", "eh_archive.tasks.collect", "--config-dir", self.config_dir],
         )
-        self.last_collect = now
+        self.next_collect_at = now + self.config.collect_interval_seconds
 
     def _maybe_special_jobs(self) -> None:
         enabled_kinds = getattr(self, "special_enabled_kinds", ())

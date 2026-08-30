@@ -96,13 +96,12 @@ class Collector:
                 continue
             result.discovered += 1
             manga.queue_source = QueueSource(source)
-            status, defer_until, remark = collection_status(
+            status, defer_until, _ = collection_status(
                 manga,
                 self.crawl.observation_days,
             )
             manga.status = status
             manga.defer_until = defer_until
-            manga.remark = remark
             incoming = _record(manga)
             stored = self.repository.upsert_manga(incoming, actor=actor)
             persisted = stored or incoming

@@ -254,7 +254,8 @@ latest = "https://e-hentai.org/?f_search=..."
 常用项：
 
 - `poll_seconds`：Supervisor 调度轮询间隔；
-- `collect_interval_seconds`：自动采集周期，默认 3 小时；
+- `collect_initial_delay_seconds`：Supervisor 启动后的首次自动采集延迟，默认 60 秒；
+- `collect_interval_seconds`：首次采集实际启动后的自动采集周期，默认 3 小时；
 - `batch_size`：每个任务子进程处理的最大条数；
 - `lease_seconds`：任务租约有效期；过期租约不会自动接管，需要人工核对；
 - `retry_limit`：网络或临时失败的重试次数；
@@ -376,7 +377,7 @@ eharchive-supervisor --config-dir config
 
 ### 7.1 自动采集
 
-把列表 URL 写入 `crawl.toml` 后，Supervisor 按 `collect_interval_seconds` 自动运行，并使用动态终点。也可以立即执行一次同样的自动抓取任务：
+把列表 URL 写入 `crawl.toml` 后，Supervisor 启动满 `collect_initial_delay_seconds` 后运行首次 Collect，之后按 `collect_interval_seconds` 自动运行，并使用动态终点。如果首次到期时 Collect 处于暂停状态，恢复后会在下一次 Supervisor 轮询立即补跑一次；后续周期从实际启动时间重新计算。也可以立即执行一次同样的自动抓取任务：
 
 ```powershell
 python -m eh_archive.tasks.collect --config-dir config

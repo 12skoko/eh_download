@@ -87,6 +87,7 @@ class AppConfig:
 @dataclass(frozen=True)
 class SupervisorConfig:
     poll_seconds: float = 5.0
+    collect_initial_delay_seconds: float = 60.0
     collect_interval_seconds: float = 3 * 60 * 60
     batch_size: int = 10
     direct_download_batch_size: int = 1
@@ -567,6 +568,9 @@ def load_config(
     special_raw = dict(supervisor_raw.get("special_processing", {}))
     supervisor = SupervisorConfig(
         poll_seconds=float(supervisor_raw.get("poll_seconds", 5)),
+        collect_initial_delay_seconds=float(
+            supervisor_raw.get("collect_initial_delay_seconds", 60)
+        ),
         collect_interval_seconds=float(supervisor_raw.get("collect_interval_seconds", 10800)),
         batch_size=int(supervisor_raw.get("batch_size", 10)),
         direct_download_batch_size=int(supervisor_raw.get("direct_download_batch_size", 1)),
@@ -603,6 +607,8 @@ def load_config(
     )
     if supervisor.batch_size <= 0:
         raise ValueError("batch_size must be greater than zero")
+    if supervisor.collect_initial_delay_seconds < 0:
+        raise ValueError("collect_initial_delay_seconds must not be negative")
     if supervisor.direct_download_batch_size <= 0:
         raise ValueError("direct_download_batch_size must be greater than zero")
     if supervisor.torrent_poll_seconds < 0:

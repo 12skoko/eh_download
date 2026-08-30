@@ -246,7 +246,6 @@ class ArchiveRepository:
         if current.status == Status.DEFERRED.value:
             previous = current.status
             current.status = record.status
-            current.remark = record.remark
             current.defer_until = record.defer_until
             current.screen_group_id = None
             current.updated_at = utcnow()
@@ -401,7 +400,6 @@ class ArchiveRepository:
         previous = row.status
         now = utcnow()
         row.status = status.value
-        row.remark = reason
         row.defer_until = None
         row.screen_group_id = screen_group_id
         row.status_updated_at = row.updated_at = now

@@ -111,6 +111,7 @@ APP_FIELDS = (
 SUPERVISOR_FIELDS = (
     FieldSpec(("poll_seconds",), "调度轮询间隔（秒）", "float", minimum=0),
     FieldSpec(("health_check_interval_seconds",), "健康检查间隔（秒）", "float", minimum=0.001),
+    FieldSpec(("collect_initial_delay_seconds",), "首次采集延迟（秒）", "float", minimum=0),
     FieldSpec(("collect_interval_seconds",), "采集间隔（秒）", "float", minimum=0),
     FieldSpec(("batch_size",), "批处理数量", "int", minimum=1),
     FieldSpec(("direct_download_batch_size",), "直接下载批处理数量", "int", minimum=1),
@@ -326,6 +327,7 @@ def _supervisor_values(config) -> dict[str, Any]:
         for key in (
             "poll_seconds",
             "health_check_interval_seconds",
+            "collect_initial_delay_seconds",
             "collect_interval_seconds",
             "batch_size",
             "direct_download_batch_size",
