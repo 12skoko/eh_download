@@ -18,7 +18,7 @@ class HttpUploadBackend:
     def upload(self, request: UploadRequest) -> UploadOutcome:
         expected_id = request.expected_archive_id or lanraragi_archive_id(request.path)
         request.archive_identified(expected_id)
-        request.phase("preflight", {"expected_archive_id": expected_id})
+        request.phase("checking_lanraragi", {"expected_archive_id": expected_id})
         status, existing = self.api.metadata(expected_id)
         if status == 200:
             if not self.api.metadata_matches_artifact(
@@ -53,7 +53,7 @@ class HttpUploadBackend:
                 "lrr_metadata_preflight_failed",
             )
 
-        request.phase("requesting", {})
+        request.phase("uploading", {"expected_archive_id": expected_id})
         outcome = self.api.upload_archive(
             request.path,
             request.info,

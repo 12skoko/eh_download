@@ -83,7 +83,7 @@ class FilesystemUploadBackend:
         if invalid is not None:
             return invalid
 
-        request.phase("preflight", {})
+        request.phase("validating_local", {})
         request.checkpoint()
         full_sha1 = _sha1_file(
             request.path,
@@ -100,6 +100,7 @@ class FilesystemUploadBackend:
         request.archive_identified(expected_id)
         self.api.shinobu_status()
 
+        request.phase("checking_lanraragi", {"expected_archive_id": expected_id})
         status, existing = self.api.metadata(expected_id)
         if status == 200:
             if not self.api.metadata_matches_artifact(
@@ -138,7 +139,7 @@ class FilesystemUploadBackend:
         published = False
         staging_owned = False
         request.phase(
-            "preflight",
+            "preparing_remote",
             {
                 "expected_archive_id": expected_id,
                 "remote_filename": request.filename,
@@ -149,7 +150,7 @@ class FilesystemUploadBackend:
             with self.store:
                 try:
                     if self.store.exists(request.filename):
-                        request.phase("verifying", {"remote_filename": request.filename})
+                        request.phase("verifying_remote", {"remote_filename": request.filename})
                         if not self._remote_matches(request, request.filename):
                             return UploadOutcome(
                                 "review",
@@ -161,7 +162,7 @@ class FilesystemUploadBackend:
                     else:
                         if self.store.exists(staging):
                             staging_owned = True
-                            request.phase("verifying", {"staging_filename": staging})
+                            request.phase("verifying_remote", {"staging_filename": staging})
                             if not self._remote_matches(request, staging):
                                 self.store.remove(staging)
                                 staging_owned = False
@@ -170,7 +171,7 @@ class FilesystemUploadBackend:
                             # attempt, including partial files left by a failed write.
                             staging_owned = True
                             self._transfer(request, staging)
-                        request.phase("verifying", {"staging_filename": staging})
+                        request.phase("verifying_remote", {"staging_filename": staging})
                         if not self._remote_matches(request, staging):
                             return UploadOutcome(
                                 "review",
@@ -179,6 +180,13 @@ class FilesystemUploadBackend:
                                 error_code="smb_integrity_mismatch",
                             )
                         request.checkpoint()
+                        request.phase(
+                            "publishing",
+                            {
+                                "remote_filename": request.filename,
+                                "staging_filename": staging,
+                            },
+                        )
                         self.store.rename(staging, request.filename)
                         staging_owned = False
                         published = True

@@ -66,6 +66,10 @@ from ..services.validator.artifact import ValidationError, quarantine_artifact, 
 log = get_logger(__name__)
 DIRECT_REPORT_PROGRESS_INTERVAL_SECONDS = 10.0
 DIRECT_WEB_PROGRESS_INTERVAL_SECONDS = 2.0
+UPLOAD_METHOD_NAMES = {
+    HTTP_BACKEND: "http",
+    FILESYSTEM_BACKEND: "filesystem",
+}
 TORRENT_FALLBACK_CODES = frozenset(
     {
         "no_torrent",
@@ -152,6 +156,7 @@ class TaskRunResult:
     name: str
     category: str
     pages: int | None
+    upload_method: str | None = None
 
 
 class TaskExecutor:
@@ -422,6 +427,11 @@ class TaskExecutor:
         if record is None or attempt is None:
             return None
         info = record.info
+        upload_method = None
+        if claim.operation == "upload":
+            variant = (attempt.detail or {}).get("variant")
+            if isinstance(variant, str):
+                upload_method = variant
         return TaskRunResult(
             manga_id=record.manga_id,
             attempt_id=claim.attempt_id,
@@ -444,6 +454,7 @@ class TaskExecutor:
             name=info.name if info is not None else record.name,
             category=info.category if info is not None else record.category,
             pages=info.pages if info is not None else record.pages,
+            upload_method=upload_method,
         )
 
     def run_batch(self, operation: str, limit: int | None = None) -> int:
@@ -506,6 +517,38 @@ class TaskExecutor:
         if not repository.set_external_id(claim, external_id, owner=self.owner):
             raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
         repository.session.commit()
+
+    def _write_upload_phase(
+        self,
+        claim: ClaimedAttempt,
+        backend_key: str,
+        phase: str,
+        detail: dict[str, Any],
+    ) -> None:
+        report = getattr(self, "report", None)
+        if report is None:
+            return
+        fields = [
+            f"[{self._report_item_index}] {clean_report_value(claim.manga_id)}",
+            clean_report_value(phase),
+            f"method={UPLOAD_METHOD_NAMES.get(backend_key, clean_report_value(backend_key))}",
+        ]
+        filename = detail.get("filename")
+        if filename:
+            fields.append(f"file={clean_report_value(filename)}")
+        size = detail.get("size")
+        if isinstance(size, int):
+            fields.append(f"size={format_report_size(size)}")
+        archive_id = detail.get("expected_archive_id")
+        if archive_id:
+            fields.append(f"archive_id={clean_report_value(archive_id)}")
+        remote_filename = detail.get("remote_filename")
+        if remote_filename:
+            fields.append(f"remote_file={clean_report_value(remote_filename)}")
+        staging_filename = detail.get("staging_filename")
+        if staging_filename:
+            fields.append(f"staging_file={clean_report_value(staging_filename)}")
+        report.write(" | ".join(fields))
 
     def _upload_callbacks(self, claim: ClaimedAttempt):
         """Build independently committed progress, lease and recovery callbacks."""
@@ -1372,6 +1415,21 @@ class TaskExecutor:
         backend: UploadBackend = registry[backend_key]()
         self._begin_external_effect(repository, claim)
         progress, checkpoint, phase, archive_identified = self._upload_callbacks(claim)
+        self._write_upload_phase(
+            claim,
+            backend_key,
+            "selected",
+            {
+                "filename": record.artifact_filename,
+                "size": record.artifact_size,
+                "expected_archive_id": expected_archive_id,
+            },
+        )
+
+        def report_phase(name: str, detail: Any) -> None:
+            phase(name, detail)
+            self._write_upload_phase(claim, backend_key, name, dict(detail))
+
         request = UploadRequest(
             path=path,
             filename=record.artifact_filename,
@@ -1386,7 +1444,7 @@ class TaskExecutor:
             expected_archive_id=expected_archive_id,
             progress=progress,
             checkpoint=checkpoint,
-            phase=phase,
+            phase=report_phase,
             archive_identified=archive_identified,
         )
         outcome = backend.upload(request)
@@ -1878,8 +1936,14 @@ def _task_result_line(result: TaskRunResult, *, timezone: str) -> str:
         if result.operation in {"validate", "prepare"}:
             fields.append(f"next_status={result.resulting_status}")
     elif result.operation == "upload":
+        if result.upload_method:
+            fields.append(
+                f"method={UPLOAD_METHOD_NAMES.get(result.upload_method, result.upload_method)}"
+            )
         if result.artifact_filename:
             fields.append(f"file={clean_report_value(result.artifact_filename)}")
+        if result.artifact_size is not None:
+            fields.append(f"size={format_report_size(result.artifact_size)}")
         if result.lrr_archive_id:
             fields.append(f"archive_id={clean_report_value(result.lrr_archive_id)}")
     elif result.operation == "cleanup" and result.lrr_archive_id:
