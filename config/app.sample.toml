@@ -2,9 +2,10 @@ database_url = "postgresql+psycopg://localhost/eh_archive"
 timezone = "Asia/Shanghai"
 log_level = "INFO"
 log_dir = "D:/eharchive-data/log"
-# Files at or above this size are reserved for the future filesystem-based
-# LANraragi import path and are left in upload_pending for now. Set to 0 to
-# disable this reservation and use normal HTTP upload for every file.
+# Force "http" or "filesystem", or let "auto" apply the size rule below.
+upload_backend = "auto"
+# In auto mode, files at or above this size use the SMB filesystem backend.
+# Set to 0 to use HTTP for every file in auto mode.
 large_upload_threshold_bytes = 2147483648
 web_host = "0.0.0.0"
 web_port = 8787
@@ -13,6 +14,17 @@ qbittorrent_url = "http://127.0.0.1:8080"
 # roots.torrent_download path when qBittorrent runs on another machine.
 qbit_torrent_path = "D:/eharchive-data/torrent_download"
 lanraragi_url = "http://127.0.0.1:3000"
+# Non-secret SMB target used by the filesystem upload backend. The Python
+# process connects directly with smbprotocol; no host mount is required.
+lanraragi_smb_server = "192.168.1.10"
+lanraragi_smb_port = 445
+lanraragi_smb_share = "LANraragi"
+lanraragi_smb_relative_dir = "manga"
+lanraragi_smb_connection_timeout_seconds = 60.0
+# SMB signing is always required. Enable SMB3 encryption when the server supports it.
+lanraragi_smb_encrypt = false
+lanraragi_import_poll_timeout_seconds = 600.0
+lanraragi_import_poll_interval_seconds = 3.0
 aria2_enabled = false
 hah_enabled = false
 fallback_method = "direct"

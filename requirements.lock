@@ -3,6 +3,7 @@ alembic==1.18.5
 psycopg[binary]==3.3.4
 requests==2.34.2
 requests-toolbelt==1.0.0
+smbprotocol==1.17.0
 beautifulsoup4==4.15.0
 lxml==6.1.1
 fastapi==0.141.1

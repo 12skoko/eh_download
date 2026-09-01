@@ -446,7 +446,7 @@ class ArchiveRepository:
             )
         return len(rows)
 
-    def has_work(self, operation: str, *, large_upload_threshold_bytes: int = 0) -> bool:
+    def has_work(self, operation: str) -> bool:
         try:
             states, _ = OPERATION_STATES[operation]
         except KeyError as exc:
@@ -474,13 +474,6 @@ class ArchiveRepository:
                     and_(MangaRecord.download_method.is_(None), MangaRecord.torrent_link == ""),
                 )
             )
-        elif operation == "upload" and large_upload_threshold_bytes > 0:
-            query = query.where(
-                or_(
-                    MangaRecord.artifact_size.is_(None),
-                    MangaRecord.artifact_size < large_upload_threshold_bytes,
-                )
-            )
         elif operation == "delete":
             query = query.where(_delete_ready_clause())
         return self.session.scalar(query) is not None
@@ -492,7 +485,6 @@ class ArchiveRepository:
         owner: str,
         lease_seconds: int = 900,
         actor: str | None = None,
-        large_upload_threshold_bytes: int = 0,
     ) -> ClaimedAttempt | None:
         try:
             states, execution_state = OPERATION_STATES[operation]
@@ -519,13 +511,6 @@ class ArchiveRepository:
                 or_(
                     MangaRecord.download_method.in_(("direct", "hah", "aria2")),
                     and_(MangaRecord.download_method.is_(None), MangaRecord.torrent_link == ""),
-                )
-            )
-        elif operation == "upload" and large_upload_threshold_bytes > 0:
-            query = query.where(
-                or_(
-                    MangaRecord.artifact_size.is_(None),
-                    MangaRecord.artifact_size < large_upload_threshold_bytes,
                 )
             )
         elif operation == "delete":
@@ -668,6 +653,26 @@ class ArchiveRepository:
             .values(external_task_id=external_id)
         )
         return result.rowcount == 1
+
+    def update_attempt_detail(
+        self,
+        claim: ClaimedAttempt,
+        detail: dict[str, Any],
+    ) -> bool:
+        """Merge observable backend/phase data into the existing attempt JSON."""
+
+        attempt = self.session.scalar(
+            select(JobAttempt).where(
+                JobAttempt.id == claim.attempt_id,
+                JobAttempt.manga_id == claim.manga_id,
+                JobAttempt.lease_token == claim.lease_token,
+                JobAttempt.status == "running",
+            )
+        )
+        if attempt is None:
+            return False
+        attempt.detail = {**(attempt.detail or {}), **detail}
+        return True
 
     def update_attempt_progress(
         self,

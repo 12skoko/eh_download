@@ -1,21 +1,26 @@
 from __future__ import annotations
 
+import hashlib
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from ...domain.errors import ArchiveError, ErrorClass
 from ...domain.models import MangaInfo
+from .contracts import UploadOutcome
+
+RETRYABLE_HTTP_STATUSES = frozenset({408, 423, 429, 500, 502, 503, 504})
+AUTH_HTTP_STATUSES = frozenset({401, 403})
+LANRARAGI_ID_PREFIX_BYTES = 512_000
 
 
-@dataclass(frozen=True)
-class UploadOutcome:
-    kind: str
-    archive_id: str | None = None
-    status_code: int | None = None
-    response: str = ""
+def lanraragi_archive_id(path: str | Path) -> str:
+    """Return SHA-1 of exactly the first 512000 bytes (or all of a short file)."""
+
+    with Path(path).open("rb") as stream:
+        return hashlib.sha1(stream.read(LANRARAGI_ID_PREFIX_BYTES)).hexdigest()
 
 
 def build_tags(info: MangaInfo, *, date_added: int | None = None) -> str:
@@ -38,7 +43,9 @@ def build_tags(info: MangaInfo, *, date_added: int | None = None) -> str:
     return ",".join(x for x in (metadata, info.tags_translated_raw, info.tags_raw) if x)
 
 
-class LANraragiClient:
+class LANraragiApiGateway:
+    """Shared LANraragi API access used by upload backends and maintenance tasks."""
+
     def __init__(
         self,
         base_url: str,
@@ -52,7 +59,7 @@ class LANraragiClient:
         self.session = session
         self.timeout = timeout
 
-    def _session(self):
+    def _session(self) -> Any:
         if self.session is None:
             import requests
 
@@ -69,12 +76,30 @@ class LANraragiClient:
             ):
                 raise ArchiveError(
                     "lanraragi_unavailable",
-                    f"LANraragi is unavailable: {exc}",
+                    f"LANraragi is unavailable ({type(exc).__name__})",
                     ErrorClass.SYSTEM,
                 ) from exc
             raise
 
-    def upload(
+    @staticmethod
+    def _payload(response: Any) -> dict[str, Any] | None:
+        try:
+            value = response.json()
+        except (TypeError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    @staticmethod
+    def _body(response: Any, limit: int = 4000) -> str:
+        return str(getattr(response, "text", ""))[:limit]
+
+    @staticmethod
+    def metadata_values(info: MangaInfo) -> dict[str, str]:
+        # MangaInfo has no summary field. Do not invent one or clear a remote
+        # summary; future callers can extend this mapping explicitly.
+        return {"title": info.name, "tags": build_tags(info)}
+
+    def upload_archive(
         self,
         path: str | Path,
         info: MangaInfo,
@@ -85,7 +110,7 @@ class LANraragiClient:
         path = Path(path)
         if not info.is_complete():
             raise ArchiveError("missing_mangainfo", "MangaInfo is incomplete", ErrorClass.ITEM)
-        data = {"title": info.name, "tags": build_tags(info), "file_checksum": checksum}
+        data = {**self.metadata_values(info), "file_checksum": checksum}
         try:
             from requests_toolbelt.multipart.encoder import MultipartEncoder
         except ImportError as exc:
@@ -105,17 +130,16 @@ class LANraragiClient:
                 headers=headers,
                 timeout=self.timeout if timeout is None else timeout,
             )
-        body = response.text[:4000]
+        body = self._body(response)
         status = int(response.status_code)
         if status == 200:
-            try:
-                payload = response.json()
-            except Exception as exc:
+            payload = self._payload(response)
+            if payload is None:
                 raise ArchiveError(
                     "upload_invalid_response",
                     "LANraragi returned non-JSON success",
                     ErrorClass.ITEM,
-                ) from exc
+                )
             archive_id = str(payload.get("id", ""))
             success = payload.get("success") in {1, "1"} and payload.get("operation") == "upload"
             if not success or not re.fullmatch(r"[0-9a-fA-F]{40}", archive_id):
@@ -124,45 +148,53 @@ class LANraragiClient:
                     "success response has no valid archive ID",
                     ErrorClass.ITEM,
                 )
-            try:
-                metadata_status, _ = self.metadata(archive_id)
-            except Exception as exc:  # noqa: BLE001 - upload result is now uncertain
-                return UploadOutcome(
-                    "unknown",
-                    archive_id,
-                    None,
-                    f"upload accepted but metadata confirmation failed: {exc}",
-                )
-            if metadata_status != 200:
-                if metadata_status in {401, 403}:
-                    return UploadOutcome(
-                        "system",
-                        archive_id,
-                        metadata_status,
-                        "upload accepted but metadata authentication was rejected",
-                    )
-                return UploadOutcome(
-                    "unknown",
-                    archive_id,
-                    metadata_status,
-                    "upload accepted but metadata confirmation failed",
-                )
             return UploadOutcome("success", archive_id, status, body)
         if status == 409:
-            return UploadOutcome("duplicate_review", status_code=status, response=body)
+            return UploadOutcome(
+                "duplicate_review", status_code=status, response=body, error_code="lrr_duplicate"
+            )
         if status in {423, 429}:
-            return UploadOutcome("retry", status_code=status, response=body)
+            return UploadOutcome(
+                "retry", status_code=status, response=body, error_code=f"lrr_{status}"
+            )
         if status in {500, 502, 503, 504}:
-            return UploadOutcome("unknown", status_code=status, response=body)
+            return UploadOutcome(
+                "unknown", status_code=status, response=body, error_code="lrr_upload_unknown"
+            )
         if status == 415:
-            return UploadOutcome("unsupported", status_code=status, response=body)
-        if status in {401, 403}:
-            return UploadOutcome("system", status_code=status, response=body)
+            return UploadOutcome(
+                "unsupported", status_code=status, response=body, error_code="lrr_415"
+            )
+        if status in AUTH_HTTP_STATUSES:
+            return UploadOutcome(
+                "system",
+                status_code=status,
+                response=body,
+                error_code="lanraragi_authentication_failed",
+            )
         if status == 417:
-            return UploadOutcome("revalidate", status_code=status, response=body)
+            return UploadOutcome(
+                "revalidate", status_code=status, response=body, error_code="lrr_417"
+            )
         if status in {400, 422}:
-            return UploadOutcome("review", status_code=status, response=body)
-        return UploadOutcome("unknown", status_code=status, response=body)
+            return UploadOutcome(
+                "review", status_code=status, response=body, error_code=f"lrr_{status}"
+            )
+        return UploadOutcome(
+            "unknown", status_code=status, response=body, error_code="lrr_upload_unknown"
+        )
+
+    # Compatibility entry point. Task execution uses HttpUploadBackend so both
+    # upload variants share metadata update and confirmation semantics.
+    def upload(
+        self,
+        path: str | Path,
+        info: MangaInfo,
+        *,
+        checksum: str,
+        timeout: float | tuple[float, float] | None = None,
+    ) -> UploadOutcome:
+        return self.upload_archive(path, info, checksum=checksum, timeout=timeout)
 
     def metadata(self, archive_id: str) -> tuple[int, dict[str, Any] | None]:
         response = self._request(
@@ -171,11 +203,129 @@ class LANraragiClient:
             headers=self.headers,
             timeout=self.timeout,
         )
+        return int(response.status_code), self._payload(response)
+
+    def update_metadata(
+        self,
+        archive_id: str,
+        info: MangaInfo,
+        *,
+        metadata: Mapping[str, str] | None = None,
+    ) -> UploadOutcome:
+        response = self._request(
+            "put",
+            f"{self.base_url}/api/archives/{archive_id}/metadata",
+            data=dict(metadata) if metadata is not None else self.metadata_values(info),
+            headers=self.headers,
+            timeout=self.timeout,
+        )
+        status = int(response.status_code)
+        body = self._body(response)
+        payload = self._payload(response)
+        if status == 200 and payload is not None and payload.get("success") in {1, "1"}:
+            return UploadOutcome("success", archive_id, status, body)
+        if status in AUTH_HTTP_STATUSES:
+            return UploadOutcome(
+                "system", archive_id, status, body, "lanraragi_authentication_failed"
+            )
+        if status in RETRYABLE_HTTP_STATUSES:
+            return UploadOutcome("retry", archive_id, status, body, f"lrr_metadata_{status}")
+        return UploadOutcome("review", archive_id, status, body, "lrr_metadata_update_failed")
+
+    @staticmethod
+    def metadata_matches_artifact(
+        payload: Mapping[str, Any] | None,
+        *,
+        archive_id: str,
+        size: int,
+        filename: str,
+    ) -> bool:
+        if payload is None:
+            return False
+        actual_id = str(payload.get("arcid") or payload.get("id") or "")
         try:
-            value = response.json()
-        except ValueError:
-            value = None
-        return int(response.status_code), value
+            actual_size = int(payload.get("size"))
+        except (TypeError, ValueError):
+            return False
+        return (
+            actual_id == archive_id
+            and actual_size == size
+            and str(payload.get("filename") or "") == filename
+        )
+
+    def confirm_metadata(
+        self,
+        archive_id: str,
+        *,
+        size: int,
+        filename: str,
+        expected: Mapping[str, str],
+    ) -> UploadOutcome:
+        status, payload = self.metadata(archive_id)
+        if status in AUTH_HTTP_STATUSES:
+            return UploadOutcome(
+                "system",
+                archive_id,
+                status,
+                "metadata authentication was rejected",
+                "lanraragi_authentication_failed",
+            )
+        if status in RETRYABLE_HTTP_STATUSES or status in {400, 404}:
+            return UploadOutcome(
+                "retry",
+                archive_id,
+                status,
+                "archive metadata is not available for confirmation",
+                "lrr_metadata_not_ready",
+            )
+        if status != 200 or not self.metadata_matches_artifact(
+            payload, archive_id=archive_id, size=size, filename=filename
+        ):
+            return UploadOutcome(
+                "review",
+                archive_id,
+                status,
+                "archive ID, size, or filename did not match metadata",
+                "lrr_metadata_artifact_mismatch",
+            )
+        mismatched = [key for key, value in expected.items() if payload.get(key) != value]
+        if mismatched:
+            return UploadOutcome(
+                "review",
+                archive_id,
+                status,
+                "metadata fields did not match after update: " + ", ".join(mismatched),
+                "lrr_metadata_mismatch",
+            )
+        return UploadOutcome("success", archive_id, status)
+
+    def shinobu_status(self) -> dict[str, Any]:
+        response = self._request(
+            "get",
+            f"{self.base_url}/api/shinobu",
+            headers=self.headers,
+            timeout=self.timeout,
+        )
+        status = int(response.status_code)
+        payload = self._payload(response)
+        if status in AUTH_HTTP_STATUSES:
+            raise ArchiveError(
+                "lanraragi_authentication_failed",
+                "LANraragi rejected Shinobu authentication",
+                ErrorClass.SYSTEM,
+            )
+        if (
+            status != 200
+            or payload is None
+            or payload.get("success") not in {1, "1"}
+            or payload.get("is_alive") not in {1, "1"}
+        ):
+            raise ArchiveError(
+                "shinobu_unavailable",
+                f"Shinobu is not running (HTTP {status})",
+                ErrorClass.SYSTEM,
+            )
+        return payload
 
     def info(self) -> tuple[int, dict[str, Any] | None]:
         response = self._request(
@@ -184,11 +334,7 @@ class LANraragiClient:
             headers=self.headers,
             timeout=self.timeout,
         )
-        try:
-            value = response.json()
-        except ValueError:
-            value = None
-        return int(response.status_code), value
+        return int(response.status_code), self._payload(response)
 
     def delete(self, archive_id: str) -> UploadOutcome:
         response = self._request(
@@ -197,36 +343,23 @@ class LANraragiClient:
             headers=self.headers,
             timeout=self.timeout,
         )
-        if response.status_code in {200, 204}:
-            try:
-                payload = response.json() if response.text else {"success": 1}
-            except ValueError:
-                return UploadOutcome(
-                    "review", status_code=int(response.status_code), response=response.text[:1000]
-                )
-            if payload.get("success") not in {1, "1"}:
-                return UploadOutcome(
-                    "review", status_code=int(response.status_code), response=response.text[:1000]
-                )
+        status = int(response.status_code)
+        body = self._body(response, 1000)
+        if status in {200, 204}:
+            payload = self._payload(response) if body else {"success": 1}
+            if payload is None or payload.get("success") not in {1, "1"}:
+                return UploadOutcome("review", status_code=status, response=body)
             verify_status, _ = self.metadata(archive_id)
             if verify_status == 400:
-                return UploadOutcome(
-                    "deleted", status_code=int(response.status_code), response=response.text[:1000]
-                )
+                return UploadOutcome("deleted", status_code=status, response=body)
             return UploadOutcome(
                 "unknown", status_code=verify_status, response="delete response was not confirmed"
             )
-        if response.status_code in {423, 429, 500, 502, 503, 504}:
-            return UploadOutcome(
-                "retry", status_code=int(response.status_code), response=response.text[:1000]
-            )
-        if response.status_code in {401, 403}:
-            return UploadOutcome(
-                "system", status_code=int(response.status_code), response=response.text[:1000]
-            )
-        return UploadOutcome(
-            "review", status_code=int(response.status_code), response=response.text[:1000]
-        )
+        if status in RETRYABLE_HTTP_STATUSES:
+            return UploadOutcome("retry", status_code=status, response=body)
+        if status in AUTH_HTTP_STATUSES:
+            return UploadOutcome("system", status_code=status, response=body)
+        return UploadOutcome("review", status_code=status, response=body)
 
     def regenerate_all_thumbnails(self) -> UploadOutcome:
         response = self._request(
@@ -235,18 +368,15 @@ class LANraragiClient:
             headers=self.headers,
             timeout=self.timeout,
         )
-        if response.status_code in {200, 202, 204}:
-            return UploadOutcome(
-                "accepted", status_code=int(response.status_code), response=response.text[:1000]
-            )
-        if response.status_code in {423, 429, 500, 502, 503, 504}:
-            return UploadOutcome(
-                "retry", status_code=int(response.status_code), response=response.text[:1000]
-            )
-        if response.status_code in {401, 403}:
-            return UploadOutcome(
-                "system", status_code=int(response.status_code), response=response.text[:1000]
-            )
-        return UploadOutcome(
-            "review", status_code=int(response.status_code), response=response.text[:1000]
-        )
+        status = int(response.status_code)
+        body = self._body(response, 1000)
+        if status in {200, 202, 204}:
+            return UploadOutcome("accepted", status_code=status, response=body)
+        if status in RETRYABLE_HTTP_STATUSES:
+            return UploadOutcome("retry", status_code=status, response=body)
+        if status in AUTH_HTTP_STATUSES:
+            return UploadOutcome("system", status_code=status, response=body)
+        return UploadOutcome("review", status_code=status, response=body)
+
+
+LANraragiClient = LANraragiApiGateway

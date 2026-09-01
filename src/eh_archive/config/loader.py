@@ -48,8 +48,9 @@ class AppConfig:
     log_level: str = "INFO"
     log_dir: Path = Path("log")
     roots: dict[str, Path] = field(default_factory=dict)
-    # Files at or above this size are reserved for the future filesystem-based
-    # LANraragi import path. Zero disables the reservation.
+    upload_backend: str = "auto"
+    # In auto mode, files at or above this size use the filesystem backend.
+    # Zero makes auto mode choose HTTP for every file.
     large_upload_threshold_bytes: int = 2 * 1024 * 1024 * 1024
     allowed_archive_extensions: tuple[str, ...] = (".zip",)
     web_host: str = "127.0.0.1"
@@ -61,6 +62,14 @@ class AppConfig:
     # roots.torrent_download path when qBittorrent runs remotely.
     qbit_torrent_path: str | None = None
     lanraragi_url: str = "http://127.0.0.1:3000"
+    lanraragi_smb_server: str = ""
+    lanraragi_smb_port: int = 445
+    lanraragi_smb_share: str = ""
+    lanraragi_smb_relative_dir: str = ""
+    lanraragi_smb_connection_timeout_seconds: float = 60.0
+    lanraragi_smb_encrypt: bool = False
+    lanraragi_import_poll_timeout_seconds: float = 600.0
+    lanraragi_import_poll_interval_seconds: float = 3.0
     aria2_enabled: bool = False
     hah_enabled: bool = False
     fallback_method: str = "direct"
@@ -163,6 +172,7 @@ class SecretsConfig:
     sessions: dict[str, SessionRole] = field(default_factory=dict)
     qbittorrent: dict[str, Any] = field(default_factory=dict)
     lanraragi: dict[str, Any] = field(default_factory=dict)
+    lanraragi_smb: dict[str, Any] = field(default_factory=dict)
     web_secret: str | None = None
     web_username: str = "admin"
     web_password_hash: str | None = None
@@ -529,6 +539,7 @@ def load_config(
         log_level=str(app_raw.get("log_level", "INFO")),
         log_dir=log_dir,
         roots=roots,
+        upload_backend=str(app_raw.get("upload_backend", AppConfig.upload_backend)).strip().lower(),
         large_upload_threshold_bytes=int(
             app_raw.get("large_upload_threshold_bytes", AppConfig.large_upload_threshold_bytes)
         ),
@@ -540,6 +551,26 @@ def load_config(
         qbittorrent_url=str(app_raw.get("qbittorrent_url", "http://127.0.0.1:8080")),
         qbit_torrent_path=qbit_torrent_path,
         lanraragi_url=str(app_raw.get("lanraragi_url", "http://127.0.0.1:3000")),
+        lanraragi_smb_server=str(app_raw.get("lanraragi_smb_server", "")).strip(),
+        lanraragi_smb_port=int(app_raw.get("lanraragi_smb_port", 445)),
+        lanraragi_smb_share=str(app_raw.get("lanraragi_smb_share", "")).strip(),
+        lanraragi_smb_relative_dir=str(
+            app_raw.get("lanraragi_smb_relative_dir", "")
+        ).strip(),
+        lanraragi_smb_connection_timeout_seconds=float(
+            app_raw.get("lanraragi_smb_connection_timeout_seconds", 60.0)
+        ),
+        lanraragi_smb_encrypt=_bool_value(
+            app_raw.get("lanraragi_smb_encrypt"),
+            "lanraragi_smb_encrypt",
+            default=False,
+        ),
+        lanraragi_import_poll_timeout_seconds=float(
+            app_raw.get("lanraragi_import_poll_timeout_seconds", 600.0)
+        ),
+        lanraragi_import_poll_interval_seconds=float(
+            app_raw.get("lanraragi_import_poll_interval_seconds", 3.0)
+        ),
         aria2_enabled=bool(app_raw.get("aria2_enabled", False)),
         hah_enabled=bool(app_raw.get("hah_enabled", False)),
         fallback_method=(
@@ -556,8 +587,18 @@ def load_config(
     )
     if app.external_request_delay_seconds < 0:
         raise ValueError("external_request_delay_seconds must not be negative")
+    if app.upload_backend not in {"http", "filesystem", "auto"}:
+        raise ValueError("upload_backend must be http, filesystem, or auto")
     if app.large_upload_threshold_bytes < 0:
         raise ValueError("large_upload_threshold_bytes must not be negative")
+    if not 1 <= app.lanraragi_smb_port <= 65535:
+        raise ValueError("lanraragi_smb_port must be between 1 and 65535")
+    if app.lanraragi_smb_connection_timeout_seconds <= 0:
+        raise ValueError("lanraragi_smb_connection_timeout_seconds must be positive")
+    if app.lanraragi_import_poll_timeout_seconds <= 0:
+        raise ValueError("lanraragi_import_poll_timeout_seconds must be positive")
+    if app.lanraragi_import_poll_interval_seconds <= 0:
+        raise ValueError("lanraragi_import_poll_interval_seconds must be positive")
     if app.eh_request_retry_limit <= 0:
         raise ValueError("eh_request_retry_limit must be greater than zero")
     if app.eh_request_retry_delay_seconds < 0:
@@ -664,6 +705,7 @@ def load_config(
         sessions=sessions,
         qbittorrent=dict(secrets_raw.get("qbittorrent", {})),
         lanraragi=dict(secrets_raw.get("lanraragi", {})),
+        lanraragi_smb=dict(secrets_raw.get("lanraragi_smb", {})),
         web_secret=os.getenv("EHARCHIVE_WEB_SECRET") or secrets_raw.get("web_secret"),
         web_username=str(
             os.getenv("EHARCHIVE_WEB_USERNAME") or secrets_raw.get("web_username") or "admin"

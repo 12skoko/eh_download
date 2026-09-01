@@ -47,7 +47,20 @@ from ..services.paths import (
     safe_filename,
 )
 from ..services.preparer.zipper import prepare_directory
-from ..services.uploader.lanraragi import LANraragiClient, UploadOutcome
+from ..services.uploader.contracts import UploadBackend, UploadOutcome, UploadRequest
+from ..services.uploader.filesystem import FilesystemUploadBackend
+from ..services.uploader.http import HttpUploadBackend
+from ..services.uploader.lanraragi import (
+    LANraragiApiGateway,
+    LANraragiClient,
+    lanraragi_archive_id,
+)
+from ..services.uploader.selector import (
+    FILESYSTEM_BACKEND,
+    HTTP_BACKEND,
+    select_upload_backend,
+)
+from ..services.uploader.smb_store import SmbStore
 from ..services.validator.artifact import ValidationError, quarantine_artifact, validate_artifact
 
 log = get_logger(__name__)
@@ -196,7 +209,6 @@ class TaskExecutor:
                 operation,
                 owner=self.owner,
                 lease_seconds=self.supervisor.lease_seconds,
-                large_upload_threshold_bytes=self.app.large_upload_threshold_bytes,
             )
         if claim is None:
             return False
@@ -494,6 +506,113 @@ class TaskExecutor:
         if not repository.set_external_id(claim, external_id, owner=self.owner):
             raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
         repository.session.commit()
+
+    def _upload_callbacks(self, claim: ClaimedAttempt):
+        """Build independently committed progress, lease and recovery callbacks."""
+
+        last_lease_at = 0.0
+        last_progress_at = 0.0
+        lease_interval = max(1.0, min(30.0, self.supervisor.lease_seconds / 3))
+
+        def renew(repository: ArchiveRepository, now: float, *, force: bool = False) -> None:
+            nonlocal last_lease_at
+            if not force and now - last_lease_at < lease_interval:
+                return
+            if not repository.renew(
+                claim,
+                owner=self.owner,
+                lease_seconds=self.supervisor.lease_seconds,
+            ):
+                raise ArchiveError("stale_attempt", "upload lease was lost", ErrorClass.TEMPORARY)
+            last_lease_at = now
+
+        def checkpoint() -> None:
+            now = time.monotonic()
+            if now - last_lease_at < lease_interval:
+                return
+            with self.database.session() as session:
+                renew(ArchiveRepository(session, run_id=self.run_id), now, force=True)
+
+        def progress(transferred: int, total: int) -> None:
+            nonlocal last_progress_at
+            now = time.monotonic()
+            if transferred != total and now - last_progress_at < DIRECT_WEB_PROGRESS_INTERVAL_SECONDS:
+                checkpoint()
+                return
+            with self.database.session() as session:
+                repository = ArchiveRepository(session, run_id=self.run_id)
+                renew(repository, now)
+                if not repository.update_attempt_progress(
+                    claim,
+                    downloaded_bytes=transferred,
+                    total_bytes=total,
+                    speed_bps=None,
+                ):
+                    raise ArchiveError(
+                        "stale_attempt", "upload progress fencing failed", ErrorClass.TEMPORARY
+                    )
+            last_progress_at = now
+
+        def phase(name: str, detail: Any) -> None:
+            now = time.monotonic()
+            with self.database.session() as session:
+                repository = ArchiveRepository(session, run_id=self.run_id)
+                renew(repository, now, force=True)
+                if not repository.update_attempt_detail(
+                    claim,
+                    {"phase": name, **dict(detail)},
+                ):
+                    raise ArchiveError(
+                        "stale_attempt", "upload phase fencing failed", ErrorClass.TEMPORARY
+                    )
+
+        def archive_identified(archive_id: str) -> None:
+            now = time.monotonic()
+            with self.database.session() as session:
+                repository = ArchiveRepository(session, run_id=self.run_id)
+                renew(repository, now, force=True)
+                if not repository.set_external_id(claim, archive_id, owner=self.owner):
+                    raise ArchiveError(
+                        "stale_attempt", "upload recovery ID fencing failed", ErrorClass.TEMPORARY
+                    )
+
+        return progress, checkpoint, phase, archive_identified
+
+    def _filesystem_upload_backend(
+        self, api: LANraragiApiGateway
+    ) -> FilesystemUploadBackend:
+        options = dict(getattr(self.secrets, "lanraragi_smb", {}) or {})
+        username = options.get("username")
+        password = options.get("password")
+        if not isinstance(username, str) or not username or not isinstance(password, str) or not password:
+            raise ArchiveError(
+                "smb_configuration_error",
+                "filesystem upload requires lanraragi_smb username and password",
+                ErrorClass.SYSTEM,
+            )
+        try:
+            store = SmbStore(
+                server=self.app.lanraragi_smb_server,
+                share=self.app.lanraragi_smb_share,
+                relative_dir=self.app.lanraragi_smb_relative_dir,
+                username=username,
+                password=password,
+                port=self.app.lanraragi_smb_port,
+                connection_timeout=self.app.lanraragi_smb_connection_timeout_seconds,
+                encrypt=self.app.lanraragi_smb_encrypt,
+            )
+        except ValueError as exc:
+            raise ArchiveError(
+                "smb_configuration_error",
+                str(exc),
+                ErrorClass.SYSTEM,
+            ) from exc
+        return FilesystemUploadBackend(
+            api,
+            store,
+            poll_timeout=self.app.lanraragi_import_poll_timeout_seconds,
+            poll_interval=self.app.lanraragi_import_poll_interval_seconds,
+        )
 
     def _fallback_torrent(
         self,
@@ -1208,7 +1327,12 @@ class TaskExecutor:
             repository.mark_parent_outdated(info.parent_id, record.manga_id)
         if not info.is_complete():
             raise ArchiveError("missing_mangainfo", "MangaInfo is incomplete", ErrorClass.ITEM)
-        if not record.artifact_location or not record.artifact_filename or not record.artifact_sha1:
+        if (
+            not record.artifact_location
+            or not record.artifact_filename
+            or record.artifact_size is None
+            or not record.artifact_sha1
+        ):
             raise ValidationError("missing_upload_artifact", "artifact fingerprint is incomplete")
         path = (
             self.paths.torrent_registered(record.manga_id, record.artifact_filename)
@@ -1220,32 +1344,69 @@ class TaskExecutor:
             record.artifact_checked_at = None
             repository.finish(claim, owner=self.owner, event="revalidate")
             return
-        client = LANraragiClient(
+        backend_key = select_upload_backend(
+            self.app.upload_backend,
+            artifact_size=record.artifact_size,
+            threshold_bytes=self.app.large_upload_threshold_bytes,
+        )
+        api = LANraragiApiGateway(
             self.app.lanraragi_url,
             headers=self.secrets.lanraragi,
             timeout=self.supervisor.request_timeout_seconds,
         )
+        registry = {
+            HTTP_BACKEND: lambda: HttpUploadBackend(api),
+            FILESYSTEM_BACKEND: lambda: self._filesystem_upload_backend(api),
+        }
+        expected_archive_id = lanraragi_archive_id(path)
+        if not repository.update_attempt_detail(
+            claim,
+            {
+                "variant": backend_key,
+                "phase": "preflight",
+                "expected_archive_id": expected_archive_id,
+            },
+        ):
+            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        self._set_external_id(repository, claim, expected_archive_id)
+        backend: UploadBackend = registry[backend_key]()
         self._begin_external_effect(repository, claim)
-        outcome = client.upload(
-            path,
-            info,
-            checksum=record.artifact_sha1,
+        progress, checkpoint, phase, archive_identified = self._upload_callbacks(claim)
+        request = UploadRequest(
+            path=path,
+            filename=record.artifact_filename,
+            size=record.artifact_size,
+            sha1=record.artifact_sha1,
+            info=info,
+            attempt_id=claim.attempt_id,
             timeout=(
                 self.supervisor.request_timeout_seconds,
                 self.supervisor.upload_timeout_seconds,
             ),
+            expected_archive_id=expected_archive_id,
+            progress=progress,
+            checkpoint=checkpoint,
+            phase=phase,
+            archive_identified=archive_identified,
         )
+        outcome = backend.upload(request)
         if outcome.kind == "success":
             record.lrr_archive_id = outcome.archive_id
-            repository.finish(claim, owner=self.owner, event="uploaded")
+            repository.finish(
+                claim,
+                owner=self.owner,
+                event="uploaded",
+                detail={"variant": backend_key, "archive_id": outcome.archive_id},
+            )
         elif outcome.kind in {"retry"}:
             self._schedule_retry(record)
             repository.finish(
                 claim,
                 owner=self.owner,
                 event="retry",
-                error_code=f"lrr_{outcome.status_code}",
+                error_code=outcome.error_code or f"lrr_{outcome.status_code}",
                 error_detail=outcome.response,
+                detail={"variant": backend_key},
             )
         elif outcome.kind == "unsupported":
             self._move_to_quarantine(repository, claim, record)
@@ -1253,8 +1414,9 @@ class TaskExecutor:
                 claim,
                 owner=self.owner,
                 event="quarantine",
-                error_code="lrr_415",
+                error_code=outcome.error_code or "lrr_415",
                 error_detail=outcome.response,
+                detail={"variant": backend_key},
             )
         elif outcome.kind == "revalidate":
             record.artifact_sha1 = None
@@ -1263,32 +1425,33 @@ class TaskExecutor:
                 claim,
                 owner=self.owner,
                 event="revalidate",
-                error_code="lrr_417",
+                error_code=outcome.error_code or "lrr_417",
                 error_detail=outcome.response,
+                detail={"variant": backend_key},
             )
         elif outcome.kind == "system":
             raise ArchiveError(
-                "lanraragi_authentication_failed",
-                f"LANraragi rejected upload authentication with HTTP {outcome.status_code}",
+                outcome.error_code or "upload_backend_system_error",
+                outcome.response or f"upload backend failed with HTTP {outcome.status_code}",
                 ErrorClass.SYSTEM,
             )
         elif outcome.kind == "unknown":
-            if outcome.archive_id:
-                record.lrr_archive_id = outcome.archive_id
             repository.finish(
                 claim,
                 owner=self.owner,
                 event="review",
-                error_code="lrr_upload_unknown",
+                error_code=outcome.error_code or "lrr_upload_unknown",
                 error_detail=outcome.response,
+                detail={"variant": backend_key, "archive_id": outcome.archive_id},
             )
         else:
             repository.finish(
                 claim,
                 owner=self.owner,
                 event="review",
-                error_code=f"lrr_{outcome.status_code or outcome.kind}",
+                error_code=outcome.error_code or f"lrr_{outcome.status_code or outcome.kind}",
                 error_detail=outcome.response,
+                detail={"variant": backend_key, "archive_id": outcome.archive_id},
             )
 
     def _move_to_quarantine(
