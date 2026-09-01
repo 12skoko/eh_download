@@ -13,6 +13,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 MAIN_LOG_ENV = "EHARCHIVE_MAIN_LOG"
 SUPERVISOR_RUN_ID_ENV = "EHARCHIVE_SUPERVISOR_RUN_ID"
+SMB_LOGGER_NAMES = ("smbprotocol", "smbprotocol.open", "smbclient")
+
+
+def _public_logger_name(name: str) -> str:
+    if any(name == prefix or name.startswith(f"{prefix}.") for prefix in SMB_LOGGER_NAMES):
+        return "upload"
+    return name
 
 
 class JsonFormatter(logging.Formatter):
@@ -24,7 +31,7 @@ class JsonFormatter(logging.Formatter):
         payload: dict[str, Any] = {
             "time": datetime.now(self.timezone).isoformat(),
             "level": record.levelname,
-            "logger": record.name,
+            "logger": _public_logger_name(record.name),
             "message": record.getMessage(),
         }
         if hasattr(record, "event"):
@@ -86,6 +93,10 @@ def configure_logging(
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)
     root.setLevel(level.upper())
+    # smbprotocol emits one INFO record per SMB request/response. Large file
+    # transfers would otherwise flood both stdout and the shared session log.
+    for logger_name in SMB_LOGGER_NAMES:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
     return path
 
 

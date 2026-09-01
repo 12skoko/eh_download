@@ -247,10 +247,14 @@ class LANraragiApiGateway:
             actual_size = int(payload.get("size"))
         except (TypeError, ValueError):
             return False
+        actual_filename = str(payload.get("filename") or "")
+        extension = str(payload.get("extension") or "").lstrip(".")
+        if extension and not actual_filename.casefold().endswith(f".{extension.casefold()}"):
+            actual_filename = f"{actual_filename}.{extension}"
         return (
             actual_id == archive_id
             and actual_size == size
-            and str(payload.get("filename") or "") == filename
+            and actual_filename == filename
         )
 
     def confirm_metadata(
