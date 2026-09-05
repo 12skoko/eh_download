@@ -22,6 +22,13 @@ document.addEventListener("click", (event) => {
   if (opener) {
     const dialog = document.getElementById(opener.dataset.openDialog);
     if (dialog instanceof HTMLDialogElement) {
+      if (opener.dataset.copyReason && opener.dataset.copyTarget) {
+        const source = document.querySelector(opener.dataset.copyReason);
+        const target = dialog.querySelector(opener.dataset.copyTarget);
+        if (source instanceof HTMLInputElement && target instanceof HTMLTextAreaElement) {
+          target.value = source.value;
+        }
+      }
       dialog.showModal();
       updateArtifactPath(dialog.querySelector("form"));
     }

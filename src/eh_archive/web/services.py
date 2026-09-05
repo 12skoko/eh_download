@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config.loader import SUPERVISOR_MODULES, AppConfig
@@ -15,13 +15,16 @@ from ..db.models import (
     EventLog,
     JobAttempt,
     MangaRecord,
+    SpecialJob,
+    SpecialWorkflow,
     SystemControl,
     SystemHealth,
 )
 from ..db.repository import utcnow
 from ..domain.states import Status, can_transition, transition_target
 from ..services.paths import ArtifactPathService, UnsafePathError, safe_filename
-from ..special.remarks import replace_user_remark, user_remark
+from ..special.remarks import PHASE_LABELS, replace_user_remark, user_remark
+from ..special.registry import WORKFLOW_REGISTRY
 
 CONTROL_COMPONENTS = ("supervisor", *SUPERVISOR_MODULES)
 DOWNLOAD_METHOD_LOCATIONS = {
@@ -58,7 +61,7 @@ STATUS_LABELS = {
 }
 
 COMPONENT_LABELS = {
-    "supervisor": "Supervisor",
+    "supervisor": "调度器",
     "collect": "采集",
     "screen": "筛选",
     "details": "详情补全",
@@ -272,6 +275,17 @@ MangaPage = Page[MangaRecord]
 
 
 @dataclass(frozen=True)
+class RunningModuleTask:
+    module: str
+    module_label: str
+    manga_id: str | None
+    manga_name: str | None
+    state: str
+    started_at: datetime | None
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
 class ReviewFacet:
     error_code: str
     count: int
@@ -288,59 +302,6 @@ class WebService:
         self.session = session
         self.actor = actor
         self.app_config = app_config
-
-    def add_manga(
-        self,
-        *,
-        url: str,
-        manga_id: str,
-        priority: int,
-        remark: str | None,
-        row_version: int | None = None,
-    ) -> MangaRecord:
-        row = self.session.get(MangaRecord, manga_id)
-        if row is None:
-            row = MangaRecord(
-                manga_id=manga_id,
-                name=manga_id,
-                link=url,
-                queue_source="manual",
-                priority=priority,
-                status=Status.DOWNLOAD_PENDING.value,
-                remark=remark,
-            )
-            self.session.add(row)
-            self.session.flush()
-            self._event(
-                row,
-                "add",
-                to_status=row.status,
-                detail={"url": url, "priority": priority, "reason": remark},
-            )
-            return row
-        self._require_version(row, row_version)
-        previous = row.status
-        row.priority = priority
-        row.remark = remark
-        if row.status in {
-            Status.FILTERED_OUT.value,
-            Status.SKIPPED.value,
-            Status.UNAVAILABLE.value,
-            Status.MANUAL_REVIEW.value,
-        }:
-            row.status = Status.DOWNLOAD_PENDING.value
-            row.status_updated_at = utcnow()
-            row.next_retry_at = None
-        row.updated_at = utcnow()
-        row.row_version += 1
-        self._event(
-            row,
-            "add",
-            from_status=previous,
-            to_status=row.status,
-            detail={"priority": priority, "reason": remark},
-        )
-        return row
 
     def update_remark(self, manga_id: str, *, remark: str | None, row_version: int) -> MangaRecord:
         row = self._manga(manga_id)
@@ -1062,6 +1023,7 @@ def dashboard_data(session: Session) -> dict[str, Any]:
     controls = {row.component: row for row in session.scalars(select(SystemControl))}
     health = {row.component: row for row in session.scalars(select(SystemHealth))}
     running = running_attempts(session)
+    running_modules = running_module_tasks(session)
     recent_errors = list(
         session.scalars(
             select(MangaRecord)
@@ -1083,6 +1045,7 @@ def dashboard_data(session: Session) -> dict[str, Any]:
         "controls": controls,
         "health": health,
         "running": running,
+        "running_module_tasks": running_modules,
         "recent_errors": recent_errors,
         "retries": retries,
     }
@@ -1097,6 +1060,63 @@ def running_attempts(session: Session, *, limit: int = 12) -> list[JobAttempt]:
             .limit(limit)
         )
     )
+
+
+def running_module_tasks(session: Session, *, limit: int = 24) -> list[RunningModuleTask]:
+    normal_tasks = [
+        RunningModuleTask(
+            module=attempt.operation,
+            module_label=COMPONENT_LABELS.get(attempt.operation, attempt.operation),
+            manga_id=attempt.manga_id,
+            manga_name=manga.name if manga else None,
+            state="执行中",
+            started_at=attempt.started_at,
+            updated_at=attempt.started_at,
+        )
+        for attempt, manga in session.execute(
+            select(JobAttempt, MangaRecord)
+            .outerjoin(MangaRecord, MangaRecord.manga_id == JobAttempt.manga_id)
+            .where(JobAttempt.status == "running")
+            .order_by(desc(JobAttempt.started_at))
+            .limit(limit)
+        ).all()
+    ]
+    special_tasks = [
+        RunningModuleTask(
+            module=workflow.kind,
+            module_label=WORKFLOW_REGISTRY.get(workflow.kind).label
+            if workflow.kind in WORKFLOW_REGISTRY
+            else workflow.kind,
+            manga_id=workflow.manga_id,
+            manga_name=manga.name,
+            state=PHASE_LABELS.get(workflow.phase, workflow.phase),
+            started_at=job.started_at if job else None,
+            updated_at=workflow.updated_at,
+        )
+        for workflow, manga, job in session.execute(
+            select(SpecialWorkflow, MangaRecord, SpecialJob)
+            .join(MangaRecord, MangaRecord.manga_id == SpecialWorkflow.manga_id)
+            .outerjoin(
+                SpecialJob,
+                and_(
+                    SpecialJob.workflow_id == SpecialWorkflow.id,
+                    SpecialJob.status == "running",
+                ),
+            )
+            .where(or_(SpecialWorkflow.status == "active", SpecialJob.status == "running"))
+            .order_by(desc(SpecialWorkflow.updated_at), desc(SpecialWorkflow.id))
+            .limit(limit)
+        ).all()
+    ]
+    return sorted(
+        [*normal_tasks, *special_tasks],
+        key=lambda task: (
+            task.updated_at.replace(tzinfo=UTC)
+            if task.updated_at.tzinfo is None
+            else task.updated_at
+        ),
+        reverse=True,
+    )[:limit]
 
 
 def manga_progress_data(session: Session, manga_id: str) -> dict[str, Any]:

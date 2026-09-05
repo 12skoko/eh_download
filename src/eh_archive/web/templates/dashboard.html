@@ -3,53 +3,7 @@
 {% block content %}
 <div class="page-head">
   <div><p class="eyebrow">运行控制</p><h1>系统总览</h1></div>
-  <a class="button secondary" href="/health">查看健康 JSON</a>
 </div>
-
-<section class="hero-grid">
-  {% set supervisor = controls.get('supervisor') %}
-  <article class="panel supervisor-panel">
-    <div class="panel-head"><div><p class="eyebrow">调度器</p><h2>Supervisor</h2></div><span class="badge {{ supervisor_state }}">{{ supervisor_state }}</span></div>
-    <dl class="facts">
-      <div><dt>最后心跳</dt><dd>{{ supervisor.heartbeat_at|datetime if supervisor else '—' }}</dd></div>
-      <div><dt>暂停原因</dt><dd>{{ supervisor.reason or '—' if supervisor else '—' }}</dd></div>
-      <div><dt>租约持有者</dt><dd class="mono truncate">{{ supervisor.lease_owner or '—' if supervisor else '—' }}</dd></div>
-    </dl>
-    <div class="supervisor-actions">
-      <form method="post" action="/control/supervisor" hx-boost="false"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}"><button name="state" value="running" type="submit">运行</button></form>
-      <button type="button" data-open-dialog="supervisor-pause-dialog">暂停</button>
-      <button type="button" class="warning-button" data-open-dialog="supervisor-drain-dialog">排空</button>
-    </div>
-    <dialog id="supervisor-pause-dialog" class="status-dialog">
-      <form method="post" action="/control/supervisor" class="status-dialog-form" hx-boost="false">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}"><input type="hidden" name="state" value="paused">
-        <div class="dialog-head"><div><p class="eyebrow">调度器控制</p><h2>暂停 Supervisor</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
-        <p>暂停后不会再启动新的子进程；已经启动的任务不会被强制终止。</p>
-        <label>暂停原因（可选）<textarea name="reason" rows="3"></textarea></label>
-        <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认暂停</button></div>
-      </form>
-    </dialog>
-    <dialog id="supervisor-drain-dialog" class="status-dialog">
-      <form method="post" action="/control/supervisor" class="status-dialog-form" hx-boost="false">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}"><input type="hidden" name="state" value="draining">
-        <div class="dialog-head"><div><p class="eyebrow">调度器控制</p><h2>排空 Supervisor</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
-        <p>排空后停止领取新任务，等待正在执行的任务结束，然后自动转为暂停状态。</p>
-        <label>排空原因（可选）<textarea name="reason" rows="3"></textarea></label>
-        <div class="alert warning">该操作会停止整个归档流程继续调度新任务。</div>
-        <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认排空</button></div>
-      </form>
-    </dialog>
-  </article>
-  <article class="panel add-panel">
-    <div class="panel-head"><div><p class="eyebrow">人工队列</p><h2>添加画廊</h2></div></div>
-    <form method="post" action="/manga/add" class="stack-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label>EH/ExHentai URL<input name="url" type="url" placeholder="https://exhentai.org/g/..." required></label>
-      <div class="form-row"><label>优先级<input name="priority" type="number" value="100"></label><label>备注<input name="remark" placeholder="可选"></label></div>
-      <button class="primary" type="submit">加入下载队列</button>
-    </form>
-  </article>
-</section>
 
 <section aria-labelledby="counts-title">
   <div class="section-head"><div><p class="eyebrow">队列规模</p><h2 id="counts-title">状态概览</h2></div></div>
@@ -63,16 +17,38 @@
 </section>
 
 <section class="two-column">
-  {% include "_running_tasks.html" %}
+  {% set supervisor = controls.get('supervisor') %}
   <article class="panel">
     <div class="section-head"><div><p class="eyebrow">组件开关</p><h2>任务组件</h2></div></div>
     <div class="component-list">
+      {% set control = controls.get('supervisor') %}
+      {% include "_supervisor_row.html" %}
       {% for component in supervisor_modules %}
         {% set control = controls.get(component) %}
         {% include "_component_row.html" %}
       {% endfor %}
     </div>
+    <dialog id="supervisor-pause-dialog" class="status-dialog">
+      <form method="post" action="/control/supervisor" class="status-dialog-form" hx-post="/control/supervisor" hx-target="#supervisor-row" hx-swap="outerHTML" hx-on::after-request="this.closest('dialog').close()">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}"><input type="hidden" name="state" value="paused">
+        <div class="dialog-head"><div><p class="eyebrow">调度器控制</p><h2>暂停 Supervisor</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+        <p>暂停后不会再启动新的子进程；已经启动的任务不会被强制终止。</p>
+        <label>暂停原因（可选）<textarea name="reason" rows="3"></textarea></label>
+        <div class="dialog-actions"><button type="button" class="warning-button" data-open-dialog="supervisor-drain-dialog">终止</button><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认暂停</button></div>
+      </form>
+    </dialog>
+    <dialog id="supervisor-drain-dialog" class="status-dialog">
+      <form method="post" action="/control/supervisor" class="status-dialog-form" hx-post="/control/supervisor" hx-target="#supervisor-row" hx-swap="outerHTML" hx-on::after-request="this.closest('dialog').close()">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}"><input type="hidden" name="state" value="draining">
+        <div class="dialog-head"><div><p class="eyebrow">调度器控制</p><h2>终止 Supervisor</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+        <p>终止后停止领取新任务，等待正在执行的任务结束，然后自动转为暂停状态。</p>
+        <label>排空原因（可选）<textarea name="reason" rows="3"></textarea></label>
+        <div class="alert warning">该操作会停止整个归档流程继续调度新任务。</div>
+        <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认终止</button></div>
+      </form>
+    </dialog>
   </article>
+  {% include "_running_tasks.html" %}
 </section>
 
 <section class="two-column">

@@ -39,6 +39,8 @@ from eh_archive.db.models import (
     JobAttempt,
     MangaInfoRecord,
     MangaRecord,
+    SpecialJob,
+    SpecialWorkflow,
     SystemControl,
     SystemHealth,
 )
@@ -210,7 +212,390 @@ def _seed(database: Database) -> None:
                     message="演示健康检查",
                 )
             )
+
+        _seed_special(session, now)
         session.commit()
+
+
+def _seed_special(session, now: datetime) -> None:
+    """Seed special-workflow demo data covering every UI state."""
+
+    torrent_choices = [
+        {
+            "choice_id": "ch_img_720",
+            "label": "[Demo] 720p archive",
+            "suggested_role": "image",
+            "size": "1.2 GiB",
+            "seeds": 8,
+            "posted_at": "2026-08-01",
+            "warnings": [],
+        },
+        {
+            "choice_id": "ch_img_1080",
+            "label": "[Demo] 1080p archive",
+            "suggested_role": "image",
+            "size": "2.4 GiB",
+            "seeds": 3,
+            "posted_at": "2026-07-15",
+            "warnings": ["outdated"],
+        },
+        {
+            "choice_id": "ch_vid_720",
+            "label": "[Demo] 720p video",
+            "suggested_role": "video",
+            "size": "800 MiB",
+            "seeds": 12,
+            "posted_at": "2026-08-01",
+            "warnings": [],
+        },
+        {
+            "choice_id": "ch_vid_1080",
+            "label": "[Demo] 1080p video",
+            "suggested_role": "video",
+            "size": "1.6 GiB",
+            "seeds": 0,
+            "posted_at": "2026-07-15",
+            "warnings": ["no_seeders", "resampled"],
+        },
+    ]
+
+    def _torrent(role: str, hash_suffix: str, progress: float, *, complete: bool = False) -> dict:
+        state = "completed" if complete else "downloading"
+        total = 1_500_000_000
+        return {
+            "role": role,
+            "provider": "qbittorrent",
+            "external_id": f"{'a' * 20}{hash_suffix}",
+            "status": state,
+            "qbit_state": "pausedUP" if complete else "downloading",
+            "progress": 1.0 if complete else progress,
+            "total_size": total,
+            "downloaded_bytes": int(total * (1.0 if complete else progress)),
+            "speed_bps": 0 if complete else 2_400_000,
+            "eta_seconds": 0 if complete else 300,
+            "completion_time": int(now.timestamp()) if complete else None,
+            "content_path": f"/tmp/demo/{role}" if complete else None,
+            "updated_at": now.isoformat(),
+        }
+
+    # Manga records dedicated to special-workflow scenarios (idx 11-16).
+    special_manga = [
+        # (idx, manga_status, err_code, remark, lease, attempt)
+        (11, "special_processing", None, None, False, False),
+        (12, "special_processing", None, None, False, False),
+        (13, "special_processing", None, None, False, False),
+        (14, "completed", None, None, False, False),
+        (15, "special_processing", "ffmpeg_failed", None, False, False),
+        (16, "manual_review", "video_torrent", None, False, False),
+    ]
+    for idx, m_status, err_code, remark, has_lease, has_attempt in special_manga:
+        manga_id = f"12345{idx:02d}/abcdef{idx:02d}"
+        session.add(MangaRecord(
+            manga_id=manga_id,
+            name=f"[Special Demo {idx}] 特殊处理演示画廊 {idx}",
+            real_name=f"special_demo_{idx}.zip",
+            link=f"https://exhentai.org/g/{manga_id}/",
+            posted_at=now - timedelta(days=idx),
+            category="Doujinshi",
+            tags_raw="language:chinese, parody:original",
+            pages=30 + idx * 3,
+            rating=4,
+            uploader="demo_uploader",
+            remark=remark,
+            queue_source="manual",
+            status=m_status,
+            priority=100 + idx * 10,
+            download_method="torrent",
+            last_error_code=err_code,
+            last_error_detail=f'{{"error": "special demo error {err_code}"}}' if err_code else None,
+            last_error_at=now - timedelta(hours=1) if err_code else None,
+            artifact_location="prepared" if m_status == "completed" else None,
+            artifact_filename=f"special_demo_{idx}.zip" if m_status == "completed" else None,
+            artifact_kind="zip" if m_status == "completed" else None,
+            artifact_size=80_000_000 + idx * 5_000_000 if m_status == "completed" else None,
+            artifact_sha1="b" * 40 if m_status == "completed" else None,
+            row_version=3,
+            status_updated_at=now - timedelta(hours=idx),
+            created_at=now - timedelta(days=idx + 2),
+            updated_at=now - timedelta(hours=idx),
+        ))
+        session.add(MangaInfoRecord(
+            manga_id=manga_id,
+            name=f"[Special Demo {idx}] 特殊处理演示画廊 {idx}",
+            real_name=f"special_demo_{idx}.zip",
+            link=f"https://exhentai.org/g/{manga_id}/",
+            category="Doujinshi",
+            uploader="demo_uploader",
+            posted_at=now - timedelta(days=idx),
+        ))
+
+    entry_payload = {
+        "reason": "video_torrent_detected",
+        "source_error_code": "video_torrent",
+        "source_error_operation": "download",
+        "source_error_detail": "gallery contains video torrent links",
+    }
+
+    # WF-1: awaiting_torrent_selection — user needs to pick image + video.
+    wf1 = SpecialWorkflow(
+        manga_id="1234511/abcdef11", kind="video_archive",
+        status="active", phase="awaiting_torrent_selection",
+        resume_status="manual_review",
+        payload={
+            "entry": entry_payload,
+            "config_snapshot": {},
+            "torrent_snapshot": {"fetched_at": now.isoformat(), "choices": torrent_choices},
+            "selection": None,
+            "torrents": [],
+            "final_artifact": None,
+        },
+        progress={"message": "awaiting_torrent_selection", "total": 4},
+        row_version=2,
+        created_by="demo_admin",
+        created_at=now - timedelta(hours=3),
+        updated_at=now - timedelta(minutes=20),
+    )
+    session.add(wf1)
+    session.flush()
+    session.add(SpecialJob(
+        workflow_id=wf1.id, operation="load_torrent_options",
+        status="succeeded", trigger_source="web", requested_by="demo_admin",
+        attempt_no=1, next_run_at=now - timedelta(hours=3),
+        started_at=now - timedelta(hours=3), finished_at=now - timedelta(hours=3) + timedelta(seconds=8),
+        progress={"message": "awaiting_torrent_selection", "total": 4},
+    ))
+    session.add(EventLog(
+        manga_id="1234511/abcdef11", component="special_processing",
+        event_type="special_start", actor="demo_admin",
+        from_status="manual_review", to_status="special_processing",
+        detail={"workflow_id": wf1.id, "load_options": True, "entry_reason": "video_torrent_detected"},
+        created_at=now - timedelta(hours=3),
+    ))
+    session.add(EventLog(
+        manga_id="1234511/abcdef11", component="special_processing",
+        event_type="special_job_succeeded", operation="load_torrent_options",
+        actor="supervisor-demo",
+        detail={"workflow_id": wf1.id, "choice_count": 4},
+        created_at=now - timedelta(hours=3) + timedelta(seconds=8),
+    ))
+
+    # WF-2: downloading — both torrents in progress.
+    wf2 = SpecialWorkflow(
+        manga_id="1234512/abcdef12", kind="video_archive",
+        status="active", phase="downloading",
+        resume_status="manual_review",
+        payload={
+            "entry": entry_payload,
+            "config_snapshot": {},
+            "torrent_snapshot": {"fetched_at": now.isoformat(), "choices": torrent_choices},
+            "selection": {
+                "image_choice_id": "ch_img_720",
+                "video_choice_id": "ch_vid_720",
+                "confirmed_warnings": [],
+                "selected_at": (now - timedelta(hours=2)).isoformat(),
+                "selected_by": "demo_admin",
+            },
+            "torrents": [_torrent("image", "img01", 0.65), _torrent("video", "vid02", 0.42)],
+            "final_artifact": None,
+        },
+        progress={"message": "downloading", "submitted": 2, "total": 2},
+        row_version=5,
+        created_by="demo_admin",
+        created_at=now - timedelta(hours=6),
+        updated_at=now - timedelta(minutes=5),
+    )
+    session.add(wf2)
+    session.flush()
+    for op, started_offset, finished_offset in [
+        ("load_torrent_options", timedelta(hours=6), timedelta(hours=6, seconds=6)),
+        ("submit_selected_torrents", timedelta(hours=2), timedelta(hours=2, seconds=15)),
+    ]:
+        session.add(SpecialJob(
+            workflow_id=wf2.id, operation=op,
+            status="succeeded", trigger_source="web", requested_by="demo_admin",
+            attempt_no=1, next_run_at=now - started_offset,
+            started_at=now - started_offset, finished_at=now - finished_offset,
+            progress={},
+        ))
+
+    # WF-3: downloading with a queued check job (shows active job banner in UI).
+    wf3 = SpecialWorkflow(
+        manga_id="1234513/abcdef13", kind="video_archive",
+        status="active", phase="checking_downloads",
+        resume_status="manual_review",
+        payload={
+            "entry": entry_payload,
+            "config_snapshot": {},
+            "torrent_snapshot": {"fetched_at": now.isoformat(), "choices": torrent_choices},
+            "selection": {
+                "image_choice_id": "ch_img_1080",
+                "video_choice_id": "ch_vid_720",
+                "confirmed_warnings": ["image:outdated"],
+                "selected_at": (now - timedelta(hours=1)).isoformat(),
+                "selected_by": "demo_admin",
+            },
+            "torrents": [_torrent("image", "img03", 0.98), _torrent("video", "vid04", 0.87)],
+            "final_artifact": None,
+        },
+        progress={"message": "checking_downloads", "completed": 0, "total": 2},
+        row_version=7,
+        created_by="demo_admin",
+        created_at=now - timedelta(hours=8),
+        updated_at=now - timedelta(minutes=1),
+    )
+    session.add(wf3)
+    session.flush()
+    session.add(SpecialJob(
+        workflow_id=wf3.id, operation="check_and_compose_if_ready",
+        status="running", trigger_source="web", requested_by="demo_admin",
+        attempt_no=1, next_run_at=now - timedelta(minutes=2),
+        lease_token="demo-lease-check-01", lease_owner="supervisor-demo",
+        lease_until=now + timedelta(hours=20),
+        started_at=now - timedelta(minutes=2),
+        progress={"message": "checking_downloads"},
+    ))
+
+    # WF-4: completed + ready, source_cleanup pending (manga already completed).
+    wf4 = SpecialWorkflow(
+        manga_id="1234514/abcdef14", kind="video_archive",
+        status="completed", phase="ready",
+        resume_status="manual_review",
+        payload={
+            "entry": entry_payload,
+            "config_snapshot": {},
+            "torrent_snapshot": {"fetched_at": now.isoformat(), "choices": torrent_choices},
+            "selection": {
+                "image_choice_id": "ch_img_720",
+                "video_choice_id": "ch_vid_720",
+                "confirmed_warnings": [],
+                "selected_at": (now - timedelta(days=2)).isoformat(),
+                "selected_by": "demo_admin",
+            },
+            "torrents": [_torrent("image", "img05", 1.0, complete=True), _torrent("video", "vid06", 1.0, complete=True)],
+            "final_artifact": {
+                "location": "prepared",
+                "filename": "special_demo_14.zip",
+                "kind": "zip",
+                "generation": 1,
+                "size": 85_000_000,
+                "sha1": "c" * 40,
+                "checked_at": (now - timedelta(hours=20)).isoformat(),
+            },
+            "source_cleanup": {"status": "pending", "job_id": None, "last_error": None, "last_error_code": None},
+            "workspace": {"workflow_id": None, "relative_path": "1234514/w4", "counts": {"pictures": 45, "webps": 3, "original_video_files": 3}},
+        },
+        progress={"message": "ready", "completed": 1, "total": 1},
+        row_version=9,
+        created_by="demo_admin",
+        created_at=now - timedelta(days=3),
+        updated_at=now - timedelta(hours=20),
+        completed_at=now - timedelta(hours=20),
+    )
+    session.add(wf4)
+    session.flush()
+    for op in ("load_torrent_options", "submit_selected_torrents", "check_and_compose_if_ready"):
+        session.add(SpecialJob(
+            workflow_id=wf4.id, operation=op,
+            status="succeeded", trigger_source="web", requested_by="demo_admin",
+            attempt_no=1, next_run_at=now - timedelta(days=2),
+            started_at=now - timedelta(days=2), finished_at=now - timedelta(days=2) + timedelta(minutes=30),
+            progress={},
+        ))
+
+    # WF-5: failed — ffmpeg conversion blew up, retry_operation set.
+    wf5 = SpecialWorkflow(
+        manga_id="1234515/abcdef15", kind="video_archive",
+        status="active", phase="failed",
+        resume_status="manual_review",
+        payload={
+            "entry": entry_payload,
+            "config_snapshot": {},
+            "torrent_snapshot": {"fetched_at": now.isoformat(), "choices": torrent_choices},
+            "selection": {
+                "image_choice_id": "ch_img_720",
+                "video_choice_id": "ch_vid_1080",
+                "confirmed_warnings": ["video:no_seeders", "video:resampled"],
+                "selected_at": (now - timedelta(hours=4)).isoformat(),
+                "selected_by": "demo_admin",
+            },
+            "torrents": [_torrent("image", "img07", 1.0, complete=True), _torrent("video", "vid08", 1.0, complete=True)],
+            "final_artifact": None,
+            "retry_operation": "check_and_compose_if_ready",
+        },
+        progress={"message": "failed"},
+        error_code="ffmpeg_failed",
+        error_detail="ffmpeg failed for video_03.mp4: conversion timed out after 300s",
+        row_version=8,
+        created_by="demo_admin",
+        created_at=now - timedelta(hours=10),
+        updated_at=now - timedelta(minutes=30),
+    )
+    session.add(wf5)
+    session.flush()
+    for op, status in [
+        ("load_torrent_options", "succeeded"),
+        ("submit_selected_torrents", "succeeded"),
+        ("check_and_compose_if_ready", "failed"),
+    ]:
+        session.add(SpecialJob(
+            workflow_id=wf5.id, operation=op,
+            status=status, trigger_source="web", requested_by="demo_admin",
+            attempt_no=1, next_run_at=now - timedelta(hours=4),
+            started_at=now - timedelta(hours=4),
+            finished_at=now - timedelta(hours=4) + timedelta(minutes=45) if status == "failed" else now - timedelta(hours=4) + timedelta(seconds=10),
+            progress={},
+            error_code="ffmpeg_failed" if status == "failed" else None,
+            error_detail="ffmpeg failed for video_03.mp4: conversion timed out after 300s" if status == "failed" else None,
+        ))
+    session.add(EventLog(
+        manga_id="1234515/abcdef15", component="special_processing",
+        event_type="special_job_failed", operation="check_and_compose_if_ready",
+        actor="supervisor-demo", error_code="ffmpeg_failed",
+        detail={"workflow_id": wf5.id, "summary": "ffmpeg conversion timed out"},
+        created_at=now - timedelta(minutes=30),
+    ))
+
+    # WF-6: cancelled — manga restored to manual_review.
+    wf6 = SpecialWorkflow(
+        manga_id="1234516/abcdef16", kind="video_archive",
+        status="cancelled", phase="cancelled",
+        resume_status="manual_review",
+        payload={
+            "entry": entry_payload,
+            "config_snapshot": {},
+            "torrent_snapshot": {"fetched_at": now.isoformat(), "choices": torrent_choices},
+            "selection": None,
+            "torrents": [],
+            "final_artifact": None,
+        },
+        progress={"message": "cancelled"},
+        row_version=3,
+        created_by="demo_admin",
+        created_at=now - timedelta(days=1),
+        updated_at=now - timedelta(hours=18),
+        completed_at=now - timedelta(hours=18),
+    )
+    session.add(wf6)
+    session.flush()
+    for op, status in [
+        ("load_torrent_options", "succeeded"),
+        ("cancel_video_archive", "succeeded"),
+    ]:
+        session.add(SpecialJob(
+            workflow_id=wf6.id, operation=op,
+            status=status, trigger_source="web", requested_by="demo_admin",
+            attempt_no=1, next_run_at=now - timedelta(hours=18),
+            started_at=now - timedelta(hours=18),
+            finished_at=now - timedelta(hours=18) + timedelta(seconds=5),
+            progress={},
+        ))
+    session.add(EventLog(
+        manga_id="1234516/abcdef16", component="special_processing",
+        event_type="special_cancelled", operation="cancel_video_archive",
+        actor="demo_admin", from_status="special_processing", to_status="manual_review",
+        detail={"workflow_id": wf6.id, "torrent_cleanup": {"deleted": [], "skipped": []}},
+        created_at=now - timedelta(hours=18),
+    ))
 
 
 def _demo_config_dir() -> Path:

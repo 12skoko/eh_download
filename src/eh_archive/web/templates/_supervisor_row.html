@@ -1,0 +1,18 @@
+{% set state = supervisor_state if supervisor_state is defined else (control.state if control else 'unknown') %}
+{% set state_labels = {'running': '可调度', 'paused': '已暂停', 'draining': '排空中', 'stale': '已失联', 'unknown': '未知'} %}
+<form id="supervisor-row" method="post" action="/control/supervisor" class="component-row" hx-post="/control/supervisor" hx-target="this" hx-swap="outerHTML" hx-sync="this:replace" hx-disabled-elt="find button">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="row_version" value="{{ control.row_version if control else '' }}">
+  <div class="component-identity"><strong>Supervisor</strong><small class="mono">supervisor</small></div>
+  <span class="badge {{ state }}">{{ state_labels.get(state, state) }}</span>
+  <div class="component-reason">
+    <small>{{ '暂停原因' if control and control.reason else '最后心跳' }}</small>
+    <span>{{ control.reason if control and control.reason else (control.heartbeat_at|datetime if control and control.heartbeat_at else '等待首次心跳') }}</span>
+  </div>
+  <div class="supervisor-actions">
+    <button name="state" value="running" type="submit">运行</button>
+    <button type="button" data-open-dialog="supervisor-pause-dialog">暂停</button>
+    <button type="button" class="warning-button" data-open-dialog="supervisor-drain-dialog">排空</button>
+  </div>
+  {% if component_error %}<div class="component-feedback" role="alert">{{ component_error }}</div>{% endif %}
+</form>

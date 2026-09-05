@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import quote, urlencode
 
 from fastapi import Request
 from sqlalchemy import select
@@ -65,6 +64,7 @@ from .services import (
     manga_progress_data,
     review_facets,
     running_attempts,
+    running_module_tasks,
     safe_detail,
     serialize_manga,
     serialize_model,
@@ -72,23 +72,6 @@ from .services import (
 
 TEMPLATE_DIR = Path(__file__).with_name("templates")
 STATIC_DIR = Path(__file__).with_name("static")
-
-
-def _gallery_id(value: str) -> str | None:
-    try:
-        parsed = urlparse(value)
-        hostname = parsed.hostname
-    except ValueError:
-        return None
-    if parsed.scheme not in {"http", "https"} or hostname not in {
-        "e-hentai.org",
-        "www.e-hentai.org",
-        "exhentai.org",
-        "www.exhentai.org",
-    }:
-        return None
-    match = re.fullmatch(r"/g/(\d+/[\w-]+)/?", parsed.path)
-    return match.group(1) if match else None
 
 
 def _filter_query(params: list[tuple[str, str]]) -> str:
@@ -138,12 +121,6 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
     app.state.database = database
     app.state.auth_enabled = auth_enabled
     app.state.config_dir = config_dir
-
-    class ManualManga(BaseModel):
-        url: str
-        priority: int = Field(default=100, ge=-100000, le=100000)
-        remark: str | None = None
-        row_version: int | None = None
 
     class RemarkUpdate(BaseModel):
         remark: str | None = None
@@ -285,10 +262,11 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
     def running_tasks_partial(request: Request):
         with database.session() as session:
             running = running_attempts(session)
+            running_modules = running_module_tasks(session)
         return templates.TemplateResponse(
             request=request,
             name="_running_tasks.html",
-            context=_context(request, running=running),
+            context=_context(request, running=running, running_module_tasks=running_modules),
         )
 
     @app.get("/partials/manga-progress/{manga_id:path}", response_class=HTMLResponse)
@@ -355,29 +333,6 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 filter_qs=_filter_query(filter_params),
             ),
         )
-
-    @app.post("/manga/add")
-    async def add_manga_page(request: Request):
-        form = await _validated_form(request)
-        url = str(form.get("url", "")).strip()
-        manga_id = _gallery_id(url)
-        if manga_id is None:
-            return _error_response(
-                request, templates, InvalidRequest("URL 中没有有效的 EH 画廊 ID")
-            )
-        try:
-            with database.session() as session:
-                row = WebService(session, actor=_actor(request)).add_manga(
-                    url=url,
-                    manga_id=manga_id,
-                    priority=int(str(form.get("priority", "100"))),
-                    remark=_optional_text(form.get("remark")),
-                    row_version=_optional_int(form.get("row_version")),
-                )
-        except (ValueError, WebServiceError) as exc:
-            error = exc if isinstance(exc, WebServiceError) else InvalidRequest("优先级必须是整数")
-            return _error_response(request, templates, error)
-        return _redirect_response(request, f"/manga/{row.manga_id}?notice=added")
 
     @app.get("/review", response_class=HTMLResponse)
     def review_page(
@@ -974,9 +929,10 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             if request.headers.get("HX-Request") == "true":
                 with database.session() as session:
                     current = session.get(SystemControl, component)
+                row_template = "_supervisor_row.html" if component == "supervisor" else "_component_row.html"
                 return templates.TemplateResponse(
                     request=request,
-                    name="_component_row.html",
+                    name=row_template,
                     context=_context(
                         request,
                         component=component,
@@ -986,9 +942,10 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 )
             return _error_response(request, templates, error)
         if request.headers.get("HX-Request") == "true":
+            row_template = "_supervisor_row.html" if component == "supervisor" else "_component_row.html"
             return templates.TemplateResponse(
                 request=request,
-                name="_component_row.html",
+                name=row_template,
                 context=_context(
                     request,
                     component=component,
@@ -1083,24 +1040,6 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                     for item in detail["events"]
                 ]
                 return value
-        except WebServiceError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-
-    @app.post("/api/manga", status_code=201)
-    def api_add_manga(request: Request, payload: ManualManga):
-        manga_id = _gallery_id(payload.url)
-        if manga_id is None:
-            raise HTTPException(400, "URL does not contain an EH gallery id")
-        try:
-            with database.session() as session:
-                row = WebService(session, actor=_actor(request)).add_manga(
-                    url=payload.url,
-                    manga_id=manga_id,
-                    priority=payload.priority,
-                    remark=payload.remark,
-                    row_version=payload.row_version,
-                )
-                return serialize_manga(row)
         except WebServiceError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
 

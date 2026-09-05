@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import uuid
-from urllib.parse import urlparse
 
 from .config import load_config
 from .db import ArchiveRepository, Database
@@ -16,23 +14,6 @@ from .logging import configure_logging, get_logger
 log = get_logger(__name__)
 
 
-def _gallery_id(value: str) -> str | None:
-    try:
-        parsed = urlparse(value)
-        hostname = parsed.hostname
-    except ValueError:
-        return None
-    if parsed.scheme not in {"http", "https"} or hostname not in {
-        "e-hentai.org",
-        "www.e-hentai.org",
-        "exhentai.org",
-        "www.exhentai.org",
-    }:
-        return None
-    match = re.fullmatch(r"/g/(\d+/[\w-]+)/?", parsed.path)
-    return match.group(1) if match else None
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="eharchive")
     parser.add_argument("--config-dir", default="config")
@@ -41,11 +22,8 @@ def build_parser() -> argparse.ArgumentParser:
     db.add_argument("action", choices=("upgrade", "ping"))
     collect = sub.add_parser("collect")
     collect.add_argument("url", nargs="?")
-    collect_mode = collect.add_mutually_exclusive_group()
-    collect_mode.add_argument("--manual", action="store_true")
-    collect_mode.add_argument("--stop-mode", choices=("full", "automatic"))
-    collect_mode.add_argument("--end", type=int)
-    collect.add_argument("--priority", type=int, default=0)
+    collect.add_argument("--stop-mode", choices=("full", "automatic"))
+    collect.add_argument("--end", type=int)
     task = sub.add_parser("task")
     task.add_argument(
         "operation",
@@ -71,10 +49,6 @@ def build_parser() -> argparse.ArgumentParser:
     picacg_import.add_argument("root")
     picacg_import.add_argument("--base-url", required=True)
     picacg_sub.add_parser("screen")
-    add = sub.add_parser("add")
-    add.add_argument("url")
-    add.add_argument("--priority", type=int, default=100)
-    add.add_argument("--remark")
     special = sub.add_parser("special")
     special_kind = special.add_subparsers(dest="special_kind", required=True)
     video_archive = special_kind.add_parser("video-archive")
@@ -205,63 +179,31 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 service.screen_entries()
         return 0
-    if args.command in {"add", "collect"}:
+    if args.command == "collect":
         url = args.url
         if not url:
             raise SystemExit("a gallery URL is required")
-        if args.command == "collect" and not args.manual:
-            from .services.collector import Collector
-
-            with database.session() as session:
-                repository = ArchiveRepository(session)
-                end = args.end
-                if args.stop_mode == "automatic":
-                    end = repository.automatic_collect_end(
-                        days=crawl.collect_end_days, offset=crawl.collect_end_offset
-                    )
-                run_id = repository.start_collect_run(
-                    trigger_source="cli",
-                    detail={
-                        "config_dir": str(args.config_dir),
-                        "url": url,
-                        "stop_mode": args.stop_mode or "full",
-                        "end": end,
-                        "observation_days": crawl.observation_days,
-                    },
-                )
-                Collector(repository, app, crawl, secrets).collect_url(url, end=end)
-                repository.finish_collect_run("succeeded", detail={"end": end})
-            print(f"collect run_id={run_id}")
-            return 0
-        manga_id = _gallery_id(url)
-        if manga_id is None:
-            raise SystemExit("URL does not contain a gallery id")
         with database.session() as session:
-            row = session.get(MangaRecord, manga_id)
-            if row is None:
-                row = MangaRecord(
-                    manga_id=manga_id,
-                    name=manga_id,
-                    link=url,
-                    queue_source="manual",
-                    priority=getattr(args, "priority", 0),
-                    status=Status.DOWNLOAD_PENDING.value,
-                    remark=getattr(args, "remark", None),
+            repository = ArchiveRepository(session)
+            end = args.end
+            if args.stop_mode == "automatic":
+                end = repository.automatic_collect_end(
+                    days=crawl.collect_end_days, offset=crawl.collect_end_offset
                 )
-                session.add(row)
-                session.flush()
-                session.add(
-                    EventLog(
-                        manga_id=manga_id,
-                        component="cli",
-                        event_type="manual",
-                        operation="add",
-                        to_status=row.status,
-                        actor="cli",
-                        detail={},
-                    )
-                )
-            return 0
+            run_id = repository.start_collect_run(
+                trigger_source="cli",
+                detail={
+                    "config_dir": str(args.config_dir),
+                    "url": url,
+                    "stop_mode": args.stop_mode or "full",
+                    "end": end,
+                    "observation_days": crawl.observation_days,
+                },
+            )
+            Collector(repository, app, crawl, secrets).collect_url(url, end=end)
+            repository.finish_collect_run("succeeded", detail={"end": end})
+        print(f"collect run_id={run_id}")
+        return 0
     return 0
 
 

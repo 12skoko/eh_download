@@ -122,6 +122,7 @@ def direct_archive_filename(manga_id: str, manga_name: str) -> str:
 
     idnum = manga_id.split("/", 1)[0]
     readable_name = re.sub(r'[\\/*?:"<>|]', "_", manga_name)
+    readable_name = re.sub(r"(?:\.zip\s*)+$", "", readable_name, flags=re.IGNORECASE).rstrip()
     return safe_filename(f"[{idnum}]{readable_name}.zip")
 
 

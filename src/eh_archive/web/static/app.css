@@ -72,10 +72,22 @@ h2 { margin-bottom: .25rem; font-size: 1.05rem; }
 
 .panel, .filter-panel, .review-card { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
 .panel { padding: 1.2rem; }
+section.panel { margin-bottom: 1.5rem; }
 .hero-grid, .two-column, .detail-grid { display: grid; gap: 1rem; margin-bottom: 1.5rem; }
 .hero-grid { grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr); }
 .two-column, .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.task-panel { height: 100%; }
+.task-section { padding: 1.1rem 1.2rem; }
+.task-section + .task-section { border-top: 1px solid var(--line); }
+.task-section td small { display: block; margin-top: .2rem; color: var(--muted); }
+.task-section .table-wrap { margin-inline: -1.2rem; }
+.task-section .table-wrap th:first-child,
+.task-section .table-wrap td:first-child { padding-left: 1.2rem; }
+.task-section .table-wrap th:last-child,
+.task-section .table-wrap td:last-child { padding-right: 1.2rem; }
 .section-head { margin-bottom: 1rem; align-items: center; }
+.panel-actions { display: flex; align-items: center; gap: .5rem; margin-top: 1.1rem; }
+.panel-actions form { margin: 0; }
 
 .facts { margin: 0; display: grid; gap: .8rem; }
 .facts.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -128,6 +140,7 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgb(23 107 135 / 
 .component-row { grid-template-columns: minmax(140px, .8fr) 64px minmax(150px, 1fr) 84px; }
 .component-row > .badge { justify-self: center; }
 .component-row > button { width: 84px; }
+.component-identity small { display: block; margin-top: .15rem; color: var(--muted); }
 .component-reason { min-width: 0; min-height: 38px; display: flex; align-items: center; gap: .5rem; padding: .5rem .65rem; border-radius: 7px; color: var(--amber); background: var(--amber-soft); overflow-wrap: anywhere; }
 .component-reason small { flex: 0 0 auto; margin: 0; color: inherit; font-size: .7rem; font-weight: 750; }
 .component-feedback { grid-column: 1 / -1; padding: .55rem .7rem; border-radius: 7px; color: var(--red); background: var(--red-soft); }
