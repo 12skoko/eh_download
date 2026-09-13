@@ -16,7 +16,7 @@ from ..config import load_config
 from ..config.loader import SUPERVISOR_MODULES
 from ..db import Database
 from ..db.models import MangaRecord, SystemControl, SystemHealth
-from ..logging import configure_logging
+from ..logging import configure_logging, get_logger
 from ..services.paths import safe_filename
 from ..special.remarks import PHASE_LABELS, user_remark
 from ..special.service import (
@@ -1442,10 +1442,25 @@ def main(argv: list[str] | None = None) -> int:
         component="web",
         run_id=str(uuid.uuid4()),
     )
-    application = create_app(Database(app_config.database_url), config_dir=args.config_dir)
+    # Uvicorn's default logging configuration bypasses the application's file
+    # handler. Route its lifecycle, access and exception records through root.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logger = get_logger(name)
+        logger.handlers.clear()
+        logger.propagate = True
+        logger.setLevel(app_config.log_level.upper())
+    logger = get_logger("web")
+    logger.info("Starting Web on %s:%s", app_config.web_host, app_config.web_port)
     import uvicorn
 
-    uvicorn.run(application, host=app_config.web_host, port=app_config.web_port)
+    try:
+        application = create_app(Database(app_config.database_url), config_dir=args.config_dir)
+        uvicorn.run(
+            application, host=app_config.web_host, port=app_config.web_port, log_config=None
+        )
+    except Exception:
+        logger.exception("Web startup or server failed")
+        raise
     return 0
 
 
