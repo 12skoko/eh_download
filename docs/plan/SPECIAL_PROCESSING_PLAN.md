@@ -1,3 +1,5 @@
+> 架构更新：本文件中工作流直接绑定 Manga 的设计已由 [特殊模块架构解耦与重构计划](SPECIAL_MODULE_REFACTOR_PLAN.md) 替代。视频人工操作顺序及业务保护约束继续有效。使用说明见 [特殊模块使用与扩展](../SPECIAL_MODULES.md)。
+
 # EH Archive 特殊处理工作流与视频种子整合计划
 
 ## 1. 文档目的

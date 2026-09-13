@@ -59,6 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
         "special_action",
         choices=("collect-ready", "cleanup-completed"),
     )
+    create = special_kind.add_parser("create")
+    create.add_argument("kind")
+    create.add_argument("--inputs", default="{}")
+    action = special_kind.add_parser("action")
+    action.add_argument("workflow_id", type=int)
+    action.add_argument("action")
+    action.add_argument("--row-version", type=int, required=True)
+    action.add_argument("--inputs", default="{}")
     return parser
 
 
@@ -118,6 +126,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "special":
         from .special.service import SpecialWorkflowService
 
+        if args.special_kind in {"create", "action"}:
+            import json
+            from .special.core.service import ModuleService
+
+            with database.session() as session:
+                service = ModuleService(
+                    session,
+                    actor="cli",
+                    config_dir=args.config_dir,
+                    app_config=app,
+                    trigger_source="cli",
+                )
+                inputs = json.loads(args.inputs)
+                if not isinstance(inputs, dict):
+                    raise ValueError("inputs must be an object")
+                result = (
+                    service.create(args.kind, inputs)
+                    if args.special_kind == "create"
+                    else service.action(
+                        args.workflow_id, args.action, row_version=args.row_version, inputs=inputs
+                    )
+                )
+                print(f"special {args.special_kind} id={result.id}")
+            return 0
         if args.special_kind == "video-archive" and args.special_action == "collect-ready":
             with database.session() as session:
                 result = SpecialWorkflowService(

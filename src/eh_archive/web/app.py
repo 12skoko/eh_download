@@ -81,8 +81,12 @@ def _filter_query(params: list[tuple[str, str]]) -> str:
     return urlencode(params)
 
 
-def create_app(database: Database | None = None, *, config_dir: str | Path = "config",
-               management_config: str | Path = "/etc/eharchive/management.toml"):
+def create_app(
+    database: Database | None = None,
+    *,
+    config_dir: str | Path = "config",
+    management_config: str | Path = "/etc/eharchive/management.toml",
+):
     try:
         from fastapi import Body, FastAPI, HTTPException, Query
         from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -468,9 +472,15 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             from ..management.service import submit
 
             result = submit(
-                "apply_config", _actor(request), management_path=Path(management_config),
+                "apply_config",
+                _actor(request),
+                management_path=Path(management_config),
                 prepare=lambda config, operation: stage(
-                    config, operation, section_name, form, str(form.get("revision", "")),
+                    config,
+                    operation,
+                    section_name,
+                    form,
+                    str(form.get("revision", "")),
                 ),
             )
         except ConfigurationConflict as exc:
@@ -483,6 +493,10 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             request,
             f"/system/operations/{result['id']}",
         )
+
+    from .special_routes import install_special_routes
+
+    install_special_routes(app, database, templates, app_config, config_dir)
 
     @app.get("/special", response_class=HTMLResponse)
     def special_page(request: Request):
@@ -499,6 +513,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
     def special_module_page(
         request: Request,
         kind: str,
+        page: int = 1,
         notice: str | None = None,
         found: int | None = None,
         queued: int | None = None,
@@ -513,7 +528,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 SpecialNotFound("特殊处理模块不存在"),
             )
         with database.session() as session:
-            data = module.load_dashboard(session)
+            data = module.load_dashboard(session, page=max(1, page))
         module_health = special_module_health(module.kind, config_dir)
         return templates.TemplateResponse(
             request=request,
@@ -593,16 +608,18 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
         return _redirect_response(request, f"/special/workflows/{workflow.id}")
 
     @app.get("/special/workflows/{workflow_id}", response_class=HTMLResponse)
-    def special_workflow_page(request: Request, workflow_id: int, notice: str | None = None):
+    def special_workflow_page(
+        request: Request, workflow_id: int, notice: str | None = None, page: int = 1
+    ):
         try:
             with database.session() as session:
-                detail = special_workflow_detail(session, workflow_id)
+                detail = special_workflow_detail(session, workflow_id, page=page)
             module_health = special_module_health(detail["workflow"].kind, config_dir)
         except SpecialServiceError as exc:
             return _special_error_response(request, templates, exc)
         return templates.TemplateResponse(
             request=request,
-            name="special_detail.html",
+            name=detail["detail_template"],
             context=_context(
                 request,
                 **detail,
@@ -627,7 +644,7 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             return _special_error_response(request, templates, exc)
         return templates.TemplateResponse(
             request=request,
-            name="_special_workflow_panel.html",
+            name=detail["panel_template"],
             context=_context(
                 request,
                 **detail,
@@ -944,7 +961,9 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
             if request.headers.get("HX-Request") == "true":
                 with database.session() as session:
                     current = session.get(SystemControl, component)
-                row_template = "_supervisor_row.html" if component == "supervisor" else "_component_row.html"
+                row_template = (
+                    "_supervisor_row.html" if component == "supervisor" else "_component_row.html"
+                )
                 return templates.TemplateResponse(
                     request=request,
                     name=row_template,
@@ -957,7 +976,9 @@ def create_app(database: Database | None = None, *, config_dir: str | Path = "co
                 )
             return _error_response(request, templates, error)
         if request.headers.get("HX-Request") == "true":
-            row_template = "_supervisor_row.html" if component == "supervisor" else "_component_row.html"
+            row_template = (
+                "_supervisor_row.html" if component == "supervisor" else "_component_row.html"
+            )
             return templates.TemplateResponse(
                 request=request,
                 name=row_template,

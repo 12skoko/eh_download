@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block title %}特殊工作流 #{{ workflow.id }} ▪ EH Archive{% endblock %}
+{% block content %}<div class="page-head"><div><a class="back" href="{{ module_url }}">← 所属模块</a><h1>{{ module_label }} #{{ workflow.id }}</h1></div></div>{% include "special/_generic_panel.html" %}{% endblock %}

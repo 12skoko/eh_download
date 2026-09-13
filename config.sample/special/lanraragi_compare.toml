@@ -1,0 +1,5 @@
+# Uses app.toml's LANraragi URL and secrets.toml's existing LANraragi headers.
+# Opening the module page never performs a network probe.
+enabled = true
+max_concurrency = 1
+timeout_seconds = 120

@@ -25,3 +25,7 @@ returns one validated ZIP to the ordinary `downloaded -> validate` pipeline.
 
 The `scripts/` directory contains one-time MySQL migration and reconciliation
 tools. Runtime code never imports those scripts.
+
+## 特殊模块
+
+视频处理与 LANraragi 数据库核对共用独立工作流框架。核对可从 Web「特殊处理」启动并浏览、下载报告；视频仍保留原有手动流程。升级、配置与新增模块说明见 [特殊模块使用与扩展](docs/SPECIAL_MODULES.md)。

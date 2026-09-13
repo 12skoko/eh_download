@@ -17,6 +17,7 @@ from ..db.models import (
     MangaRecord,
     SpecialJob,
     SpecialWorkflow,
+    SpecialWorkflowManga,
     SystemControl,
     SystemHealth,
 )
@@ -1087,15 +1088,16 @@ def running_module_tasks(session: Session, *, limit: int = 24) -> list[RunningMo
             module_label=WORKFLOW_REGISTRY.get(workflow.kind).label
             if workflow.kind in WORKFLOW_REGISTRY
             else workflow.kind,
-            manga_id=workflow.manga_id,
-            manga_name=manga.name,
+            manga_id=manga.manga_id if manga else None,
+            manga_name=manga.name if manga else None,
             state=PHASE_LABELS.get(workflow.phase, workflow.phase),
             started_at=job.started_at if job else None,
             updated_at=workflow.updated_at,
         )
         for workflow, manga, job in session.execute(
             select(SpecialWorkflow, MangaRecord, SpecialJob)
-            .join(MangaRecord, MangaRecord.manga_id == SpecialWorkflow.manga_id)
+            .outerjoin(SpecialWorkflowManga, SpecialWorkflowManga.workflow_id == SpecialWorkflow.id)
+            .outerjoin(MangaRecord, MangaRecord.manga_id == SpecialWorkflowManga.manga_id)
             .outerjoin(
                 SpecialJob,
                 and_(

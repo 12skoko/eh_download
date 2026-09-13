@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}核对报告 #{{ workflow.id }}{% endblock %}
+{% block content %}<a class="back" href="/special/workflows/{{ workflow.id }}">← 工作流</a><h1>核对报告 #{{ workflow.id }}</h1>
+<p>数据库口径为 completed。LANraragi 独有并不一定表示数据库中不存在该档案；GID 匹配不验证文件内容。</p>
+<section class="panel"><div class="panel-actions">{% for key in sections %}<a href="?section={{ key }}">{{ (report_labels|default({})).get(key, key) }}</a>{% endfor %}</div><h2>{{ (report_labels|default({})).get(section, section) }}（{{ report_total }}）</h2>
+<table><tbody>{% for row in report_rows %}<tr><td>{% if row is mapping %}{% for key, value in row.items() %}<span>{{ key }}: {{ value }} </span>{% endfor %}{% else %}{{ row }}{% endif %}</td></tr>{% else %}<tr><td>无记录</td></tr>{% endfor %}</tbody></table>
+{% if report_page > 1 %}<a href="?section={{ section }}&page={{ report_page - 1 }}">上一页</a>{% endif %} 第 {{ report_page }} 页 {% if report_page * 100 < report_total %}<a href="?section={{ section }}&page={{ report_page + 1 }}">下一页</a>{% endif %}</section>{% endblock %}

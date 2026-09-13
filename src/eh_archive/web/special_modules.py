@@ -1,53 +1,17 @@
-from __future__ import annotations
-
-from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
-
-from sqlalchemy.orm import Session
-
-from ..special.registry import VIDEO_ARCHIVE, VIDEO_ARCHIVE_KIND
-from ..special.service import list_video_workflows, special_module_health
-
-DashboardLoader = Callable[[Session], dict[str, Any]]
+from ..special.catalog import MODULES, load_modules
+from ..special.service import special_module_health
 
 
-@dataclass(frozen=True)
-class SpecialModulePage:
-    kind: str
-    label: str
-    description: str
-    template_name: str
-    load_dashboard: DashboardLoader
-
-    @property
-    def url(self) -> str:
-        return f"/special/modules/{self.kind}"
-
-
-VIDEO_ARCHIVE_PAGE = SpecialModulePage(
-    kind=VIDEO_ARCHIVE_KIND,
-    label=VIDEO_ARCHIVE.label,
-    description="选择图片与视频 Torrent，等待下载完成后转换并整合为普通归档产物。",
-    template_name="special/video_archive.html",
-    load_dashboard=list_video_workflows,
-)
-
-
-SPECIAL_MODULE_PAGES: dict[str, SpecialModulePage] = {
-    VIDEO_ARCHIVE_PAGE.kind: VIDEO_ARCHIVE_PAGE,
-}
-
-
-def get_special_module_page(kind: str) -> SpecialModulePage:
+def get_special_module_page(kind):
+    load_modules()
     try:
-        return SPECIAL_MODULE_PAGES[kind]
+        return MODULES[kind]
     except KeyError as exc:
-        raise ValueError(f"unsupported special module page: {kind}") from exc
+        raise ValueError("unsupported special module page") from exc
 
 
-def special_module_cards(config_dir: str | Path) -> tuple[dict[str, Any], ...]:
+def special_module_cards(config_dir):
+    load_modules()
     return tuple(
         {
             "kind": page.kind,
@@ -56,10 +20,10 @@ def special_module_cards(config_dir: str | Path) -> tuple[dict[str, Any], ...]:
             "url": page.url,
             "health": special_module_health(page.kind, config_dir),
         }
-        for page in SPECIAL_MODULE_PAGES.values()
+        for page in MODULES.values()
     )
 
 
-def special_module_url(kind: str) -> str:
-    page = SPECIAL_MODULE_PAGES.get(kind)
-    return page.url if page is not None else "/special"
+def special_module_url(kind):
+    load_modules()
+    return MODULES[kind].url if kind in MODULES else "/special"

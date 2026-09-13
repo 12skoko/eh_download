@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    PrimaryKeyConstraint,
     String,
     Text,
     UniqueConstraint,
@@ -166,7 +167,7 @@ class MangaRecord(Base):
         "MangaInfoRecord", back_populates="manga", uselist=False
     )
     special_workflows: Mapped[list[SpecialWorkflow]] = relationship(
-        "SpecialWorkflow", back_populates="manga", foreign_keys="SpecialWorkflow.manga_id"
+        "SpecialWorkflow", secondary="special_workflow_manga", viewonly=True
     )
 
 
@@ -249,25 +250,30 @@ class SpecialWorkflow(Base):
             name="ck_special_workflow_status",
         ),
         CheckConstraint("row_version >= 0", name="ck_special_workflow_row_version"),
+        CheckConstraint("schema_version > 0", name="ck_special_workflow_schema_version"),
+        CheckConstraint(
+            "jsonb_typeof(resource_claims) = 'array'",
+            name="ck_special_workflow_resource_claims_array",
+        ).ddl_if(dialect="postgresql"),
         Index(
-            "uq_special_workflow_active_manga",
-            "manga_id",
-            unique=True,
-            postgresql_where=sql_text("status = 'active'"),
-            sqlite_where=sql_text("status = 'active'"),
-        ),
+            "ix_special_workflow_resource_claims",
+            "resource_claims",
+            postgresql_using="gin",
+            postgresql_ops={"resource_claims": "jsonb_path_ops"},
+        ).ddl_if(dialect="postgresql"),
         Index("ix_special_workflow_status_updated", "status", "updated_at"),
         Index("ix_special_workflow_kind_phase", "kind", "status", "phase"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    manga_id: Mapped[str] = mapped_column(
-        String(100), ForeignKey("manga.manga_id", ondelete="RESTRICT"), nullable=False
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resource_claims: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON_OBJECT, default=list, server_default="[]", nullable=False
     )
     kind: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
     phase: Mapped[str] = mapped_column(String(64), nullable=False)
-    resume_status: Mapped[str] = mapped_column(String(32), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON_OBJECT, default=dict, nullable=False)
     progress: Mapped[dict[str, Any]] = mapped_column(JSON_OBJECT, default=dict, nullable=False)
     row_version: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
@@ -282,11 +288,41 @@ class SpecialWorkflow(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    manga: Mapped[MangaRecord] = relationship(
-        "MangaRecord", back_populates="special_workflows", foreign_keys=[manga_id]
+    manga_bindings: Mapped[list[SpecialWorkflowManga]] = relationship(
+        "SpecialWorkflowManga", back_populates="workflow", lazy="select"
     )
     jobs: Mapped[list[SpecialJob]] = relationship(
         "SpecialJob", back_populates="workflow", foreign_keys="SpecialJob.workflow_id"
+    )
+
+
+class SpecialWorkflowManga(Base):
+    __tablename__ = "special_workflow_manga"
+    __table_args__ = (
+        PrimaryKeyConstraint("workflow_id", "manga_id", name="pk_special_workflow_manga"),
+        CheckConstraint(
+            "jsonb_typeof(context) = 'object'", name="ck_special_workflow_manga_context_object"
+        ).ddl_if(dialect="postgresql"),
+        Index("ix_special_workflow_manga_manga", "manga_id", "workflow_id"),
+    )
+    workflow_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "special_workflow.id", ondelete="RESTRICT", name="fk_special_workflow_manga_workflow"
+        ),
+        primary_key=True,
+    )
+    manga_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey("manga.manga_id", ondelete="RESTRICT", name="fk_special_workflow_manga_manga"),
+        primary_key=True,
+    )
+    resume_status: Mapped[str | None] = mapped_column(String(32))
+    context: Mapped[dict[str, Any]] = mapped_column(
+        JSON_OBJECT, default=dict, server_default="{}", nullable=False
+    )
+    workflow: Mapped[SpecialWorkflow] = relationship(
+        "SpecialWorkflow", back_populates="manga_bindings"
     )
 
 
@@ -380,6 +416,16 @@ class EventLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
+
+
+for _event_key in ("workflow", "job"):
+    Index(
+        f"ix_event_special_{_event_key}_created",
+        EventLog.detail.op("->>")(f"{_event_key}_id"),
+        EventLog.created_at.desc(),
+        EventLog.id.desc(),
+        postgresql_where=sql_text("component = 'special_processing'"),
+    ).ddl_if(dialect="postgresql")
 
 
 class SystemControl(Base):

@@ -90,16 +90,15 @@ class Supervisor:
             log.info("supervisor modules disabled by config: %s", ", ".join(disabled))
         self.special_enabled_kinds: tuple[str, ...] = ()
         self.special_concurrency_limit = 0
+        self.special_module_limits = {}
         if self.config.special_processing_enabled and self.config.modules.get(
             "special_processing", True
         ):
             capabilities = enabled_module_capabilities(config_dir)
             self.special_enabled_kinds = tuple(item.kind for item in capabilities)
             if capabilities:
-                self.special_concurrency_limit = min(
-                    self.config.special_max_concurrency,
-                    min(item.max_concurrency for item in capabilities),
-                )
+                self.special_concurrency_limit = self.config.special_max_concurrency
+                self.special_module_limits = {item.kind: item.max_concurrency for item in capabilities}
 
     def stop(self, *_args) -> None:
         self.stopping = True
@@ -592,6 +591,8 @@ class Supervisor:
                     owner=self.owner,
                     lease_seconds=self.config.special_job_lease_seconds,
                     enabled_kinds=enabled_kinds,
+                    max_concurrency=self.special_concurrency_limit,
+                    module_limits=getattr(self, "special_module_limits", {}),
                 )
             if claim is None:
                 break

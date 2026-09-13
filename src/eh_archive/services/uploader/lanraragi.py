@@ -99,6 +99,20 @@ class LANraragiApiGateway:
         # summary; future callers can extend this mapping explicitly.
         return {"title": info.name, "tags": build_tags(info)}
 
+    def list_archives(self) -> list[dict[str, Any]]:
+        response = self._request("get", f"{self.base_url}/api/archives",
+                                 headers=self.headers, timeout=self.timeout)
+        if response.status_code != 200:
+            raise ArchiveError("lanraragi_compare_http_error",
+                f"LANraragi archive list returned HTTP {response.status_code}", ErrorClass.ITEM)
+        try:
+            payload = response.json()
+        except (TypeError, ValueError) as exc:
+            raise ValueError("LANraragi 返回非法 JSON") from exc
+        if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+            raise ValueError("LANraragi 档案响应不是有效列表")
+        return payload
+
     def upload_archive(
         self,
         path: str | Path,

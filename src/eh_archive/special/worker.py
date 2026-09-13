@@ -15,6 +15,8 @@ from ..domain.errors import (
     classify_exception,
 )
 from ..logging import configure_logging, get_logger, special_job_log_path
+from .core.execution import keep_lease
+from .core.registry import get_operation
 from .handlers import build_executor
 from .repository import ClaimedSpecialJob, SpecialRepository
 
@@ -52,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    app, _, _, _ = load_config(args.config_dir)
+    app, supervisor, _, _ = load_config(args.config_dir)
     run_id = args.run_id or str(uuid.uuid4())
     configure_logging(
         app.log_level,
@@ -84,25 +86,28 @@ def main(argv: list[str] | None = None) -> int:
         if values is None:
             log.error("special worker refused stale or invalid claim: job_id=%s", args.job_id)
             return 3
-        job, workflow, manga = values
+        job, workflow = values
         claim = ClaimedSpecialJob(
             job.id,
             workflow.id,
-            manga.manga_id,
             workflow.kind,
             job.operation,
             args.lease_token,
             args.lease_owner,
             workflow.row_version,
-            manga.artifact_generation,
         )
     try:
-        build_executor(
-            claim.kind,
-            database,
-            config_dir=args.config_dir,
-            claim=claim,
-        ).run()
+        lease = (
+            get_operation(claim.kind, claim.operation).lease_seconds
+            or supervisor.special_job_lease_seconds
+        )
+        with keep_lease(database, claim, lease_seconds=lease):
+            build_executor(
+                claim.kind,
+                database,
+                config_dir=args.config_dir,
+                claim=claim,
+            ).run()
     except Exception as exc:
         code, detail = _error_code(exc)
         public_detail = _public_error_detail(detail)
@@ -115,14 +120,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         try:
             with database.session() as session:
-                failure_phase = (
-                    "awaiting_torrent_selection" if code == "torrent_selection_stale" else "failed"
-                )
                 SpecialRepository(session, run_id=run_id, timezone=app.timezone).fail(
                     claim,
                     error_code=code,
                     error_detail=public_detail,
-                    phase=failure_phase,
                 )
         except Exception:
             log.exception("failed to persist special worker error: job_id=%s", claim.job_id)
