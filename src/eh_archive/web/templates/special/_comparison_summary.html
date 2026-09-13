@@ -1,0 +1,10 @@
+{% if payload.get('lanraragi_collected_at') %}
+<p class="muted">LANraragi 采集：{{ payload.lanraragi_collected_at|collected_at }}；数据库采集：{{ payload.database_collected_at|collected_at }}</p>
+{% endif %}
+{% if payload.get('summary') %}
+<div class="metric-grid">
+  {% for key, value in (display_summary|default(payload.summary)).items() %}
+  <div class="metric-card"><span>{{ (summary_labels|default({})).get(key, key) }}</span><strong>{{ value }}</strong></div>
+  {% endfor %}
+</div>
+{% endif %}

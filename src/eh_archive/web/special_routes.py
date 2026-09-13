@@ -110,6 +110,8 @@ def install_special_routes(app, database, templates, app_config, config_dir):
             for key, value in data.items()
             if isinstance(value, (list, dict)) and key != "summary"
         }
+        if prepare_sections := detail.get("report_sections"):
+            sections, section = prepare_sections(sections, section)
         if section not in sections:
             raise HTTPException(400, "未知报告分组")
         rows = sections[section]

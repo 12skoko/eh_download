@@ -6,6 +6,9 @@
   <div><p class="eyebrow">LANraragi 数据库核对</p><h1>核对报告 #{{ workflow.id }}</h1></div>
   <a class="button primary" hx-boost="false" download href="/special/workflows/{{ workflow.id }}/outputs/{{ output.id }}/download">下载 JSON 报告</a>
 </div>
+<section class="panel" aria-label="核对概况">
+{% include "special/_comparison_summary.html" %}
+</section>
 <p>核对范围为数据库的已完成记录，按 ID 比较。LANraragi 独有项也可能在数据库中处于其他状态。</p>
 <p class="muted">差异列表保留核对时的结果；档案名称和当前状态实时读取数据库。ID 匹配不验证文件内容。</p>
 <nav class="tabs report-tabs" aria-label="报告分组">
@@ -21,7 +24,7 @@
       <td>{{ row.get('id', row.get('arcid', row.get('manga_id', '—'))) }}</td>
       <td>{% for manga in row.get('matches', []) %}<div><a href="/manga/{{ manga.manga_id }}" target="_blank" rel="noopener" hx-boost="false">{{ manga.name }}</a></div>{% else %}{{ row.get('title', '数据库中无匹配档案') }}{% endfor %}</td>
       <td>{% for manga in row.get('matches', []) %}<div><span class="badge status-{{ manga.status }}">{{ manga.status|status_label }}</span></div>{% else %}—{% endfor %}</td>
-      <td>{% if 'count' in row %}重复 {{ row['count'] }} 次{% elif 'status' in row %}核对时：{{ row.status|status_label }}{% elif 'arcid' in row %}来源 ID 无法解析{% else %}—{% endif %}</td>
+      <td>{% if row.get('state_changes') %}{% for snapshot in row.state_changes %}<div>{% if row.state_changes|length > 1 %}{{ snapshot.manga_id }} · {% endif %}核对时：{{ snapshot.status|status_label }}</div>{% endfor %}{% elif 'count' in row %}重复 {{ row['count'] }} 次{% elif 'arcid' in row %}来源 ID 无法解析{% else %}—{% endif %}</td>
     </tr>
   {% else %}<tr><td colspan="4" class="empty">本分组没有记录</td></tr>{% endfor %}
   </tbody></table></div>

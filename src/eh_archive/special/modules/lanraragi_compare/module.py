@@ -55,6 +55,7 @@ def detail(session, workflow_id):
     return {
         "display_summary": metrics,
         "report_presenter": present_report,
+        "report_sections": report_sections,
         "summary_labels": {
             "database_completed_rows": "数据库已完成档案",
             "database_resolved_ids": "数据库有效 ID",
@@ -73,6 +74,27 @@ def detail(session, workflow_id):
         "phase_labels": PHASE_LABELS,
         "rerun_label": "重新核对（保留历史）",
     }
+
+
+def report_sections(sections, section):
+    sections = dict(sections)
+    snapshots = sections.pop("lanraragi_only_database_states", [])
+    by_id = {}
+    for snapshot in snapshots:
+        value = snapshot.get("id", snapshot.get("gid"))
+        by_id.setdefault(str(value), []).append(snapshot)
+    sections["lanraragi_only"] = [
+        {"id": value, "snapshots": by_id.get(str(value), [])}
+        for value in sections.get("lanraragi_only", [])
+    ]
+    if section == "lanraragi_only_database_states":
+        section = "lanraragi_only"
+    for key in ("database_duplicate_ids", "lanraragi_duplicate_ids"):
+        if not sections.get(key):
+            sections.pop(key, None)
+            if section == key:
+                section = "lanraragi_only"
+    return sections, section
 
 
 def present_report(session, section, rows):
@@ -99,6 +121,11 @@ def present_report(session, section, rows):
         if "gid" in item:
             item["id"] = item.pop("gid")
         item["matches"] = matches.get(str(item.get("id")), [])
+        current = {m["manga_id"]: m["status"] for m in item["matches"]}
+        item["state_changes"] = [
+            snapshot for snapshot in item.pop("snapshots", [])
+            if current.get(snapshot.get("manga_id")) != snapshot.get("status")
+        ]
         result.append(item)
     return result
 

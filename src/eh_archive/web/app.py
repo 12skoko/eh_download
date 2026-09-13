@@ -7,6 +7,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode
+from zoneinfo import ZoneInfo
 
 from fastapi import Request
 from sqlalchemy import select
@@ -114,6 +115,7 @@ def create_app(
     app = FastAPI(title="EH Archive", version="6.0.0")
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
     templates.env.filters["datetime"] = _format_datetime
+    templates.env.filters["collected_at"] = lambda value: _format_collected_at(value, app_config.timezone)
     templates.env.filters["filesize"] = _format_filesize
     templates.env.filters["status_label"] = lambda value: STATUS_LABELS.get(value, value)
     templates.env.filters["component_label"] = lambda value: COMPONENT_LABELS.get(value, value)
@@ -1335,6 +1337,18 @@ def _age_seconds(value: datetime) -> float:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return (datetime.now(UTC) - value).total_seconds()
+
+
+def _format_collected_at(value, timezone) -> str:
+    if not value:
+        return "—"
+    try:
+        parsed = datetime.fromisoformat(value) if isinstance(value, str) else value
+        if parsed.tzinfo is None:
+            return str(value)
+        return parsed.astimezone(ZoneInfo(timezone)).strftime("%Y-%m-%d %H:%M:%S %Z")
+    except (TypeError, ValueError, AttributeError):
+        return str(value)
 
 
 def _format_datetime(value) -> str:
