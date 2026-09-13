@@ -157,7 +157,7 @@ def load_modules():
             DEFINITION,
             _compare_executor,
             _compare_capability,
-            "核对 completed 档案与 LANraragi 数字 GID，查看差异、重复及无法解析的档案。",
+            "核对 completed 档案与 LANraragi 数字 ID，查看差异、重复及无法解析的档案。",
             "special/lanraragi_compare.html",
             dashboard,
             detail,

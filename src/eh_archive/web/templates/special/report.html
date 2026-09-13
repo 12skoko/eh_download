@@ -1,7 +1,33 @@
 {% extends "base.html" %}
 {% block title %}核对报告 #{{ workflow.id }}{% endblock %}
-{% block content %}<a class="back" href="/special/workflows/{{ workflow.id }}">← 工作流</a><h1>核对报告 #{{ workflow.id }}</h1>
-<p>数据库口径为 completed。LANraragi 独有并不一定表示数据库中不存在该档案；GID 匹配不验证文件内容。</p>
-<section class="panel"><div class="panel-actions">{% for key in sections %}<a href="?section={{ key }}">{{ (report_labels|default({})).get(key, key) }}</a>{% endfor %}</div><h2>{{ (report_labels|default({})).get(section, section) }}（{{ report_total }}）</h2>
-<table><tbody>{% for row in report_rows %}<tr><td>{% if row is mapping %}{% for key, value in row.items() %}<span>{{ key }}: {{ value }} </span>{% endfor %}{% else %}{{ row }}{% endif %}</td></tr>{% else %}<tr><td>无记录</td></tr>{% endfor %}</tbody></table>
-{% if report_page > 1 %}<a href="?section={{ section }}&page={{ report_page - 1 }}">上一页</a>{% endif %} 第 {{ report_page }} 页 {% if report_page * 100 < report_total %}<a href="?section={{ section }}&page={{ report_page + 1 }}">下一页</a>{% endif %}</section>{% endblock %}
+{% block content %}
+<a class="back" href="/special/workflows/{{ workflow.id }}">← 返回核对任务</a>
+<div class="page-head">
+  <div><p class="eyebrow">LANraragi 数据库核对</p><h1>核对报告 #{{ workflow.id }}</h1></div>
+  <a class="button primary" hx-boost="false" download href="/special/workflows/{{ workflow.id }}/outputs/{{ output.id }}/download">下载 JSON 报告</a>
+</div>
+<p>核对范围为数据库的已完成记录，按 ID 比较。LANraragi 独有项也可能在数据库中处于其他状态。</p>
+<p class="muted">差异列表保留核对时的结果；档案名称和当前状态实时读取数据库。ID 匹配不验证文件内容。</p>
+<nav class="tabs report-tabs" aria-label="报告分组">
+{% for key, count in sections.items() %}<a class="{{ 'active' if key == section else '' }}" href="?section={{ key }}">{{ (report_labels|default({})).get(key, key) }} <span class="badge">{{ count }}</span></a>{% endfor %}
+</nav>
+<section class="panel table-panel">
+  <div class="section-head"><div><p class="eyebrow">核对明细</p><h2>{{ (report_labels|default({})).get(section, section) }}</h2></div><span class="badge">{{ report_total }} 条</span></div>
+  <div class="table-wrap"><table>
+  <thead><tr><th>ID</th><th>档案名称</th><th>当前状态</th><th>补充信息</th></tr></thead>
+  <tbody>
+  {% for row in report_rows %}
+    <tr>
+      <td>{{ row.get('id', row.get('arcid', row.get('manga_id', '—'))) }}</td>
+      <td>{% for manga in row.get('matches', []) %}<div><a href="/manga/{{ manga.manga_id }}" target="_blank" rel="noopener" hx-boost="false">{{ manga.name }}</a></div>{% else %}{{ row.get('title', '数据库中无匹配档案') }}{% endfor %}</td>
+      <td>{% for manga in row.get('matches', []) %}<div><span class="badge status-{{ manga.status }}">{{ manga.status|status_label }}</span></div>{% else %}—{% endfor %}</td>
+      <td>{% if 'count' in row %}重复 {{ row['count'] }} 次{% elif 'status' in row %}核对时：{{ row.status|status_label }}{% elif 'arcid' in row %}来源 ID 无法解析{% else %}—{% endif %}</td>
+    </tr>
+  {% else %}<tr><td colspan="4" class="empty">本分组没有记录</td></tr>{% endfor %}
+  </tbody></table></div>
+  <div class="pagination"><span class="pagination-count">共 {{ report_total }} 条，每页 100 条</span>
+  {% if report_page > 1 %}<a class="pagination-link" href="?section={{ section }}&page={{ report_page - 1 }}">上一页</a>{% endif %}
+  <span class="pagination-current">{{ report_page }}</span>
+  {% if report_page * 100 < report_total %}<a class="pagination-link" href="?section={{ section }}&page={{ report_page + 1 }}">下一页</a>{% endif %}</div>
+</section>
+{% endblock %}

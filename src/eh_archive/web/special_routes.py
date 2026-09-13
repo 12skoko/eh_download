@@ -119,6 +119,12 @@ def install_special_routes(app, database, templates, app_config, config_dir):
             else rows
         )
         page = max(1, page)
+        page_rows = rows[(page - 1) * 100 : page * 100]
+        if presenter := detail.get("report_presenter"):
+            with database.session() as session:
+                page_rows = presenter(session, section, page_rows)
+        else:
+            page_rows = [row if isinstance(row, dict) else {"id": row} for row in page_rows]
         return templates.TemplateResponse(
             request=request,
             name="special/report.html",
@@ -127,9 +133,9 @@ def install_special_routes(app, database, templates, app_config, config_dir):
                 **detail,
                 output=entry,
                 section=section,
-                sections=list(sections),
+                sections={key: len(value) for key, value in sections.items()},
                 report_summary=data.get("summary", {}),
-                report_rows=rows[(page - 1) * 100 : page * 100],
+                report_rows=page_rows,
                 report_page=page,
                 report_total=len(rows),
             ),

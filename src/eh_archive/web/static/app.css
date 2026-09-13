@@ -349,3 +349,6 @@ pre { max-height: 350px; overflow: auto; padding: .8rem; color: #d8e5ec; border-
 [data-system-dashboard] td button { margin: .15rem; min-height: 2.5rem; }
 .config-policy-field { min-width: 0; display: grid; gap: .35rem; align-content: start; }
 .config-policy { color: var(--muted); }
+
+.report-tabs { flex-wrap: wrap; }
+.report-tabs a { display: inline-flex; align-items: center; gap: .4rem; }
