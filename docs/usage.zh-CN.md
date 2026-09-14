@@ -294,6 +294,14 @@ maintenance_recovery_timeout_seconds = 900
 
 Supervisor 会在 05:30 停止启动新子模块，等待已有子模块自然结束，然后保持主进程运行且跳过数据库心跳。06:30 后如果数据库仍未恢复，Supervisor 会每 30 秒重试；15 分钟内连接成功就自动恢复正常调度，超过 15 分钟仍未恢复则按 `database_unavailable` 严重错误退出。维护开始时间应早于实际关机时间，给正在运行的子模块留出完成时间。
 
+归档账号没有下载额度、只允许 torrent 下载时，可以明确关闭备用下载路线：
+
+```toml
+fallback_method = "none"
+```
+
+`none` 是下载路由策略，不是 `download_method`。没有可用 torrent 的档案会进入 `download_blocked`，并记录 `no_download_method`；该状态不由任何任务模块领取，也不会使被替代的旧档案具备删除条件。账号恢复额度后，将策略改回 `direct`、`hah` 或 `aria2`，再从管理页面把相应档案恢复到 `download_pending`。
+
 所有模块默认启用。只关闭直接下载、保留其他自动任务的配置如下：
 
 ```toml
@@ -438,11 +446,12 @@ collect -> deferred --再次采集且观察期已到--> discovered
 discovered -> screen -> filtered_out / skipped / download_pending / manual_review
 download_pending
         -> downloading -> downloaded
+        -> download_blocked（torrent 不可用且 fallback_method=none）
         -> validating -> preparing -> upload_pending
         -> uploading -> uploaded -> completed
 ```
 
-Supervisor 会按需运行 `screen`、`details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。首次选择种子前必须取得完整 MangaInfo。程序忽略 `Outdated Torrents` 和红色时间的过时种子以及明确的 `1280x/800x/1920x/2560x` 重采样；仅剩这些种子时根据 `fallback_method` 切换 direct/H@H/aria2。非过时种子中出现视频标记时进入 `manual_review`，即使它同时是重采样；只有 remark 包含 `skip video` 时才把视频种子当作普通种子。小于预计大小 60% 的种子视为异常。其余候选用“同时更大且更新”淘汰旧版本；胜出版本没有 Seeder 或不同大小版本无法比较时进入 `manual_review`；剩余候选大小相同时依次按 Seeder 数和发布时间选择。
+Supervisor 会按需运行 `screen`、`details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。首次选择种子前必须取得完整 MangaInfo。程序忽略 `Outdated Torrents` 和红色时间的过时种子以及明确的 `1280x/800x/1920x/2560x` 重采样；仅剩这些种子时根据 `fallback_method` 切换 direct/H@H/aria2，配置为 `none` 时则进入 `download_blocked`。非过时种子中出现视频标记时进入 `manual_review`，即使它同时是重采样；只有 remark 包含 `skip video` 时才把视频种子当作普通种子。小于预计大小 60% 的种子视为异常。其余候选用“同时更大且更新”淘汰旧版本；胜出版本没有 Seeder 或不同大小版本无法比较时进入 `manual_review`；剩余候选大小相同时依次按 Seeder 数和发布时间选择。
 
 qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的任务按 `torrent_poll_seconds` 延迟后再次检查，`stalledDL` 超过 `torrent_stall_seconds` 后会自动删除任务并切换 fallback。提交的新任务使用 manga ID 的数字部分作为 qBittorrent 显示名称，不改变种子内文件名。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小和 CRC，再为最终 ZIP 计算 LANraragi 所需的 SHA-1。
 
@@ -603,7 +612,7 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
 
 配置页面不会读取或展示 `secrets.toml`、数据库连接字符串，也不允许修改 Web 监听地址和服务器路径。可编辑字段以类型化表单保存；保存前会重新校验完整配置、检查页面版本以防并发覆盖，并在原文件旁保留一份 `.bak` 备份。配置保存不会从网页自动重启进程，页面会标明需要重启 Web、Supervisor 或两者；审计事件只记录文件名和修改字段，不记录配置值。
 
-维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为普通人工目标状态。`download_pending` 必须指定 `download_method`；`downloaded` 还必须填写服务器上真实存在的 `artifact_filename`，Web 会根据下载方式自动登记 `artifact_location`，并在确认前显示服务器将检查的完整绝对路径；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定数据库中存在且不是当前档案自身的替代档案，不限制替代档案当时的状态；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。`force_delete_pending` 只允许从 `uploaded`、`completed`、`outdated` 或 `manual_review` 进入，必须填写原因并再次输入当前档案 ID；界面默认把原因写为 `outdated`，不要求已有 LANraragi archive ID。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
+维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为普通人工目标状态。`download_pending` 必须指定 `download_method`；`download_blocked` 会清空 `download_method` 和外部下载 ID，并且必须填写原因；`downloaded` 还必须填写服务器上真实存在的 `artifact_filename`，Web 会根据下载方式自动登记 `artifact_location`，并在确认前显示服务器将检查的完整绝对路径；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定数据库中存在且不是当前档案自身的替代档案，不限制替代档案当时的状态；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。`force_delete_pending` 只允许从 `uploaded`、`completed`、`outdated` 或 `manual_review` 进入，必须填写原因并再次输入当前档案 ID；界面默认把原因写为 `outdated`，不要求已有 LANraragi archive ID。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
 
 旧的 `/actions/*` 和 `/archive-confirmation` API 为兼容既有脚本继续保留。新的管理界面使用 `/status/{target_status}`；它只修改数据库状态和关联字段，不在 Web 请求中直接运行子模块。`force_delete_pending` 和 `rename_pending` 都被限制为管理网页发起，通用状态 API 不能直接设置；前者交给 `delete`，后者交给 `validate` 执行实体操作。Supervisor 后续根据 `download_pending`、`downloaded`、`rename_pending`、`upload_pending`、`uploaded`、`outdated` 和 `force_delete_pending` 等状态安排相应模块。
 

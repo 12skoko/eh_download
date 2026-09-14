@@ -575,7 +575,8 @@ def load_config(
         hah_enabled=bool(app_raw.get("hah_enabled", False)),
         fallback_method=(
             str(app_raw.get("fallback_method", "direct"))
-            if str(app_raw.get("fallback_method", "direct")) in {"direct", "hah", "aria2"}
+            if str(app_raw.get("fallback_method", "direct"))
+            in {"direct", "hah", "aria2", "none"}
             else "direct"
         ),
         external_request_delay_seconds=float(app_raw.get("external_request_delay_seconds", 5.0)),

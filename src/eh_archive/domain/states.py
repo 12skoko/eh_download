@@ -7,6 +7,7 @@ class Status(StrEnum):
     DISCOVERED = "discovered"
     DEFERRED = "deferred"
     DOWNLOAD_PENDING = "download_pending"
+    DOWNLOAD_BLOCKED = "download_blocked"
     DOWNLOADING = "downloading"
     DOWNLOADED = "downloaded"
     VALIDATING = "validating"
@@ -71,12 +72,14 @@ TRANSITIONS: dict[str, dict[str, str]] = {
     Status.DOWNLOAD_PENDING: {
         "download_started": Status.DOWNLOADING,
         "details_retry": Status.DOWNLOAD_PENDING,
+        "block": Status.DOWNLOAD_BLOCKED,
         "unavailable": Status.UNAVAILABLE,
         "cancel": Status.CANCEL_REQUESTED,
     },
     Status.DOWNLOADING: {
         "downloaded": Status.DOWNLOADED,
         "fallback": Status.DOWNLOAD_PENDING,
+        "block": Status.DOWNLOAD_BLOCKED,
         "retry": Status.DOWNLOAD_PENDING,
         "details_retry": Status.DOWNLOADING,
         "unavailable": Status.UNAVAILABLE,
@@ -127,6 +130,10 @@ TRANSITIONS: dict[str, dict[str, str]] = {
     },
     Status.RENAME_PENDING: {"validate": Status.VALIDATING},
     Status.SKIPPED: {"override": Status.DOWNLOAD_PENDING, "cancel": Status.CANCEL_REQUESTED},
+    Status.DOWNLOAD_BLOCKED: {
+        "retry": Status.DOWNLOAD_PENDING,
+        "cancel": Status.CANCEL_REQUESTED,
+    },
     Status.UNAVAILABLE: {"retry": Status.DOWNLOAD_PENDING, "cancel": Status.CANCEL_REQUESTED},
     Status.QUARANTINED: {
         "redownload": Status.DOWNLOAD_PENDING,

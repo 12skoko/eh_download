@@ -33,6 +33,7 @@ STATUS_VALUES = (
     "discovered",
     "deferred",
     "download_pending",
+    "download_blocked",
     "downloading",
     "downloaded",
     "validating",

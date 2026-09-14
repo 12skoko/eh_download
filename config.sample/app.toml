@@ -27,6 +27,8 @@ lanraragi_import_poll_timeout_seconds = 600.0
 lanraragi_import_poll_interval_seconds = 3.0
 aria2_enabled = false
 hah_enabled = false
+# Set to "none" when this deployment has no archive download quota. Galleries
+# without a usable torrent will be parked in download_blocked.
 fallback_method = "direct"
 # Minimum seconds between completed external web requests in one worker.
 # This applies to EH web/archive requests, not LANraragi or qBittorrent.

@@ -308,6 +308,7 @@ outdated
 - `discovered`：已采集，等待筛选或入队
 - `deferred`：暂缓处理，例如新发布档案等待观察期
 - `download_pending`：等待选择或执行下载方式；首次选择 torrent 前必须补齐 MangaInfo
+- `download_blocked`：torrent 不可用且部署明确未配置备用下载方式；不进入自动领取队列
 - `downloading`：下载器已接收或 Python 正在下载
 - `downloaded`：下载完成并完成首次产物检查，等待独立验证任务
 - `validating`：正在复核产物结构，并在最终 ZIP 缺少 SHA-1 时补充登记；状态名为兼顾流程可读性保留
@@ -362,6 +363,7 @@ NULL
 
 - `direct` 明确表示 Python 直接下载。
 - `NULL` 表示尚未选择方式。
+- `fallback_method=none` 是路由策略，不是下载方式；因此不会写入 `download_method`。
 - 下载方式不决定是否成功；成功、等待和错误由 `status` 及错误字段表达。
 
 ### 6.4 延迟、重试和错误
@@ -479,6 +481,7 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 | `download_pending` | torrent 已接收 | torrent 合法且 qBittorrent 返回稳定 hash | `downloading` | method=torrent，保存 external_download_id |
 | `download_pending` | direct/H@H/aria2 已开始 | ensure_details 成功、会话固定、后端可用 | `downloading` | 设置实际 download_method；临时 URL 不入库 |
 | `download_pending` | MangaInfo 暂时失败 | 尚未提交 torrent | `download_pending` | 记录 details 错误并退避，详情完整后再选择种子 |
+| `download_pending/downloading` | torrent 不可用且没有备用下载方式 | `fallback_method=none` | `download_blocked` | 清空实际下载方式，记录 `no_download_method`，停止自动领取 |
 | `download_pending` | 所有下载方式均不可用 | 已有明确、不可恢复证据 | `unavailable` | 保存原因，不继续自动重试 |
 | `downloading` | direct 下载主机返回 404/410 | archive 文件域名不能证明画廊已删除 | `manual_review` | 记录 archive_unavailable，保留人工判断依据 |
 | `downloading` | 下载完成 | 外部状态与受控目录中的产物共同确认 | `downloaded` | 写入 location/filename/kind，递增 generation |
@@ -512,6 +515,7 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 | `force_delete_pending` | 强制删除完成 | Web 已完成人工确认；远端与本地删除完成 | `deleted` | 跳过替代档案检查，保留完整审计 |
 | `skipped` | 人工覆盖筛选 | 用户明确要求处理 | `download_pending` | 记录 actor、理由和审计事件 |
 | `unavailable` | 人工确认重新尝试 | 已有新的可用证据 | `download_pending` | 清除永久错误并记录依据 |
+| `download_blocked` | 账号额度或下载策略恢复 | 已配置 direct/H@H/aria2 或准备重新尝试 torrent | `download_pending` | 由人工恢复，不自动批量唤醒 |
 | `quarantined` | 人工重新下载 | 用户确认重新获取 | `download_pending` | 保留隔离证据，后续创建新 generation |
 | `quarantined` | 人工提供替换文件 | 文件来自受控配置目录 | `validating` | 递增 generation，不允许直接上传 |
 | `manual_review` | 人工选择安全恢复点 | 目标状态要求的字段完整 | `discovered/download_pending/downloaded/completed/skipped/unavailable/quarantined/outdated/deleted` | 记录 actor、理由和证据 |
@@ -521,7 +525,7 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 | `cancel_requested` | 安全退出完成 | 无正在提交的外部副作用 | `cancelled` | 不自动删除文件、下载器任务或远端档案 |
 | `cancelled` | 人工恢复 | 目标安全状态的前置条件满足 | `discovered/download_pending/validating/upload_pending/uploaded` | 根据现有产物和远端证据选择恢复点，不允许跳过验证 |
 
-“可取消状态”固定指 `discovered`、`deferred`、`download_pending`、`downloading`、`downloaded`、`validating`、`preparing`、`upload_pending`、`uploaded`、`skipped`、`unavailable`、`quarantined` 和 `manual_review`。`uploading` 或 `outdated` 已经开始外部副作用时不进入 `cancel_requested`，必须先完成结果核对或进入 `manual_review`。
+“可取消状态”固定指 `discovered`、`deferred`、`download_pending`、`download_blocked`、`downloading`、`downloaded`、`validating`、`preparing`、`upload_pending`、`uploaded`、`skipped`、`unavailable`、`quarantined` 和 `manual_review`。`uploading` 或 `outdated` 已经开始外部副作用时不进入 `cancel_requested`，必须先完成结果核对或进入 `manual_review`。
 
 明确禁止：
 
@@ -622,7 +626,7 @@ secrets 中的账号和网络信息在逻辑上分成三层：
 - browse 角色使用普通账号和代理池。
 - archive 角色使用有点数的账号和固定网络。
 - browse 遇到 IP 限额时，将当前代理置于冷却并切换代理。
-- archive 遇到账号限额时不切换 IP，暂停 direct_download 组件并报告原因。
+- archive 遇到账号限额时不切换 IP；可将 `fallback_method` 配置为 `none`，使没有 torrent 路线的档案进入 `download_blocked` 并报告原因。
 
 ### 7.5 Secret 处理
 
@@ -678,7 +682,7 @@ Alembic 会另外创建技术表 `alembic_version`，不属于业务表。
 | `screen_pending` | `boolean` | `false` | 旧 `autostate=1` 的显式替代；仅此类 `discovered` 记录进入 screenall |
 | `screen_group_id` | `varchar(64)` | NULL | screenall 为同一 `real_name` 版本组生成的稳定关系标识 |
 | `priority` | `integer` | `0` | 数值越大越优先 |
-| `download_method` | `varchar(16)` + CHECK | NULL | torrent/direct/hah/aria2 |
+| `download_method` | `varchar(16)` + CHECK | NULL | torrent/direct/hah/aria2；`none` 只属于 fallback 策略，不入库 |
 | `defer_until` | `timestamptz` | NULL | 观察期结束时间 |
 | `attempt_count` | `integer` | `0` | 当前操作尝试次数 |
 | `next_retry_at` | `timestamptz` | NULL | 下次允许重试时间 |

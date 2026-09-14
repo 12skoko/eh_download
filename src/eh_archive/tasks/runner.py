@@ -696,14 +696,51 @@ class TaskExecutor:
                 f"failed to delete qBittorrent task: {exc}",
                 ErrorClass.ITEM,
             ) from exc
-        record.download_method = self.app.fallback_method
         record.external_download_id = None
+        if self.app.fallback_method == "none":
+            self._block_download(
+                repository,
+                claim,
+                record,
+                fallback_reason=error_code,
+                fallback_detail=error_detail,
+            )
+            return
+        record.download_method = self.app.fallback_method
         repository.finish(
             claim,
             owner=self.owner,
             event="fallback",
             error_code=error_code,
             error_detail=error_detail,
+        )
+
+    def _block_download(
+        self,
+        repository: ArchiveRepository,
+        claim: ClaimedAttempt,
+        record: MangaRecord,
+        *,
+        fallback_reason: str,
+        fallback_detail: str,
+    ) -> None:
+        """Park a gallery when this deployment intentionally has no fallback."""
+
+        record.download_method = None
+        record.external_download_id = None
+        repository.finish(
+            claim,
+            owner=self.owner,
+            event="block",
+            error_code="no_download_method",
+            error_detail=(
+                "fallback_method=none; no archive download method is configured; "
+                f"download routing reason: {fallback_detail}"
+            ),
+            detail={
+                "fallback_method": "none",
+                "fallback_reason": fallback_reason,
+            },
         )
 
     def _execute(self, repository: ArchiveRepository, claim: ClaimedAttempt) -> None:
@@ -859,6 +896,16 @@ class TaskExecutor:
             repository.finish(claim, owner=self.owner, event="downloaded")
             return
         if not record.torrent_link:
+            if self.app.fallback_method == "none":
+                self._block_download(
+                    repository,
+                    claim,
+                    record,
+                    fallback_reason="no_torrent",
+                    fallback_detail="gallery has no torrent",
+                )
+                self._log_torrent_fallback(claim, reason="no_torrent")
+                return
             record.download_method = self.app.fallback_method
             repository.finish(
                 claim,
@@ -970,6 +1017,19 @@ class TaskExecutor:
     ) -> None:
         if record.download_method in {"hah", "aria2"} and record.external_download_id:
             self._poll_optional_download(repository, claim, record)
+            return
+        if self.app.fallback_method == "none":
+            requested_method = record.download_method
+            self._block_download(
+                repository,
+                claim,
+                record,
+                fallback_reason="archive_fallback_disabled",
+                fallback_detail=(
+                    "archive fallback is disabled"
+                    + (f" (pending method was {requested_method})" if requested_method else "")
+                ),
+            )
             return
         info = _info(record)
         if info is None or not info.archive_url:
@@ -1802,19 +1862,40 @@ class TaskExecutor:
             # gallery.
             if claim.operation != "details" and info.code == "gallery_unavailable":
                 event = "unavailable"
-            if info.code in TORRENT_FALLBACK_CODES:
-                event = "fallback"
-                if claim.operation == "torrent_download":
-                    record = repository.get(claim.manga_id)
-                    if record:
+            finish_error_code = info.code
+            finish_error_detail = info.message
+            finish_detail = None
+            if (
+                info.code in TORRENT_FALLBACK_CODES
+                and claim.operation == "torrent_download"
+            ):
+                record = repository.get(claim.manga_id)
+                if record:
+                    if self.app.fallback_method == "none":
+                        event = "block"
+                        record.download_method = None
+                        record.external_download_id = None
+                        finish_error_code = "no_download_method"
+                        finish_error_detail = (
+                            "fallback_method=none; no archive download method is configured; "
+                            f"download routing reason: {info.message}"
+                        )
+                        finish_detail = {
+                            "fallback_method": "none",
+                            "fallback_reason": info.code,
+                        }
+                    else:
+                        event = "fallback"
                         record.download_method = self.app.fallback_method
+            finish_kwargs = {"detail": finish_detail} if finish_detail is not None else {}
             try:
                 repository.finish(
                     claim,
                     owner=self.owner,
                     event=event,
-                    error_code=info.code,
-                    error_detail=info.message,
+                    error_code=finish_error_code,
+                    error_detail=finish_error_detail,
+                    **finish_kwargs,
                 )
             except ValueError:
                 repository.finish(
@@ -1835,14 +1916,20 @@ class TaskExecutor:
     def _log_torrent_fallback(self, claim: ClaimedAttempt, *, reason: str) -> None:
         """Record expected torrent-selection fallbacks without a traceback."""
 
+        blocked = self.app.fallback_method == "none"
         log.info(
-            "torrent unavailable; falling back",
+            (
+                "torrent unavailable; download blocked"
+                if blocked
+                else "torrent unavailable; falling back"
+            ),
             extra={
                 "event": {
                     "manga_id": claim.manga_id,
                     "operation": claim.operation,
                     "reason": reason,
                     "fallback": self.app.fallback_method,
+                    "result": "download_blocked" if blocked else "fallback",
                 }
             },
         )
@@ -1895,6 +1982,8 @@ def _task_outcome(result: TaskRunResult) -> str:
             return "manual_review"
         if result.resulting_status == Status.UNAVAILABLE.value:
             return "unavailable"
+        if result.resulting_status == Status.DOWNLOAD_BLOCKED.value:
+            return "download_blocked"
         return "failed"
     if result.operation == "details":
         return "updated"

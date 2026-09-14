@@ -76,6 +76,10 @@ def main(argv: list[str] | None = None) -> int:
         from .management.cli import run
 
         return run(args)
+    if args.command == "web":
+        from .web.app import main as web_main
+
+        return web_main(["--config-dir", args.config_dir])
     if args.command == "web-password":
         from getpass import getpass
 
@@ -196,15 +200,6 @@ def main(argv: list[str] | None = None) -> int:
             ).run_forever()
         finally:
             log.info("supervisor stopped: run_id=%s pid=%s", session_run_id, os.getpid())
-        return 0
-    if args.command == "web":
-        import uvicorn
-
-        from .web.app import create_app
-
-        uvicorn.run(
-            create_app(database, config_dir=args.config_dir), host=app.web_host, port=app.web_port
-        )
         return 0
     if args.command == "picacg":
         from .services.picacg import PicacgService, read_export_directory

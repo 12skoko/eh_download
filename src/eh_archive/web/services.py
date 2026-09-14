@@ -39,6 +39,7 @@ STATUS_LABELS = {
     Status.DISCOVERED.value: "已发现",
     Status.DEFERRED.value: "观察等待",
     Status.DOWNLOAD_PENDING.value: "等待下载",
+    Status.DOWNLOAD_BLOCKED.value: "下载受阻",
     Status.DOWNLOADING.value: "下载中",
     Status.DOWNLOADED.value: "已下载",
     Status.VALIDATING.value: "校验中",
@@ -115,6 +116,12 @@ MANUAL_STATUS_TARGETS = (
         "description": "停止自动领取，保留记录供人工检查。",
     },
     {
+        "status": Status.DOWNLOAD_BLOCKED.value,
+        "label": "下载受阻",
+        "description": "停止自动下载领取；适用于当前部署没有可用下载方式的档案。",
+        "requires_reason": True,
+    },
+    {
         "status": Status.SKIPPED.value,
         "label": "已跳过",
         "description": "从自动流程中跳过这条档案。",
@@ -173,6 +180,7 @@ FORCE_DELETE_SOURCE_STATUSES = frozenset(
 )
 _ACTION_EVENTS: dict[str, dict[str, str]] = {
     "retry": {
+        Status.DOWNLOAD_BLOCKED.value: "retry",
         Status.UNAVAILABLE.value: "retry",
         Status.FILTERED_OUT.value: "rescreen",
         Status.SKIPPED.value: "override",
@@ -187,6 +195,7 @@ _ACTION_EVENTS: dict[str, dict[str, str]] = {
             Status.DISCOVERED,
             Status.DEFERRED,
             Status.DOWNLOAD_PENDING,
+            Status.DOWNLOAD_BLOCKED,
             Status.DOWNLOADING,
             Status.DOWNLOADED,
             Status.UPLOAD_PENDING,
@@ -436,6 +445,7 @@ class WebService:
             target_status
             in {
                 Status.UNAVAILABLE.value,
+                Status.DOWNLOAD_BLOCKED.value,
                 Status.QUARANTINED.value,
                 Status.FORCE_DELETE_PENDING.value,
                 Status.DELETED.value,
@@ -447,6 +457,9 @@ class WebService:
         clean_method = download_method.strip() if download_method else None
         previous_method = row.download_method
         previous_artifact_location = row.artifact_location
+        if target_status == Status.DOWNLOAD_BLOCKED.value:
+            row.download_method = None
+            row.external_download_id = None
         if target_status in {Status.DOWNLOAD_PENDING.value, Status.DOWNLOADED.value}:
             if clean_method not in DOWNLOAD_METHOD_VALUES:
                 raise InvalidRequest("必须选择有效的下载方式")
