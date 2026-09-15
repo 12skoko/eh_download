@@ -65,6 +65,7 @@ class QBittorrentClient:
         save_path: str | Path,
         display_name: str | None = None,
         category: str = QBITTORRENT_CATEGORY,
+        upload_limit_bytes_per_second: int | None = None,
     ) -> str:
         options: dict[str, Any] = {
             "torrent_files": torrent_bytes,
@@ -85,7 +86,10 @@ class QBittorrentClient:
                     _path_key(torrent.save_path) == _path_key(save_path)
                     and torrent_category(torrent) == category
                 ):
-                    return str(torrent.hash)
+                    torrent_hash = str(torrent.hash)
+                    if upload_limit_bytes_per_second is not None:
+                        self.set_upload_limit(torrent_hash, upload_limit_bytes_per_second)
+                    return torrent_hash
             import time
 
             time.sleep(0.5)
@@ -94,6 +98,13 @@ class QBittorrentClient:
             "qBittorrent did not report the submitted torrent hash",
             ErrorClass.TEMPORARY,
             retryable=True,
+        )
+
+    def set_upload_limit(self, torrent_hash: str, limit_bytes_per_second: int) -> None:
+        self._call(
+            "torrents_set_upload_limit",
+            torrent_hashes=torrent_hash,
+            limit=limit_bytes_per_second,
         )
 
     def info(self, torrent_hash: str) -> Any | None:

@@ -10,6 +10,8 @@ large_upload_threshold_bytes = 2147483648
 web_host = "0.0.0.0"
 web_port = 8787
 qbittorrent_url = "http://127.0.0.1:8080"
+# Per-torrent upload limit for torrent_download, in decimal kB/s. 0 means unlimited.
+torrent_upload_limit_kb_per_second = 50
 # Absolute path as seen by the qBittorrent host. It may differ from the local
 # roots.torrent_download path when qBittorrent runs on another machine.
 qbit_torrent_path = "D:/eharchive-data/torrent_download"

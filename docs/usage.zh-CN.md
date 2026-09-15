@@ -197,6 +197,7 @@ $env:EHARCHIVE_WEB_SECRET = 'change-this-long-random-secret'
 | `database_url` | PostgreSQL URL；通常放在 `secrets.toml` 更安全 |
 | `web_host`、`web_port` | Web 监听地址，默认 `127.0.0.1:8787` |
 | `qbittorrent_url` | qBittorrent Web API 地址 |
+| `torrent_upload_limit_kb_per_second` | `torrent_download` 受管任务的单 torrent 上传限速，单位为十进制 `kB/s`，默认 `50`；设为 `0` 表示不限制。新任务立即应用，已有任务在下一次轮询时修正 |
 | `qbit_torrent_path` | qBittorrent 主机看到的种子保存路径，可与本地 `roots.torrent_download` 不同 |
 | `external_request_delay_seconds` | 同一个 worker 连续访问 EH 外部网页请求完成后的最小等待秒数，默认 `5.0`；设为 `0` 可关闭。作用于列表、详情、torrent、archive/direct/H@H 网页请求，不作用于 LANraragi 和 qBittorrent |
 | `lanraragi_url` | LANraragi 地址 |

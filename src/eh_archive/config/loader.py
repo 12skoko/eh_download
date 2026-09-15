@@ -58,6 +58,9 @@ class AppConfig:
     browse_session: SessionRole = field(default_factory=SessionRole)
     archive_session: SessionRole = field(default_factory=SessionRole)
     qbittorrent_url: str = "http://127.0.0.1:8080"
+    # Per-torrent upload limit for the regular torrent_download worker, in
+    # decimal kB/s. Zero means unlimited.
+    torrent_upload_limit_kb_per_second: int = 50
     # Path as seen by the qBittorrent host; it may differ from the local
     # roots.torrent_download path when qBittorrent runs remotely.
     qbit_torrent_path: str | None = None
@@ -91,6 +94,16 @@ class AppConfig:
             return self.roots[location]
         except KeyError as exc:
             raise KeyError(f"Unknown artifact location: {location}") from exc
+
+    @property
+    def torrent_upload_limit_bytes_per_second(self) -> int:
+        """Return the qBittorrent API value for the configured limit."""
+
+        return (
+            -1
+            if self.torrent_upload_limit_kb_per_second == 0
+            else self.torrent_upload_limit_kb_per_second * 1000
+        )
 
 
 @dataclass(frozen=True)
@@ -549,6 +562,12 @@ def load_config(
         browse_session=_role(app_raw.get("sessions", {}), "browse"),
         archive_session=_role(app_raw.get("sessions", {}), "archive"),
         qbittorrent_url=str(app_raw.get("qbittorrent_url", "http://127.0.0.1:8080")),
+        torrent_upload_limit_kb_per_second=int(
+            app_raw.get(
+                "torrent_upload_limit_kb_per_second",
+                AppConfig.torrent_upload_limit_kb_per_second,
+            )
+        ),
         qbit_torrent_path=qbit_torrent_path,
         lanraragi_url=str(app_raw.get("lanraragi_url", "http://127.0.0.1:3000")),
         lanraragi_smb_server=str(app_raw.get("lanraragi_smb_server", "")).strip(),
@@ -592,6 +611,8 @@ def load_config(
         raise ValueError("upload_backend must be http, filesystem, or auto")
     if app.large_upload_threshold_bytes < 0:
         raise ValueError("large_upload_threshold_bytes must not be negative")
+    if app.torrent_upload_limit_kb_per_second < 0:
+        raise ValueError("torrent_upload_limit_kb_per_second must not be negative")
     if not 1 <= app.lanraragi_smb_port <= 65535:
         raise ValueError("lanraragi_smb_port must be between 1 and 65535")
     if app.lanraragi_smb_connection_timeout_seconds <= 0:

@@ -789,6 +789,7 @@ class TaskExecutor:
             if not is_managed_torrent(info):
                 self._defer_torrent_poll(repository, claim)
                 return
+            self._apply_torrent_upload_limit(qbit, record.external_download_id, info)
             if _has_qbit_tag(info, "failed"):
                 self._fallback_torrent(
                     repository,
@@ -934,6 +935,7 @@ class TaskExecutor:
             qbit=qbit,
             torrent_root=self.app.qbit_torrent_path
             or str(self.app.root("torrent_download").resolve()),
+            upload_limit_bytes_per_second=self.app.torrent_upload_limit_bytes_per_second,
             cookies=self.secrets.cookies(self.app.browse_session),
             proxies=browse_network.get("proxies"),
         )
@@ -953,6 +955,25 @@ class TaskExecutor:
         # control attempt immediately while retaining downloading status. The
         # next poll is deliberately delayed so this batch cannot reclaim it.
         self._defer_torrent_poll(repository, claim)
+
+    def _apply_torrent_upload_limit(self, qbit: Any, torrent_hash: str, info: Any) -> None:
+        """Keep the configured limit applied to already-submitted torrents."""
+
+        desired = getattr(self.app, "torrent_upload_limit_bytes_per_second", None)
+        if desired is None:
+            return
+        current = getattr(info, "up_limit", None)
+        if current is None:
+            try:
+                current = info["up_limit"]
+            except (KeyError, TypeError):
+                current = None
+        try:
+            current = int(current)
+        except (TypeError, ValueError):
+            current = None
+        if current != desired:
+            qbit.set_upload_limit(torrent_hash, desired)
 
     def _defer_torrent_poll(self, repository: ArchiveRepository, claim: ClaimedAttempt) -> None:
         retry_at = utcnow() + timedelta(seconds=self.supervisor.torrent_poll_seconds)

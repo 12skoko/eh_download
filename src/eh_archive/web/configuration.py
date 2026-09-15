@@ -93,6 +93,13 @@ APP_FIELDS = (
         options=("auto", "http", "filesystem"),
     ),
     FieldSpec(("large_upload_threshold_bytes",), "大文件上传阈值（字节）", "int", minimum=0),
+    FieldSpec(
+        ("torrent_upload_limit_kb_per_second",),
+        "Torrent 上传限速（kB/s）",
+        "int",
+        minimum=0,
+        help="仅作用于 torrent_download 提交的任务；0 表示不限制。",
+    ),
     FieldSpec(("allowed_archive_extensions",), "允许的归档扩展名", "lines"),
     FieldSpec(
         ("web_host",),
@@ -362,6 +369,7 @@ def _app_values(config) -> dict[str, Any]:
             "log_dir",
             "upload_backend",
             "large_upload_threshold_bytes",
+            "torrent_upload_limit_kb_per_second",
             "allowed_archive_extensions",
             "web_host",
             "web_port",

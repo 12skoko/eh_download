@@ -406,6 +406,7 @@ class TorrentService:
         http: Any,
         qbit: Any,
         torrent_root: str | Path,
+        upload_limit_bytes_per_second: int | None = None,
         headers: dict[str, str] | None = None,
         cookies: dict[str, str] | None = None,
         proxies: dict[str, str] | None = None,
@@ -415,6 +416,7 @@ class TorrentService:
         # This is the path as seen by qBittorrent, not necessarily a local
         # filesystem path. The caller maps completed content separately.
         self.torrent_root = str(torrent_root)
+        self.upload_limit_bytes_per_second = upload_limit_bytes_per_second
         self.headers, self.cookies, self.proxies = headers or {}, cookies or {}, proxies
 
     def submit(
@@ -459,7 +461,13 @@ class TorrentService:
             )
         idnum = safe_filename(manga_id.split("/", 1)[0])
         save_path = _join_external_path(self.torrent_root, idnum)
-        torrent_hash = self.qbit.add(content, save_path=save_path, display_name=idnum)
+        add_options: dict[str, Any] = {
+            "save_path": save_path,
+            "display_name": idnum,
+        }
+        if self.upload_limit_bytes_per_second is not None:
+            add_options["upload_limit_bytes_per_second"] = self.upload_limit_bytes_per_second
+        torrent_hash = self.qbit.add(content, **add_options)
         return torrent_hash, choice
 
 
