@@ -22,7 +22,8 @@
     <table><thead><tr><th>模块</th><th>任务</th><th>状态</th><th>开始时间</th></tr></thead>
       <tbody id="system-workers"></tbody></table>
   </section>
-  <section><h2>Git 更新</h2><dl id="git-status"></dl><pre id="git-changes" hidden></pre>
+  <section><h2>Git 更新<span class="update-dot" data-update-dot hidden role="img" aria-label="有新更新" title="有新更新"></span></h2>
+    <p id="git-check-schedule"></p><dl id="git-status"></dl><pre id="git-changes" hidden></pre>
     <button type="button" id="git-fetch">检查更新</button>
     <button type="button" data-operation="git_update">执行更新</button>
   </section>

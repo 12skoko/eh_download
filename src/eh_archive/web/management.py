@@ -19,6 +19,7 @@ from ..management.git import GitRepository
 from ..management.service import cancel, submit
 from ..management.state import OperationStore, read_json, tail
 from ..management.systemd import Systemd
+from ..management.update_check import check_updates, saved_check
 
 
 class OperationRequest(BaseModel):
@@ -106,11 +107,19 @@ def register(app, templates, context, database, management_path: Path = DEFAULT_
 
     @app.get("/api/system/git")
     def git_status():
-        return GitRepository(config()).inspect()
+        current = config()
+        return {
+            **GitRepository(current).inspect(),
+            "check": saved_check(current),
+            "schedule": {
+                "enabled": current.update_check_enabled,
+                "time": current.update_check_time,
+            },
+        }
 
     @app.post("/api/system/git/fetch")
     def git_fetch():
-        return GitRepository(config()).inspect(fetch=True)
+        return check_updates(config())
 
     @app.get("/api/system/operations")
     def operations():

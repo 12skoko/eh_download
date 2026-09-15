@@ -1,3 +1,36 @@
+// All pages observe local Git state; only the explicit check endpoint fetches remotely.
+(() => {
+  if (window.ehUpdateStatus) return;
+  let current = null;
+  let pending = false;
+  const publish = value => {
+    current = value;
+    document.querySelectorAll("[data-update-dot]").forEach(dot => {
+      dot.hidden = !value?.available;
+    });
+    document.dispatchEvent(new CustomEvent("eh:update-status", {detail: value}));
+  };
+  const refresh = async () => {
+    if (pending || document.hidden || !document.querySelector("[data-update-dot]")) return;
+    pending = true;
+    try {
+      const response = await fetch("/api/system/git", {
+        credentials: "same-origin", signal: AbortSignal.timeout(15000), cache: "no-store",
+      });
+      if (response.ok) publish(await response.json());
+      else if ([401, 503].includes(response.status)) publish(null);
+    } catch { /* Keep the last known result during a restart or connection failure. */ }
+    finally { pending = false; }
+  };
+  window.ehUpdateStatus = {publish, refresh};
+  document.addEventListener("htmx:afterSwap", event => {
+    if (event.detail.requestConfig?.boosted) { publish(current); refresh(); }
+  });
+  document.addEventListener("visibilitychange", refresh);
+  window.setInterval(refresh, 60000);
+  refresh();
+})();
+
 document.addEventListener("htmx:configRequest", (event) => {
   const token = document.querySelector('meta[name="csrf-token"]')?.content;
   if (token) event.detail.headers["X-CSRF-Token"] = token;

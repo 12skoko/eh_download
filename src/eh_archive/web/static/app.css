@@ -25,6 +25,8 @@
 }
 
 * { box-sizing: border-box; }
+.update-dot { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: #ef4444; vertical-align: middle; }
+.update-dot[hidden] { display: none; }
 html { min-width: 320px; background: var(--bg); }
 body { margin: 0; color: var(--text); background: var(--bg); font-size: 14px; }
 a { color: var(--accent); text-decoration: none; }

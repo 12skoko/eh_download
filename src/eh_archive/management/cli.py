@@ -4,12 +4,12 @@ import json
 
 from . import ManagementError
 from .config import DEFAULT_CONFIG, SUPERVISOR_UNIT, WEB_UNIT, load_management_config
-from .git import GitRepository
 from .installer import install, repair, uninstall
 from .lock import deployment_lock
 from .service import ensure_idle, submit
 from .state import OperationStore, read_json, tail
 from .systemd import CommandRunner, Systemd
+from .update_check import check_updates
 
 
 def add_parsers(sub):
@@ -52,7 +52,7 @@ def dispatch(args):
     store = OperationStore(config)
     if args.command == "update":
         if args.update_action == "check":
-            return GitRepository(config).inspect(fetch=True)
+            return check_updates(config)
         return submit("git_update", "cli")
     if args.command == "operation":
         if args.operation_action == "list":

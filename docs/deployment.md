@@ -27,9 +27,10 @@ eharchive --config-dir config service install
 `service install` requires Linux, systemd, Git and root. Run it from the repository,
 on the branch to deploy, with an upstream remote configured for the same branch.
 It records the current Python executable and absolute paths in
-`/etc/eharchive/management.toml`, creates Web, Supervisor and operation-template
-units, verifies them, and reloads systemd. No service is enabled or started.
-Add `--start` to submit a start operation immediately.
+`/etc/eharchive/management.toml`, creates Web, Supervisor, operation-template,
+update-check service and update-check timer units, verifies them, and reloads
+systemd. The daily update-check timer is enabled and started automatically.
+Web and Supervisor remain stopped; add `--start` to start them immediately.
 
 Use `eharchive service start all` or native `systemctl start eharchive-web
 eharchive-supervisor`. Stop previous screen/manual processes before handing over
@@ -39,6 +40,36 @@ stopped services and preserves management configuration and operation history.
 Windows can run ordinary Web/Worker processes, but system management and managed
 configuration publication require a Linux installation. PostgreSQL backup and
 log rotation remain host administration responsibilities.
+
+### Daily update checks
+
+`eharchive-update-check.timer` runs a one-shot Git check daily at 06:00 in the
+server's local timezone. Persistent scheduling catches up once after downtime.
+It only fetches remote Git metadata; installation still requires “执行更新”.
+Checks share the deployment lock with management operations. A scheduled check
+skips a busy deployment and tries again at the next daily trigger. Failed checks
+record the error and retry at the next trigger; manual checks remain available.
+
+The navigation “系统” link and “Git 更新” heading show a red dot when the remote
+branch contains new commits. Pages refresh local Git status every minute and
+clear the dots after those commits are installed. The Git panel shows the last
+check time and any check error. Browsing pages never triggers a remote fetch.
+
+Existing installations receive both new units automatically through the Web
+“执行更新” workflow (or `eharchive update apply`). After a manual Git pull, run
+`eharchive service repair` as root in the activated `eh` environment.
+Do not run `service install` again. Old management configuration files default
+to daily checks; to change the schedule, add this to
+`/etc/eharchive/management.toml` and run `eharchive service repair`:
+
+```toml
+[update_check]
+enabled = true
+time = "06:00" # HH:MM, server local time
+```
+
+Set `enabled = false` and repair to disable the timer. Uninstall disables and
+removes both update-check units along with the other deployment units.
 
 The fixed deployment lock is `/run/eharchive/deployment.lock`. Do not delete or
 replace it while processes are running. Operation history lives under

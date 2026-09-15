@@ -24,3 +24,8 @@ web_start_timeout_seconds = 60
 supervisor_start_timeout_seconds = 60
 supervisor_drain_timeout_seconds = 0
 poll_seconds = 2
+
+# Daily check in the server's local timezone; does not install updates.
+[update_check]
+enabled = true
+time = "06:00"

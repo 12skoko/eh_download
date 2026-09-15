@@ -11,6 +11,8 @@ from .config import (
     LOCK_PATH,
     OPERATION_TEMPLATE,
     SUPERVISOR_UNIT,
+    UPDATE_CHECK_TIMER,
+    UPDATE_CHECK_UNIT,
     WEB_UNIT,
     ManagementConfig,
     load_management_config,
@@ -69,6 +71,18 @@ def render_units(
         f"--management-config {quote(management_path)} --operation-id %i\n"
         "TimeoutStartSec=infinity\nRestart=no\n"
     )
+    units[UPDATE_CHECK_UNIT] = (
+        common("update check", "oneshot")
+        + f"ExecStart={quote(config.python)} -m eh_archive.management.update_check "
+        f"--management-config {quote(management_path)}\n"
+        "TimeoutStartSec=10min\nRestart=no\n"
+    )
+    units[UPDATE_CHECK_TIMER] = (
+        "[Unit]\nDescription=EH Archive daily update check\n\n"
+        f"[Timer]\nOnCalendar=*-*-* {config.update_check_time}:00\n"
+        f"Persistent=true\nUnit={UPDATE_CHECK_UNIT}\n\n"
+        "[Install]\nWantedBy=timers.target\n"
+    )
     return units
 
 
@@ -87,6 +101,12 @@ def repair(
         atomic_write(UNIT_DIR / name, content.encode())
     runner.run(["systemd-analyze", "verify", *[UNIT_DIR / name for name in render_units(config)]])
     runner.run(["systemctl", "daemon-reload"])
+    if config.update_check_enabled:
+        runner.run(["systemctl", "enable", UPDATE_CHECK_TIMER])
+        # A running timer must be restarted to apply a changed calendar.
+        runner.run(["systemctl", "restart", UPDATE_CHECK_TIMER])
+    else:
+        runner.run(["systemctl", "disable", "--now", UPDATE_CHECK_TIMER])
 
 
 def install(config_dir: str | Path, *, start=False, management_path: Path = DEFAULT_CONFIG):
@@ -122,7 +142,13 @@ def install(config_dir: str | Path, *, start=False, management_path: Path = DEFA
     with deployment_lock():
         if management_path.exists() or any(
             (UNIT_DIR / name).exists() or (UNIT_DIR / name).is_symlink()
-            for name in (WEB_UNIT, SUPERVISOR_UNIT, OPERATION_TEMPLATE)
+            for name in (
+                WEB_UNIT,
+                SUPERVISOR_UNIT,
+                OPERATION_TEMPLATE,
+                UPDATE_CHECK_UNIT,
+                UPDATE_CHECK_TIMER,
+            )
         ):
             raise ManagementError(
                 "Existing deployment configuration or units require manual inspection",
@@ -159,7 +185,19 @@ def uninstall(management_path: Path = DEFAULT_CONFIG) -> None:
         ensure_idle(OperationStore(load_management_config(management_path)), systemd)
         if any(systemd.active(unit) for unit in (WEB_UNIT, SUPERVISOR_UNIT)):
             raise ManagementError("Stop services before uninstalling", "operation_conflict")
-        for name in (WEB_UNIT, SUPERVISOR_UNIT, OPERATION_TEMPLATE):
+        if (UNIT_DIR / UPDATE_CHECK_TIMER).exists():
+            systemd.runner.run(["systemctl", "disable", "--now", UPDATE_CHECK_TIMER])
+        if (UNIT_DIR / UPDATE_CHECK_UNIT).exists():
+            systemd.runner.run(["systemctl", "stop", UPDATE_CHECK_UNIT])
+        for name in (
+            WEB_UNIT,
+            SUPERVISOR_UNIT,
+            OPERATION_TEMPLATE,
+            UPDATE_CHECK_UNIT,
+            UPDATE_CHECK_TIMER,
+        ):
+            if not (UNIT_DIR / name).exists() and not (UNIT_DIR / name).is_symlink():
+                continue
             systemd.runner.run(["systemctl", "disable", name])
             (UNIT_DIR / name).unlink(missing_ok=True)
         systemd.runner.run(["systemctl", "daemon-reload"])

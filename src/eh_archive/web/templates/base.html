@@ -22,7 +22,7 @@
       <a class="{{ 'active' if request.url.path.startswith('/special') else '' }}" href="/special">特殊处理</a>
       <a class="{{ 'active' if request.url.path == '/events' else '' }}" href="/events">事件与错误</a>
       <a class="{{ 'active' if request.url.path == '/config' else '' }}" href="/config">配置</a>
-      <a class="{{ 'active' if request.url.path.startswith('/system') else '' }}" href="/system">系统</a>
+      <a class="{{ 'active' if request.url.path.startswith('/system') else '' }}" href="/system"><span>系统<span class="update-dot" data-update-dot hidden role="img" aria-label="有新更新" title="有新更新"></span></span></a>
     </nav>
     <form action="/logout" method="post" class="logout-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

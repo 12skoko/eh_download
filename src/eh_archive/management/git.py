@@ -61,7 +61,7 @@ class GitRepository:
             "target_commit_message": target_message,
             "dirty": dirty,
             "fast_forward": fast_forward,
-            "available": old != target,
+            "available": base != target,
             "commits": self.run("log", "--oneline", "--max-count=30", f"{old}..{target}"),
             "files": self.run("diff", "--stat", old, target),
         }

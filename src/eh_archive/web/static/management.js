@@ -24,7 +24,7 @@
   const commitLabel = (hash, message, fallback = "-") => {
     if (!hash) return fallback;
     const shortHash = hash.slice(0, 7);
-    return message ? shortHash + " · " + message : shortHash;
+    return message ? message + " · " + shortHash : shortHash;
   };
   let identifier = root.dataset.operationDetail;
   let cancel;
@@ -43,7 +43,7 @@
       headers: {"Content-Type": "application/json",
         "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]').content},
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(path === "/api/system/git/fetch" ? 600000 : 15000),
     });
     if (response.status === 401) {
       window.location.assign("/login?next=" + encodeURIComponent(window.location.pathname));
@@ -194,12 +194,18 @@
   function renderGit(value) {
     const list = document.getElementById("git-status");
     if (!list) return;
+    if (!value) return;
+    if (value.schedule) text("git-check-schedule", value.schedule.enabled
+      ? "每天 " + value.schedule.time + " 自动检查（服务器时间），发现更新后手动执行。"
+      : "每日自动检查已关闭。");
     list.replaceChildren();
     for (const [name, content] of [["分支", value.branch], ["远端", value.remote],
       ["当前版本", commitLabel(value.old_commit, value.old_commit_message)],
       ["目标版本", commitLabel(value.target_commit, value.target_commit_message, "尚未获取")],
       ["工作区", value.dirty ? "有未提交修改" : "干净"],
-      ["更新", value.available ? (value.fast_forward ? "可更新" : "无法快进更新") : "无可用更新"]]) {
+      ["更新", value.available ? (value.fast_forward ? "可更新" : "无法快进更新") : "无可用更新"],
+      ["上次检查", date(value.check?.checked_at)],
+      ["上次检查结果", value.check?.error || (value.check?.last_success_at ? "成功" : "尚未检查")]]) {
       const term = document.createElement("dt");
       const detail = document.createElement("dd");
       term.textContent = name;
@@ -210,11 +216,17 @@
     document.getElementById("git-changes").hidden = !value.commits && !value.files;
   }
   if (fetchButton) {
-    api("/api/system/git").then(renderGit).catch(exc => showError(exc.message));
+    const onUpdate = event => {
+      if (!root.isConnected) document.removeEventListener("eh:update-status", onUpdate);
+      else renderGit(event.detail);
+    };
+    document.addEventListener("eh:update-status", onUpdate);
+    api("/api/system/git").then(value => window.ehUpdateStatus.publish(value))
+      .catch(exc => showError(exc.message));
     fetchButton.addEventListener("click", async () => {
       fetchButton.disabled = true;
-      try { renderGit(await api("/api/system/git/fetch", "POST")); }
-      catch (exc) { showError(exc.message); }
+      try { window.ehUpdateStatus.publish(await api("/api/system/git/fetch", "POST")); }
+      catch (exc) { showError(exc.message); window.ehUpdateStatus.refresh(); }
       finally { fetchButton.disabled = false; }
     });
   }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +15,8 @@ LOCK_PATH = Path("/run/eharchive/deployment.lock")
 WEB_UNIT = "eharchive-web.service"
 SUPERVISOR_UNIT = "eharchive-supervisor.service"
 OPERATION_TEMPLATE = "eharchive-operation@.service"
+UPDATE_CHECK_UNIT = "eharchive-update-check.service"
+UPDATE_CHECK_TIMER = "eharchive-update-check.timer"
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,8 @@ class ManagementConfig:
     supervisor_drain_timeout_seconds: float = 0
     poll_seconds: float = 2
     history_dirs: tuple[Path, ...] = field(default_factory=tuple)
+    update_check_enabled: bool = True
+    update_check_time: str = "06:00"
 
     @property
     def roots(self) -> tuple[Path, ...]:
@@ -68,6 +73,8 @@ def load_management_config(path: Path = DEFAULT_CONFIG) -> ManagementConfig:
             **paths,
             remote=git["remote"],
             branch=git["branch"],
+            update_check_enabled=data.get("update_check", {}).get("enabled", True),
+            update_check_time=data.get("update_check", {}).get("time", "06:00"),
             history_dirs=tuple(Path(p) for p in deployment.get("history_dirs", [])),
             **{
                 key: health[key]
@@ -81,6 +88,12 @@ def load_management_config(path: Path = DEFAULT_CONFIG) -> ManagementConfig:
                 if key in health
             },
         )
+        if (
+            not isinstance(config.update_check_enabled, bool)
+            or not isinstance(config.update_check_time, str)
+            or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", config.update_check_time)
+        ):
+            raise ValueError("update_check requires boolean enabled and HH:MM time")
         if any(not p.is_absolute() for p in config.history_dirs):
             raise ValueError("history paths must be absolute")
         if (
@@ -143,5 +156,6 @@ def write_management_config(config: ManagementConfig, path: Path = DEFAULT_CONFI
                 "poll_seconds",
             )
         },
+        "update_check": {"enabled": config.update_check_enabled, "time": config.update_check_time},
     }
     atomic_write(Path(path), tomlkit.dumps(data).encode())
