@@ -34,6 +34,7 @@ DOWNLOAD_METHOD_LOCATIONS = {
     "hah": "hah_download",
     "aria2": "aria2_download",
 }
+DUPLICATE_UPLOAD_ERROR_CODES = frozenset({"lrr_409", "lrr_duplicate"})
 
 STATUS_LABELS = {
     Status.DISCOVERED.value: "已发现",
@@ -562,7 +563,10 @@ class WebService:
         self._require_version(row, row_version)
         if row.status != Status.MANUAL_REVIEW.value:
             raise InvalidRequest("只有人工复核状态可以申请冲突改名")
-        duplicate_error = bool(row.last_error_code and row.last_error_code.casefold() == "lrr_409")
+        duplicate_error = bool(
+            row.last_error_code
+            and row.last_error_code.casefold() in DUPLICATE_UPLOAD_ERROR_CODES
+        )
         if not duplicate_error and not row.rename_target_filename:
             raise InvalidRequest("只有 LANraragi 409 同名冲突可以使用这个操作")
         if row.active_attempt_id is not None or row.lease_owner or row.lease_token:
@@ -963,7 +967,7 @@ def manga_detail(session: Session, manga_id: str) -> dict[str, Any]:
     filename_matches: list[MangaRecord] = []
     duplicate_review = bool(
         row.last_error_code
-        and row.last_error_code.casefold() == "lrr_409"
+        and row.last_error_code.casefold() in DUPLICATE_UPLOAD_ERROR_CODES
         or row.rename_target_filename
     )
     if duplicate_review and row.artifact_filename:

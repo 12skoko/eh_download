@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}下载残留清理 #{{ workflow.id }} ▪ EH Archive{% endblock %}
+{% block content %}
+<div class="page-head"><div><a class="back" href="{{ module_url }}">← 下载残留清理</a><h1>下载残留清理 #{{ workflow.id }}</h1></div><a class="button" href="/special/workflows/{{ workflow.id }}">刷新进度</a></div>
+{% include "special/_download_cleanup_panel.html" %}
+{% endblock %}

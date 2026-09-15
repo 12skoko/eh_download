@@ -91,6 +91,16 @@ could not be parsed.
 
 ## Download artifact cleanup
 
+The same cleanup logic is available in Web → 特殊模块 → 下载残留清理.
+Start a scan (all IDs or one numeric ID), review the report, then confirm cleanup.
+The Web workflow only deletes targets in that preview and rechecks database state,
+file identity, and torrent ownership. It requires the Supervisor special-processing
+worker. Optional `special/download_cleanup.toml` supports `enabled = false` under
+`[download_cleanup]`; the module defaults to enabled with one concurrent job.
+Core code lives in `src/eh_archive/special/modules/download_cleanup/`; this script
+remains the command-line entry point. Cleanup failures should be followed by a new
+scan and confirmation, rather than replaying an old deletion job.
+
 `cleanup_download_artifacts.py` scans the configured torrent, direct, H@H, and
 aria2 download roots. It also scans every qBittorrent task whose category is
 exactly `eharchive`. A recognized item is eligible only when the matching

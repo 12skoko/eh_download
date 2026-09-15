@@ -461,7 +461,7 @@ qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会
 
 上传到 LANraragi 前必须有完整 MangaInfo。HTTP 与 filesystem 后端共用 `upload_pending -> uploading -> uploaded` 状态机、API gateway 和 outcome 处理；实际变体与内部阶段记录在 `job_attempt.detail`，不需要数据库迁移。filesystem 后端保留源 basename 和文件字节，先写 `.<basename>.<attempt_id>.uploading`，远端完整大小与 SHA-1 校验通过后才在同目录发布最终名称，且不会覆盖同名文件；LANraragi archive ID 使用文件开头精确 512000 字节的 SHA-1。随后按 ID 等待 Shinobu，元数据通过表单请求体写入并读回确认。任何后端失败都不会自动切换另一种传输方式。只有确认 archive ID、size、filename、title 和 tags 后才写入 `lrr_archive_id` 并清理本地文件和 qBittorrent/aria2 任务；发布后结果不确定会保留本地和远端文件，通过 attempt 的预期 ID 人工检查或恢复。Torrent 产物的 cleanup 会递归删除 `torrent_download/<数字 ID>/` 整个档案目录；其他下载方式仍只删除数据库登记的文件或目录。
 
-`lrr_409` 详情页会列出数据库中本地文件名相同的其他档案。人工核对后，如果两个档案内容不同且都需要保留，可以选择“同名但需要分别保留”：Web 只登记目标文件名并把状态改为 `rename_pending`，随后由 `validate` 模块以不覆盖已有文件的方式重命名真实归档、同步 `artifact_filename`、重新计算文件校验和 SHA-1，成功后进入 `upload_pending` 并沿用正常上传流程。操作必须填写原因并确认，改名申请和执行结果都会写入审计轨迹。目标文件已经被其他文件占用、源文件缺失或路径不安全时会返回人工复核，不会覆盖文件。
+`lrr_409` 或 `lrr_duplicate` 详情页会列出数据库中本地文件名相同的其他档案。人工核对后，如果两个档案内容不同且都需要保留，可以选择“同名但需要分别保留”：Web 只登记目标文件名并把状态改为 `rename_pending`，随后由 `validate` 模块以不覆盖已有文件的方式重命名真实归档、同步 `artifact_filename`、重新计算文件校验和 SHA-1，成功后进入 `upload_pending` 并沿用正常上传流程。操作必须填写原因并确认，改名申请和执行结果都会写入审计轨迹。目标文件已经被其他文件占用、源文件缺失或路径不安全时会返回人工复核，不会覆盖文件。`lrr_duplicate` 是当前上传器对 LANraragi HTTP 409 的业务错误码，`lrr_409` 保留用于兼容历史记录。
 
 ### 7.4 手动运行单类任务
 

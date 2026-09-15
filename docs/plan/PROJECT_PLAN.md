@@ -520,7 +520,7 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 | `quarantined` | 人工提供替换文件 | 文件来自受控配置目录 | `validating` | 递增 generation，不允许直接上传 |
 | `manual_review` | 人工选择安全恢复点 | 目标状态要求的字段完整 | `discovered/download_pending/downloaded/completed/skipped/unavailable/quarantined/outdated/deleted` | 记录 actor、理由和证据 |
 | `manual_review` | 人工确认 409 对应现有档案 | 合法 archive ID 与现有档案已人工核对 | `uploaded` | 登记 lrr_archive_id 和人工审核事件 |
-| `manual_review` | 人工确认同名档案需分别保留 | 当前错误为 lrr_409 且已有安全文件名 | `rename_pending` | validate 改名真实文件、同步文件名、重新验证和计算 SHA1 |
+| `manual_review` | 人工确认同名档案需分别保留 | 当前错误为 lrr_duplicate 或兼容旧记录的 lrr_409，且已有安全文件名 | `rename_pending` | validate 改名真实文件、同步文件名、重新验证和计算 SHA1 |
 | 可取消状态 | 用户请求取消 | 尚未处于结果未知的外部副作用中 | `cancel_requested` | 阻止领取新操作并通知活动子进程 |
 | `cancel_requested` | 安全退出完成 | 无正在提交的外部副作用 | `cancelled` | 不自动删除文件、下载器任务或远端档案 |
 | `cancelled` | 人工恢复 | 目标安全状态的前置条件满足 | `discovered/download_pending/validating/upload_pending/uploaded` | 根据现有产物和远端证据选择恢复点，不允许跳过验证 |
@@ -558,7 +558,7 @@ qBittorrent 后台下载期间不占用 torrent-download 控制任务槽，也�
 
 文件路径只存在于 app 配置中。数据库不保存绝对路径，也不保存通用相对路径；数据库只保存 `artifact_location` 配置键、`artifact_filename`、`artifact_kind` 和 `artifact_generation`。统一路径服务按 `configured_root[artifact_location] / artifact_filename` 定位文件或目录。`artifact_filename` 必须是单个安全文件名或目录名，不得包含盘符、路径分隔符、`.`、`..`、UNC 前缀或符号链接跳转。
 
-自动生成的新产物遵守基于安全化 manga_id、artifact generation 和 attempt ID 的确定性命名规则。临时文件名额外包含 attempt ID；数据库只登记当前正式产物的 location 和文件名，不登记临时文件。人工登记的既有文件以及 lrr_409 冲突改名可以保留经过安全校验的文件名；冲突改名使用 `[数字 ID] 原文件名.zip`。旧文件迁移时先扫描各配置根目录，再将能够唯一匹配 manga_id、旧 filename、torrent hash 或 SHA1 的结果回填；无法唯一匹配的记录进入 `manual_review`，不能凭猜测删除或上传。Supervisor 重启后只依赖配置根目录、location 和文件名重新定位，不依赖旧进程内存。
+自动生成的新产物遵守基于安全化 manga_id、artifact generation 和 attempt ID 的确定性命名规则。临时文件名额外包含 attempt ID；数据库只登记当前正式产物的 location 和文件名，不登记临时文件。人工登记的既有文件以及 lrr_duplicate（兼容旧记录 lrr_409）冲突改名可以保留经过安全校验的文件名；冲突改名使用 `[数字 ID] 原文件名.zip`。旧文件迁移时先扫描各配置根目录，再将能够唯一匹配 manga_id、旧 filename、torrent hash 或 SHA1 的结果回填；无法唯一匹配的记录进入 `manual_review`，不能凭猜测删除或上传。Supervisor 重启后只依赖配置根目录、location 和文件名重新定位，不依赖旧进程内存。
 
 #### supervisor 配置
 

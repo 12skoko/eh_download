@@ -31,6 +31,8 @@ def install_special_routes(app, database, templates, app_config, config_dir):
         form = await _validated_form(request)
         try:
             inputs = json.loads(str(form.get("inputs", "{}")))
+            if kind == "download_cleanup" and "only_id" in form:
+                inputs = {"only_id": str(form.get("only_id", ""))}
             if not isinstance(inputs, dict):
                 raise SpecialInvalidRequest("输入必须是对象")
             with database.session() as session:
@@ -50,6 +52,8 @@ def install_special_routes(app, database, templates, app_config, config_dir):
                     "reason": str(form.get("reason", "")),
                     "confirmed": form.get("confirmed") == "yes",
                 }
+            if action == "confirm" and "confirmed" in form:
+                inputs = {"confirmed": form.get("confirmed") == "yes"}
             if not isinstance(inputs, dict):
                 raise SpecialInvalidRequest("输入必须是对象")
             with database.session() as session:
@@ -129,7 +133,7 @@ def install_special_routes(app, database, templates, app_config, config_dir):
             page_rows = [row if isinstance(row, dict) else {"id": row} for row in page_rows]
         return templates.TemplateResponse(
             request=request,
-            name="special/report.html",
+            name=detail.get("report_template", "special/report.html"),
             context=_context(
                 request,
                 **detail,

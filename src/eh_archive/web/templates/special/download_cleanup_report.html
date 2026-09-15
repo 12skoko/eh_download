@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}下载残留清理报告 #{{ workflow.id }}{% endblock %}
+{% block content %}
+<a class="back" href="/special/workflows/{{ workflow.id }}">← 返回清理任务</a>
+<div class="page-head"><h1>{{ '扫描预览' if output.id == 'preview' else '清理结果' }} #{{ workflow.id }}</h1><a class="button" href="/special/workflows/{{ workflow.id }}/outputs/{{ output.id }}/download" hx-boost="false" download>下载 JSON</a></div>
+<section class="panel"><p>预览中的“待清理”表示符合扫描时的条件。确认执行后会重新检查状态和目标身份，跳过发生变化的条目。</p><div class="metric-grid">{% for key, count in report_summary.items() %}<div class="metric-card"><span>{{ action_labels.get(key, key) }}</span><strong>{{ count }}</strong></div>{% endfor %}</div></section>
+<nav class="tabs report-tabs" aria-label="报告分组">{% for key, count in sections.items() %}<a class="{{ 'active' if key == section else '' }}" href="?section={{ key }}">{{ report_labels.get(key, key) }} <span class="badge">{{ count }}</span></a>{% endfor %}</nav>
+<section class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>ID</th><th>来源</th><th>目标</th><th>扫描时状态</th><th>结果</th><th>说明</th></tr></thead><tbody>
+{% for row in report_rows %}<tr><td>{% if row.database_manga_id %}<a href="/manga/{{ row.database_manga_id }}">{{ row.numeric_id }}</a>{% else %}{{ row.numeric_id or '—' }}{% endif %}</td><td>{{ source_labels.get(row.source, row.source) }}</td><td class="mono">{{ row.target }}</td><td>{{ row.database_status or '—' }}</td><td>{{ action_labels.get(row.action, row.action) }}</td><td>{{ row.detail or '—' }}</td></tr>{% else %}<tr><td colspan="6" class="empty">本分组没有记录</td></tr>{% endfor %}
+</tbody></table></div><div class="pagination"><span>共 {{ report_total }} 条，每页 100 条</span>{% if report_page > 1 %}<a href="?section={{ section }}&page={{ report_page - 1 }}">上一页</a>{% endif %}<span>第 {{ report_page }} 页</span>{% if report_page * 100 < report_total %}<a href="?section={{ section }}&page={{ report_page + 1 }}">下一页</a>{% endif %}</div></section>
+{% endblock %}

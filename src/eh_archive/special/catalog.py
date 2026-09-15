@@ -117,6 +117,7 @@ def load_modules():
     global _loaded
     if _loaded:
         return
+    from .modules.download_cleanup import module as cleanup
     from .modules.lanraragi_compare.module import DEFINITION, dashboard, detail
     from .modules.video_archive.definition import VIDEO_ARCHIVE
     from .modules.video_archive.integration import VideoIntegration
@@ -142,6 +143,17 @@ def load_modules():
         },
     )
     registrations = (
+        ModuleRegistration(
+            cleanup.DEFINITION,
+            cleanup.executor,
+            cleanup.capability,
+            "预览并手动清理 completed / deleted 档案遗留的种子任务和下载文件。",
+            "special/download_cleanup.html",
+            cleanup.dashboard,
+            cleanup.detail,
+            "special/download_cleanup_detail.html",
+            "special/_download_cleanup_panel.html",
+        ),
         ModuleRegistration(
             video,
             _video_executor,
