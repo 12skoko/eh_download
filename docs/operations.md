@@ -28,11 +28,27 @@ restart affected running services and restore the previous Supervisor control
 state. A configuration startup failure restores the operation's own backup.
 
 Git updates require a clean worktree and a fast-forward on the installed branch.
-They install with the recorded Python, validate configuration, upgrade the
+They install with the recorded Python, merge and validate configuration, upgrade the
 database, refresh units and restore each service's original running/stopped
-state. Failures before migration restore old code/environment where necessary.
-Once migration starts, failure stops the update and requires manual inspection;
+state. Before configuration merging starts, failures restore old code/environment
+where necessary. Once configuration merging starts, failure stops the update
+with services stopped and requires manual inspection; configurations, code and
+environment are not automatically restored.
+Once migration starts, failure also requires manual inspection;
 no automatic database downgrade is attempted.
+
+Configuration merging preserves supported existing values, fills missing entries
+from `config.sample`, and removes unsupported entries. Optional settings and
+user-defined maps (accounts, networks, URLs and client options) are preserved.
+Only the four runtime files and existing `special/*.toml` files with matching
+templates are processed; tool configuration such as `migration.toml` is untouched.
+Renamed fields receive the new template default; no value conversion is performed.
+All affected existing files are backed up before any configuration is written,
+under `<config-dir>/backups/YYYYMMDD-HHMMSS-microseconds/`, preserving relative
+paths and file modes. Backups are never automatically deleted or restored.
+The operation state and log record the backup location (no directory is created
+when nothing changes). A backup failure prevents configuration writes; a later
+write or validation failure can leave merged files for manual inspection.
 
 If Web cannot start, inspect `journalctl -u eharchive-web`,
 `journalctl -u 'eharchive-operation@*.service'` and the operation log.
