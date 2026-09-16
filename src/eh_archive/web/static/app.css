@@ -354,3 +354,11 @@ pre { max-height: 350px; overflow: auto; padding: .8rem; color: #d8e5ec; border-
 
 .report-tabs { flex-wrap: wrap; }
 .report-tabs a { display: inline-flex; align-items: center; gap: .4rem; }
+
+.log-breadcrumbs { display: flex; flex-wrap: wrap; gap: .65rem; margin-bottom: 1rem; overflow-wrap: anywhere; }
+pre.log-content {
+  height: 60vh; max-height: none; overflow: auto; padding: 1rem;
+  color: var(--text); background: var(--surface-soft); border: 1px solid var(--line);
+  font-family: "Cascadia Code", Consolas, "Microsoft YaHei", monospace;
+  font-size: .9rem; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere;
+}

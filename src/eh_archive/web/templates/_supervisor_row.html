@@ -1,11 +1,15 @@
-{% set paused = control and control.state == 'paused' %}
-{% set draining = control and control.state == 'draining' %}
+{% set supervisor_status = supervisor_state|default('unknown', true) %}
+{% set paused = supervisor_status == 'paused' %}
+{% set draining = supervisor_status == 'draining' %}
+{% set stopped = supervisor_status in ('stale', 'unknown') %}
 <div id="supervisor-row" class="component-row">
   <div class="component-identity"><strong>调度器</strong><small class="mono">supervisor</small><small>最后心跳 {{ control.heartbeat_at|datetime if control else '—' }}</small><small>租约持有者 <span class="mono">{{ control.lease_owner or '—' }}</span></small></div>
-  <span class="badge {{ 'paused' if paused or draining else 'running' }}">{{ '已暂停' if paused else '排空中' if draining else '正在调度' }}</span>
-  {% if paused or draining %}<div class="component-reason"><small>{{ '排空中' if draining else '暂停原因' }}</small><span>{{ control.reason or '未填写原因' }}</span></div>{% else %}<input name="reason" id="supervisor-reason-input" placeholder="暂停原因（可选）">{% endif %}
+  <span class="badge {{ 'paused' if paused or draining else 'stale' if stopped else 'running' }}">{{ '已暂停' if paused else '排空中' if draining else '已停止' if supervisor_status == 'stale' else '状态未知' if supervisor_status == 'unknown' else '正在调度' }}</span>
+  {% if paused or draining %}<div class="component-reason"><small>{{ '排空中' if draining else '暂停原因' }}</small><span>{{ control.reason or '未填写原因' }}</span></div>{% elif stopped %}<div class="component-reason"><small>状态说明</small><span>{{ '心跳已过期，调度器可能已退出' if supervisor_status == 'stale' else '暂无心跳，无法确认调度器状态' }}</span></div>{% else %}<input name="reason" id="supervisor-reason-input" placeholder="暂停原因（可选）">{% endif %}
   {% if paused or draining %}
   <form hx-post="/control/supervisor" hx-target="#supervisor-row" hx-swap="outerHTML" hx-sync="this:replace" hx-disabled-elt="find button"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ control.row_version if control else '' }}"><button name="state" value="running">恢复调度</button></form>
+  {% elif stopped %}
+  <a class="button" href="/system">前往系统页重启</a>
   {% else %}
   <button type="button" data-open-dialog="supervisor-pause-dialog" data-copy-reason="#supervisor-reason-input" data-copy-target="#supervisor-pause-dialog textarea[name=reason]">暂停调度</button>
   {% endif %}

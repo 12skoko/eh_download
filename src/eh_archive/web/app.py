@@ -973,6 +973,11 @@ def create_app(
                         request,
                         component=component,
                         control=current,
+                        supervisor_state=(
+                            _supervisor_status(current, supervisor_config.poll_seconds)
+                            if component == "supervisor"
+                            else None
+                        ),
                         component_error=str(error),
                     ),
                 )
@@ -988,6 +993,11 @@ def create_app(
                     request,
                     component=component,
                     control=control,
+                    supervisor_state=(
+                        _supervisor_status(control, supervisor_config.poll_seconds)
+                        if component == "supervisor"
+                        else None
+                    ),
                     component_error=None,
                 ),
             )
@@ -1181,6 +1191,9 @@ def create_app(
     from .management import register
 
     register(app, templates, _context, database, Path(management_config))
+    from .logs import register as register_logs
+
+    register_logs(app, templates, _context, app_config.log_dir)
     return app
 
 
@@ -1329,6 +1342,10 @@ def _health_status(row: SystemHealth, interval_seconds: float) -> str:
 def _supervisor_status(row: SystemControl | None, poll_seconds: float) -> str:
     if row is None or row.heartbeat_at is None:
         return "unknown"
+    if row.lease_owner is None:
+        return "stale"
+    if row.lease_until is not None and _age_seconds(row.lease_until) >= 0:
+        return "stale"
     age = _age_seconds(row.heartbeat_at)
     return "stale" if age > max(poll_seconds * 6, 30) else row.state
 
