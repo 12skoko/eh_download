@@ -1647,6 +1647,22 @@ class TaskExecutor:
                 category,
                 retryable=retryable,
             )
+        if record.download_method == "torrent" and record.external_download_id:
+            from ..integrations.qbittorrent import QBittorrentClient
+
+            self._begin_external_effect(repository, claim)
+            options = dict(self.secrets.qbittorrent)
+            options.setdefault("host", self.app.qbittorrent_url)
+            if not CleanupService(qbit=QBittorrentClient(**options)).remove_torrent(
+                record.external_download_id, delete_files=False
+            ):
+                raise ArchiveError(
+                    "torrent_cleanup_failed",
+                    "qBittorrent task could not be removed",
+                    ErrorClass.TEMPORARY,
+                    retryable=True,
+                )
+            time.sleep(1)
         if record.artifact_location and record.artifact_filename:
             if repository.fenced(claim, owner=self.owner) is None:
                 raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
@@ -1662,21 +1678,10 @@ class TaskExecutor:
                     path.unlink() if path.is_file() else shutil.rmtree(path)
             except FileNotFoundError:
                 pass
-        if record.download_method == "torrent" and record.external_download_id:
-            from ..integrations.qbittorrent import QBittorrentClient
-
-            self._begin_external_effect(repository, claim)
-            options = dict(self.secrets.qbittorrent)
-            options.setdefault("host", self.app.qbittorrent_url)
-            if not CleanupService(qbit=QBittorrentClient(**options)).remove_torrent(
-                record.external_download_id
-            ):
-                raise ArchiveError(
-                    "torrent_cleanup_failed",
-                    "qBittorrent task could not be removed",
-                    ErrorClass.TEMPORARY,
-                    retryable=True,
-                )
+            except OSError as exc:
+                note = f"[cleanup] 本地清理失败，文件可能残留：{path}；{exc}"
+                record.remark = f"{record.remark}\n{note}" if record.remark else note
+                log.warning("%s", note)
         if record.download_method == "aria2" and record.external_download_id:
             from ..integrations.aria2 import Aria2Adapter
 
