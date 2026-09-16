@@ -7,6 +7,14 @@
   const earlier = root.querySelector("[data-earlier]");
   const auto = root.querySelector("[data-auto]");
   const latest = root.querySelector("[data-latest]");
+  const fitHeight = () => {
+    // Use document coordinates so scrolling does not make the viewer grow.
+    const top = output.getBoundingClientRect().top + window.scrollY;
+    output.style.height = `${Math.max(320, window.innerHeight - top - 48)}px`;
+  };
+  window.addEventListener("resize", fitHeight);
+  fitHeight();
+  document.fonts.ready.then(() => { if (root.isConnected) fitHeight(); });
   let start = 0;
   let pending = false;
   async function refresh(before) {
@@ -27,6 +35,7 @@
       output.textContent = data.text || "（空文件）";
       start = data.start;
       status.textContent = `字节 ${data.start}–${data.end} / ${data.size} · ${new Date().toLocaleTimeString()} 已刷新${data.start ? " · 窗口起始可能位于一行中间" : ""}`;
+      fitHeight();
       output.scrollTop = before === undefined && root.querySelector("[data-follow]").checked
         ? output.scrollHeight : (before === undefined ? oldScroll : 0);
     } catch (error) {
@@ -45,6 +54,9 @@
     if (!root.isConnected) { clearInterval(timer); return; }
     if (auto.checked && !document.hidden) refresh();
   }, 5000);
-  window.addEventListener("pagehide", () => clearInterval(timer), {once: true});
+  window.addEventListener("pagehide", () => {
+    clearInterval(timer);
+    window.removeEventListener("resize", fitHeight);
+  }, {once: true});
   refresh();
 })();
