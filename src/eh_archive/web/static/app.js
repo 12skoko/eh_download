@@ -31,6 +31,21 @@
   refresh();
 })();
 
+// Serialized <dialog open> loses its modal/top-layer state on history restore.
+// Keep history snapshots closed and also repair snapshots cached before this fix.
+(() => {
+  if (window.ehDialogHistoryInstalled) return;
+  window.ehDialogHistoryInstalled = true;
+  const closeDialogs = () => {
+    document.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
+  };
+  document.addEventListener("htmx:beforeHistorySave", closeDialogs);
+  document.addEventListener("htmx:historyRestore", closeDialogs);
+  window.addEventListener("pageshow", event => {
+    if (event.persisted) closeDialogs();
+  });
+})();
+
 document.addEventListener("htmx:configRequest", (event) => {
   const token = document.querySelector('meta[name="csrf-token"]')?.content;
   if (token) event.detail.headers["X-CSRF-Token"] = token;
