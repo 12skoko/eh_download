@@ -484,21 +484,10 @@ class WebService:
             if not clean_filename:
                 raise InvalidRequest("进入已下载状态必须填写文件名")
             row.artifact_location = DOWNLOAD_METHOD_LOCATIONS[clean_method]
-            artifact_path = self._require_artifact(row, clean_filename)
-            try:
-                artifact_is_directory = artifact_path.is_dir()
-                artifact_size = artifact_path.stat().st_size if artifact_path.is_file() else None
-            except OSError as exc:
-                raise InvalidRequest("无法读取本地档案信息") from exc
+            artifact_path = self._artifact_path(row, clean_filename)
             row.artifact_filename = clean_filename
-            row.artifact_kind = (
-                "directory"
-                if artifact_is_directory
-                else "zip"
-                if artifact_path.suffix.casefold() == ".zip"
-                else "file"
-            )
-            row.artifact_size = artifact_size
+            row.artifact_kind = None
+            row.artifact_size = None
             row.artifact_sha1 = None
             row.artifact_checked_at = None
         elif target_status == Status.UPLOAD_PENDING.value:

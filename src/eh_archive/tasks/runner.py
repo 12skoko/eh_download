@@ -1278,6 +1278,7 @@ class TaskExecutor:
             if rename_detail is not None:
                 record.rename_target_filename = None
             raise
+        record.artifact_kind = fingerprint.kind
         record.artifact_size = fingerprint.size
         if fingerprint.sha1 is not None:
             record.artifact_sha1 = fingerprint.sha1

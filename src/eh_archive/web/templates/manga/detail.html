@@ -107,8 +107,8 @@
         <label>下载方式（必填）<select name="download_method" required {% if target.status == 'downloaded' %}data-artifact-method{% endif %}><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}" data-artifact-directory="{{ artifact_directories.get(method, '') }}" {% if row.download_method == method %}selected{% endif %}>{{ method }}</option>{% endfor %}</select></label>
         {% endif %}
         {% if target.status == 'downloaded' %}
-        <label>文件名（必填）<input name="artifact_filename" value="{{ row.artifact_filename or '' }}" placeholder="服务器下载目录中已有的文件名" data-artifact-filename required></label>
-        <div class="artifact-path-preview"><span>服务器将检查</span><output class="mono break" data-artifact-path>请选择下载方式并填写文件名</output></div>
+        <label>文件名（必填）<input name="artifact_filename" value="{{ row.artifact_filename or '' }}" placeholder="服务器下载目录中的文件名" data-artifact-filename required></label>
+        <div class="artifact-path-preview"><span>服务器路径</span><output class="mono break" data-artifact-path>请选择下载方式并填写文件名</output></div>
         {% endif %}
         {% if target.status in ['uploaded', 'completed'] %}
         <label>LANraragi archive ID（必填）<input name="archive_id" value="{{ row.lrr_archive_id or '' }}" pattern="[0-9A-Fa-f]{40}" maxlength="40" placeholder="40 位十六进制 archive ID" required></label>
