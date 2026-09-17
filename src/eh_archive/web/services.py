@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
 from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from ..config.loader import SUPERVISOR_MODULES, AppConfig
@@ -24,8 +26,8 @@ from ..db.models import (
 from ..db.repository import utcnow
 from ..domain.states import Status, can_transition, transition_target
 from ..services.paths import ArtifactPathService, UnsafePathError, safe_filename
-from ..special.remarks import PHASE_LABELS, replace_user_remark, user_remark
 from ..special.registry import WORKFLOW_REGISTRY
+from ..special.remarks import PHASE_LABELS, replace_user_remark, user_remark
 
 CONTROL_COMPONENTS = ("supervisor", *SUPERVISOR_MODULES)
 DOWNLOAD_METHOD_LOCATIONS = {
@@ -171,6 +173,13 @@ MANUAL_STATUS_TARGETS = (
 )
 
 MANUAL_STATUS_VALUES = frozenset(target["status"] for target in MANUAL_STATUS_TARGETS)
+BULK_STATUS_VALUES = frozenset({
+    "discovered", "manual_review", "skipped", "download_blocked",
+    "unavailable", "quarantined", "download_pending",
+})
+BULK_STATUS_TARGETS = tuple(
+    target for target in MANUAL_STATUS_TARGETS if target["status"] in BULK_STATUS_VALUES
+)
 FORCE_DELETE_SOURCE_STATUSES = frozenset(
     {
         Status.UPLOADED.value,
@@ -420,6 +429,7 @@ class WebService:
         superseded_by_id: str | None = None,
         confirmation_manga_id: str | None = None,
         allow_web_only: bool = False,
+        batch_id: str | None = None,
     ) -> MangaRecord:
         """Apply an explicit, audited administrator status override."""
 
@@ -524,6 +534,7 @@ class WebService:
         row.status_updated_at = row.updated_at = utcnow()
         row.row_version += 1
         detail: dict[str, Any] = {
+            "batch_id": batch_id,
             "reason": clean_reason,
             "download_method": row.download_method,
             "artifact_location": row.artifact_location,
@@ -546,6 +557,84 @@ class WebService:
             to_status=target_status,
             detail={key: value for key, value in detail.items() if value is not None},
         )
+        return row
+
+    def resolve_conflict_versions(
+        self,
+        manga_id: str,
+        *,
+        row_version: int,
+        old_versions: dict[str, int],
+        target_status: str,
+        reason: str | None,
+        confirmed: bool,
+    ) -> MangaRecord:
+        """Atomically select the latest archive and queue selected old versions for deletion."""
+        if not confirmed or not reason or not reason.strip():
+            raise InvalidRequest("必须填写原因并确认删除选中的旧档案")
+        if not old_versions or len(old_versions) > 50 or manga_id in old_versions:
+            raise InvalidRequest("请选择 1 至 50 个其他同名档案")
+        if target_status not in {Status.DOWNLOADED.value, Status.UPLOAD_PENDING.value}:
+            raise InvalidRequest("新档案只能进入已下载或等待上传状态")
+        # Use a stable lock order for overlapping submissions and worker claims.
+        rows = {key: self._manga(key) for key in sorted({manga_id, *old_versions})}
+        row = rows[manga_id]
+        self._require_version(row, row_version)
+        if (
+            row.status != Status.MANUAL_REVIEW.value
+            or (row.last_error_code or "").casefold() not in DUPLICATE_UPLOAD_ERROR_CODES
+        ):
+            raise InvalidRequest("只有 LANraragi 同名冲突的人工复核档案可以设为最新版")
+        if row.superseded_by_id:
+            raise InvalidRequest("当前档案已有替代档案，不能再设为最新版")
+        for item in rows.values():
+            if (
+                item.active_attempt_id is not None
+                or item.lease_owner or item.lease_token or item.lease_until
+            ):
+                raise Conflict(f"档案 {item.manga_id} 仍有活动任务或租约，请刷新后重试")
+        source = self._require_artifact(row, row.artifact_filename)
+        if not source.is_file():
+            raise InvalidRequest("最新版必须有可用的本地归档文件")
+        if target_status == Status.UPLOAD_PENDING.value and (
+            not row.artifact_sha1 or row.artifact_size != source.stat().st_size
+        ):
+            raise InvalidRequest("本地档案尚未完成校验或大小已变化，请选择已下载重新校验")
+        for key, version in old_versions.items():
+            old = rows[key]
+            self._require_version(old, version)
+            if (
+                not old.artifact_filename
+                or old.artifact_filename.lower() != row.artifact_filename.lower()
+            ):
+                raise InvalidRequest(f"档案 {key} 已不再与当前档案同名")
+            if old.status not in {"uploaded", "completed", "manual_review", "outdated"}:
+                raise InvalidRequest(f"档案 {key} 的当前状态不能执行同名替代")
+            if old.superseded_by_id and old.superseded_by_id != manga_id:
+                raise Conflict(f"档案 {key} 已关联其他替代档案")
+            if old.lrr_archive_id and old.lrr_archive_id == row.lrr_archive_id:
+                raise InvalidRequest("新旧档案共享 LANraragi ID，请先人工核对远端档案")
+        batch_id = str(uuid.uuid4())
+        now = utcnow()
+        for item in rows.values():
+            previous = item.status
+            item.status = target_status if item is row else Status.OUTDATED.value
+            if item is not row:
+                item.superseded_by_id = manga_id
+            item.rename_target_filename = None
+            item.next_retry_at = item.defer_until = None
+            item.queue_source = "manual"
+            item.status_updated_at = item.updated_at = now
+            item.row_version += 1
+            self._event(
+                item, "conflict_versions", from_status=previous, to_status=item.status,
+                detail={
+                    "batch_id": batch_id, "reason": reason.strip(),
+                    "replacement_id": manga_id, "old_ids": sorted(old_versions),
+                },
+            )
+        if target_status == Status.DOWNLOADED.value:
+            row.artifact_sha1 = row.artifact_size = row.artifact_checked_at = None
         return row
 
     def request_conflict_rename(
@@ -780,7 +869,11 @@ class WebService:
         return row
 
     def _manga(self, manga_id: str) -> MangaRecord:
-        row = self.session.get(MangaRecord, manga_id)
+        # Hold the same row lock used by task claiming until the caller commits
+        # or rolls back. Refresh cached objects before checking their version.
+        row = self.session.get(
+            MangaRecord, manga_id, with_for_update=True, populate_existing=True
+        )
         if row is None:
             raise NotFound("档案不存在")
         return row
@@ -819,6 +912,51 @@ class WebService:
         )
 
 
+def bulk_override_status(
+    database, *, items: list[tuple[str, int]], target_status: str,
+    actor: str, reason: str | None = None, download_method: str | None = None,
+    app_config: AppConfig | None = None,
+) -> dict[str, Any]:
+    """Commit each archive independently; failed items must leave no partial writes."""
+    if target_status not in BULK_STATUS_VALUES:
+        raise InvalidRequest("这个状态不支持批量修改")
+    if not 1 <= len(items) <= 100:
+        raise InvalidRequest("每次请选择 1 至 100 条档案")
+    if len({identifier for identifier, _ in items}) != len(items):
+        raise InvalidRequest("不能重复提交同一档案")
+    if any(not identifier.strip() or version < 0 for identifier, version in items):
+        raise InvalidRequest("档案 ID 或版本无效")
+    reason = reason.strip() if reason else None
+    download_method = download_method.strip() if download_method else None
+    if target_status in {"download_blocked", "unavailable", "quarantined"} and not reason:
+        raise InvalidRequest("这个状态必须填写操作原因")
+    if target_status == "download_pending" and download_method not in DOWNLOAD_METHOD_VALUES:
+        raise InvalidRequest("必须选择有效的下载方式")
+    batch_id = str(uuid.uuid4())
+    results = []
+    for manga_id, version in items:
+        try:
+            with database.session() as session:
+                service = WebService(session, actor=actor, app_config=app_config)
+                row = service._manga(manga_id)
+                service._require_version(row, version)
+                if row.status == target_status:
+                    outcome, message = "skipped", "已处于目标状态，未修改"
+                else:
+                    service.override_status(
+                        manga_id, target_status=target_status, row_version=version,
+                        reason=reason, download_method=download_method, batch_id=batch_id,
+                    )
+                    outcome, message = "success", "状态已修改"
+            # Only report success after the transaction has committed.
+        except WebServiceError as exc:
+            outcome, message = "failed", str(exc)
+        except SQLAlchemyError:
+            outcome, message = "failed", "数据库操作失败，请刷新核对后重试"
+        results.append({"manga_id": manga_id, "outcome": outcome, "message": message})
+    return {"batch_id": batch_id, "results": results}
+
+
 def list_manga(
     session: Session,
     *,
@@ -847,7 +985,7 @@ def list_manga(
     if query_text and query_text.strip():
         conditions.append(_manga_search_predicate(query_text))
     total = session.scalar(select(func.count()).select_from(MangaRecord).where(*conditions)) or 0
-    page = max(1, page)
+    page = max(1, min(page, (total + limit - 1) // limit))
     query = (
         select(MangaRecord)
         .where(*conditions)
@@ -880,7 +1018,7 @@ def list_review_manga(
     if operation:
         conditions.append(MangaRecord.last_error_operation == operation.strip())
     total = session.scalar(select(func.count()).select_from(MangaRecord).where(*conditions)) or 0
-    page = max(1, page)
+    page = max(1, min(page, (total + limit - 1) // limit))
     query = (
         select(MangaRecord)
         .where(*conditions)
@@ -1012,6 +1150,12 @@ def manga_detail(session: Session, manga_id: str) -> dict[str, Any]:
         "row": row,
         "attempts": attempts,
         "events": events,
+        "upload_blockers": list(session.scalars(
+            select(MangaRecord).where(
+                MangaRecord.superseded_by_id == manga_id,
+                MangaRecord.status != Status.DELETED.value,
+            ).order_by(MangaRecord.manga_id)
+        )),
         "filename_matches": filename_matches,
         "conflict_rename_available": (
             row.status == Status.MANUAL_REVIEW.value

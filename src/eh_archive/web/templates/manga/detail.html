@@ -4,6 +4,9 @@
 <div class="page-head detail-head"><div><a class="back" href="/manga">← 返回队列</a><p class="eyebrow mono detail-manga-id">{{ row.manga_id }}</p><h1>{{ row.name or row.real_name or row.manga_id }}</h1><p class="muted">{{ row.real_name }}</p></div><span class="badge large status-{{ row.status }}">{{ row.status|status_label }}</span></div>
 {% if notice %}<div class="alert success">操作已完成，页面显示的是数据库最新状态。</div>{% endif %}
 {% include "_direct_download_progress.html" %}
+{% if upload_blockers %}
+<section class="panel"><h2>上传等待旧档案删除</h2><p>以下档案全部标记为已删除后，上传调度才会放行。删除失败或进入人工复核时仍会等待。</p><ul>{% for old in upload_blockers %}<li><a href="/manga/{{ old.manga_id }}">{{ old.name or old.manga_id }}（{{ old.manga_id }}）</a> · {{ old.status|status_label }}{% if old.last_error_code %} · {{ old.last_error_code }}{% endif %}</li>{% endfor %}</ul></section>
+{% endif %}
 <section class="detail-grid">
   <article class="panel"><div class="section-head"><div><p class="eyebrow">当前状态</p><h2>调度信息</h2></div></div><dl class="facts two">
     <div><dt>状态</dt><dd>{{ row.status }} / {{ row.status|status_label }}</dd></div><div><dt>优先级</dt><dd>{{ row.priority }}</dd></div>
@@ -28,7 +31,26 @@
   <div class="section-head"><div><p class="eyebrow">重复排查</p><h2>同名档案</h2></div><span class="mono break">{{ row.artifact_filename or '未登记文件名' }}</span></div>
   <div class="table-wrap"><table><thead><tr><th>档案</th><th>状态</th><th>LANraragi ID</th><th>状态更新时间</th></tr></thead><tbody>{% for match in filename_matches %}<tr><td class="title-cell"><a href="/manga/{{ match.manga_id }}" target="_blank" rel="noopener" hx-boost="false"><strong>{{ match.name or match.real_name or match.manga_id }}</strong><small class="mono">{{ match.manga_id }}</small></a></td><td><span class="badge status-{{ match.status }}">{{ match.status|status_label }}</span></td><td class="mono break">{{ match.lrr_archive_id or '—' }}</td><td>{{ match.status_updated_at|datetime }}</td></tr>{% else %}<tr><td colspan="4" class="empty">{% if row.artifact_filename %}数据库中没有找到其他同名档案{% else %}当前档案尚未登记文件名，无法查找同名档案{% endif %}</td></tr>{% endfor %}</tbody></table></div>
   {% if conflict_rename_available %}
-  <div class="panel-actions"><button type="button" class="primary" data-open-dialog="conflict-rename-dialog">同名但需要分别保留</button></div>
+  <div class="panel-actions"><button type="button" class="primary" data-open-dialog="conflict-rename-dialog">同名但需要分别保留</button>{% if filename_matches and row.last_error_code|lower in ['lrr_409', 'lrr_duplicate'] %}<button type="button" data-open-dialog="conflict-versions-dialog">以当前档案为最新版</button>{% endif %}</div>
+  <dialog id="conflict-versions-dialog" class="status-dialog">
+    <form method="post" action="/manga/{{ row.manga_id }}/conflict-versions" class="status-dialog-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="row_version" value="{{ row.row_version }}">
+      <div class="dialog-head"><h2>以当前档案为最新版</h2><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+      <p>最新版：{{ row.name or row.manga_id }}（{{ row.manga_id }}）。只处理勾选的旧档案，未勾选的档案保持原样。</p>
+      <label>新档案状态<select name="target_status" required><option value="upload_pending">等待上传（本地文件已校验）</option><option value="downloaded">已下载，重新校验</option></select></label>
+      <p>勾选已过时的同名档案（最多展示 50 条）：</p>
+      {% for match in filename_matches %}
+      {% set selectable = match.status in ['uploaded', 'completed', 'manual_review', 'outdated'] and not (match.active_attempt_id or match.lease_owner or match.lease_token or match.lease_until) and (not match.superseded_by_id or match.superseded_by_id == row.manga_id) %}
+      <label class="lease-confirmation"><input type="checkbox" name="old_ids" value="{{ match.manga_id }}" {% if not selectable %}disabled{% endif %}><span>{{ match.name or match.manga_id }}（{{ match.manga_id }}） · {{ match.status|status_label }}<br>发布时间：{{ match.posted_at|datetime }} · 页数：{{ match.pages if match.pages is not none else '—' }} · 大小：{{ match.artifact_size if match.artifact_size is not none else '—' }} 字节<br>LANraragi ID：{{ match.lrr_archive_id or '—' }}{% if not selectable %}<br>当前状态、租约或替代关系不允许选择。{% endif %}</span></label>
+      <input type="hidden" name="version:{{ match.manga_id }}" value="{{ match.row_version }}">
+      {% endfor %}
+      <label>处理原因（必填）<textarea name="reason" rows="2" required>当前档案为最新版，选中的同名档案已过时</textarea></label>
+      <div class="alert warning">选中的旧档案将由 delete 模块删除远端及本地归档；与最新版共用的本地路径会保留。新档案会等待旧档案全部删除后再上传。</div>
+      <label class="lease-confirmation"><input type="checkbox" name="confirmed" value="yes" required><span>我已核对版本，确认删除选中的旧档案并保留当前档案。</span></label>
+      <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认版本替代</button></div>
+    </form>
+  </dialog>
   <dialog id="conflict-rename-dialog" class="status-dialog">
     <form method="post" action="/manga/{{ row.manga_id }}/conflict-rename" class="status-dialog-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

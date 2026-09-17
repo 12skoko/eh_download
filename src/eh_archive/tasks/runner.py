@@ -1701,6 +1701,7 @@ class TaskExecutor:
     def _delete(
         self, repository: ArchiveRepository, claim: ClaimedAttempt, record: MangaRecord
     ) -> None:
+        replacement = None
         if record.status != Status.FORCE_DELETE_PENDING.value:
             replacement = (
                 repository.get(record.superseded_by_id) if record.superseded_by_id else None
@@ -1718,6 +1719,15 @@ class TaskExecutor:
                     detail={"reason": "replacement_not_ready"},
                 )
                 return
+        if (
+            replacement is not None
+            and record.lrr_archive_id
+            and record.lrr_archive_id == replacement.lrr_archive_id
+        ):
+            raise ArchiveError(
+                "replacement_archive_shared", "旧档案与替代档案共享 LANraragi ID，需人工核对",
+                ErrorClass.ITEM,
+            )
         if record.lrr_archive_id:
             client = LANraragiClient(
                 self.app.lanraragi_url,
@@ -1744,8 +1754,27 @@ class TaskExecutor:
                     record.artifact_location, record.artifact_filename
                 )
             )
+            # Completed rows can retain a filename now occupied by the new archive.
+            # Never unlink that replacement's file (or an ancestor directory).
+            replacement_path = None
+            if (
+                replacement is not None
+                and replacement.artifact_location and replacement.artifact_filename
+            ):
+                replacement_path = (
+                    self.paths.torrent_registered(replacement.manga_id, replacement.artifact_filename)
+                    if replacement.artifact_location == "torrent_download"
+                    else self.paths.validate_registered(
+                        replacement.artifact_location, replacement.artifact_filename
+                    )
+                )
+            shared_path = replacement_path is not None and (
+                path.resolve() == replacement_path.resolve()
+                or path.resolve() in replacement_path.resolve().parents
+                or (path.exists() and replacement_path.exists() and path.samefile(replacement_path))
+            )
             try:
-                if path.exists():
+                if not shared_path and path.exists():
                     path.unlink() if path.is_file() else shutil.rmtree(path)
             except FileNotFoundError:
                 pass

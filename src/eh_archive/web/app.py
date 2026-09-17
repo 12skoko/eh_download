@@ -10,6 +10,7 @@ from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import Request
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -44,6 +45,7 @@ from .configuration import (
     load_config_sections,
 )
 from .services import (
+    BULK_STATUS_TARGETS,
     COMPONENT_LABELS,
     CONTROL_COMPONENTS,
     DOWNLOAD_METHOD_LOCATIONS,
@@ -54,6 +56,7 @@ from .services import (
     WebService,
     WebServiceError,
     allowed_actions,
+    bulk_override_status,
     dashboard_data,
     list_events,
     list_manga,
@@ -75,6 +78,13 @@ from .special_modules import (
 
 TEMPLATE_DIR = Path(__file__).with_name("templates")
 STATIC_DIR = Path(__file__).with_name("static")
+
+
+class BulkStatusUpdate(BaseModel):
+    items: list[tuple[str, int]] = Field(min_length=1, max_length=100)
+    target_status: str
+    reason: str | None = Field(default=None, max_length=4000)
+    download_method: str | None = None
 
 
 def _filter_query(params: list[tuple[str, str]]) -> str:
@@ -158,6 +168,22 @@ def create_app(
         superseded_by_id: str | None = None
 
     status_query = Query(default=[])
+
+    @app.post("/api/bulk-status")
+    def bulk_status_update(request: Request, payload: BulkStatusUpdate):
+        if (
+            not request.state.auth_via_bearer
+            and request.headers.get("x-csrf-token") != request.state.identity.csrf_token
+        ):
+            raise HTTPException(403, "CSRF validation failed")
+        try:
+            return bulk_override_status(
+                database, items=payload.items, target_status=payload.target_status,
+                reason=payload.reason, download_method=payload.download_method,
+                actor=_actor(request), app_config=app_config,
+            )
+        except WebServiceError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
 
     @app.middleware("http")
     async def authenticate(request, call_next):
@@ -902,6 +928,23 @@ def create_app(
             "expired-lease-released",
         )
 
+    @app.post("/manga/{manga_id:path}/conflict-versions")
+    async def conflict_versions_page(request: Request, manga_id: str):
+        form = await _validated_form(request)
+        return _page_update(
+            request, templates, database, manga_id,
+            lambda service: service.resolve_conflict_versions(
+                manga_id,
+                row_version=int(str(form.get("row_version", ""))),
+                old_versions={str(key): int(str(form.get(f"version:{key}", "")))
+                              for key in form.getlist("old_ids")},
+                target_status=str(form.get("target_status", "")),
+                reason=_optional_text(form.get("reason")),
+                confirmed=form.get("confirmed") == "yes",
+            ),
+            "conflict-versions-resolved", app_config=app_config,
+        )
+
     @app.post("/manga/{manga_id:path}/conflict-rename")
     async def conflict_rename_page(request: Request, manga_id: str):
         form = await _validated_form(request)
@@ -1208,6 +1251,7 @@ def _context(request, **values):
         "supervisor_modules": SUPERVISOR_MODULES,
         "allowed_actions": allowed_actions,
         "manual_status_targets": MANUAL_STATUS_TARGETS,
+        "bulk_status_targets": BULK_STATUS_TARGETS,
         "now": datetime.now(UTC),
         "special_phase_labels": PHASE_LABELS,
         **values,

@@ -1,0 +1,22 @@
+<section class="panel bulk-toolbar">
+  <label class="bulk-check"><input type="checkbox" data-bulk-all>本页全选</label>
+  <span data-bulk-count>已选 0 条</span>
+  <button type="button" data-bulk-open disabled>批量修改状态</button>
+  <small class="muted">仅处理本页勾选；翻页或筛选后清空选择。</small>
+</section>
+<section class="panel bulk-result" data-bulk-result hidden aria-live="polite"></section>
+<dialog id="bulk-status-dialog" class="status-dialog">
+  <form data-bulk-form hx-boost="false" class="status-dialog-form">
+    <div class="dialog-head"><h2>批量修改状态</h2><button type="button" data-close-dialog aria-label="关闭">×</button></div>
+    <p>将修改 <strong data-bulk-dialog-count>0</strong> 条档案。活动任务和版本冲突会逐条报错，其他档案继续处理；已处于目标状态的档案跳过。</p>
+    <label>目标状态<select name="target_status" required data-bulk-target>
+      <option value="">请选择</option>
+      {% for target in bulk_status_targets %}<option value="{{ target.status }}" data-requires-reason="{{ 'yes' if target.requires_reason else 'no' }}" data-description="{{ target.description }}">{{ target.label }}</option>{% endfor %}
+    </select></label>
+    <p class="muted" data-bulk-description></p>
+    <label data-bulk-method-label hidden>统一下载方式<select name="download_method" disabled><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}">{{ method }}</option>{% endfor %}</select></label>
+    <label><span data-bulk-reason-label>公共原因（可选）</span><textarea name="reason" rows="3" maxlength="4000"></textarea></label>
+    <p data-bulk-message role="status"></p>
+    <div class="dialog-actions"><button type="button" data-close-dialog>取消</button><button type="submit" class="primary">确认修改</button></div>
+  </form>
+</dialog>

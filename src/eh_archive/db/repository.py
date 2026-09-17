@@ -93,6 +93,17 @@ def _details_missing_clause():
     )
 
 
+def upload_blockers_clause(replacement_id):
+    """Keep failed deletions blocking too: the relation outlives OUTDATED."""
+    old = MangaRecord.__table__.alias("upload_blocker")
+    return exists(
+        select(1).select_from(old).where(
+            old.c.superseded_by_id == replacement_id,
+            old.c.status != Status.DELETED.value,
+        )
+    )
+
+
 def _delete_ready_clause():
     """Keep ordinary outdated rows queued until their replacement is underway."""
 
@@ -476,6 +487,8 @@ class ArchiveRepository:
             )
         elif operation == "delete":
             query = query.where(_delete_ready_clause())
+        elif operation == "upload":
+            query = query.where(~upload_blockers_clause(MangaRecord.manga_id))
         return self.session.scalar(query) is not None
 
     def claim_next(
@@ -515,6 +528,8 @@ class ArchiveRepository:
             )
         elif operation == "delete":
             query = query.where(_delete_ready_clause())
+        elif operation == "upload":
+            query = query.where(~upload_blockers_clause(MangaRecord.manga_id))
         manga = self.session.scalars(query).first()
         if manga is None:
             return None

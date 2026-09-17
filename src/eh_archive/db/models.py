@@ -104,6 +104,7 @@ class MangaRecord(Base):
         Index("ix_manga_lease_until", "lease_until"),
         Index("ix_manga_external_download_id", "external_download_id"),
         Index("ix_manga_lrr_archive_id", "lrr_archive_id"),
+        Index("ix_manga_superseded_status", "superseded_by_id", "status"),
     )
 
     manga_id: Mapped[str] = mapped_column(String(100), primary_key=True)
