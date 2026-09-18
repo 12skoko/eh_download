@@ -2,7 +2,7 @@
 {% block title %}配置 ▪ EH Archive控制台{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/configuration.css">
-<div class="page-head"><div><p class="eyebrow">运行配置</p><h1>配置</h1><p class="muted">按文件管理设置，保存后按字段标记生效。</p></div><a class="button" href="/system#services">服务与重启</a></div>
+<div class="page-head"><div><p class="eyebrow">运行配置</p><h1>配置</h1><p class="muted">按文件管理设置，保存后按字段标记生效。</p></div></div>
 <div data-config-editor>
   <div id="config-status" class="alert {{ 'error' if config_error else 'success' }}" role="alert" tabindex="-1" {% if not config_error and not notice %}hidden{% endif %}>
     <span data-status-message>{{ config_error or notice or '' }}</span>

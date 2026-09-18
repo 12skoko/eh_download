@@ -301,7 +301,7 @@ SECRETS_FIELDS = (
     ),
 )
 
-# Paths and connection endpoints belong to the file's advanced settings.
+# Paths and connection endpoints are editable; field_group controls their placement.
 APP_FIELDS = tuple(
     replace(
         spec,
@@ -378,11 +378,13 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
             "aria2_enabled",
             "hah_enabled",
         }:
-            return "下载与上传", False
+            return "下载与上传", key in {"aria2_enabled", "hah_enabled", "fallback_method"}
         if key in {"timezone", "log_level", "log_dir"}:
-            return "日志与时间", False
+            return "日志与时间", key in {"timezone", "log_level"}
         if key == "roots":
-            return "存储目录", True
+            return "存储目录", False
+        if key in {"qbittorrent_url", "qbit_torrent_path", "lanraragi_url", "lanraragi_smb_server"}:
+            return "连接与路径", False
         if key == "sessions" or key.endswith("url") or "path" in key or "smb" in key:
             return "连接与路径", True
         return "请求与处理限制", True
@@ -393,7 +395,7 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
             return "维护窗口", False
         if key in {"batch_size", "direct_download_batch_size", "torrent_stall_seconds"}:
             return "任务处理", False
-        return "特殊处理" if key == "special_processing" else "调度与重试", True
+        return "特殊处理" if key == "special_processing" else "调度与重试", path[-1].endswith("_seconds")
     if section == "crawl":
         if key in {"urls", "collect_tags"}:
             return "采集来源", False
@@ -401,7 +403,7 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
             return "采集范围", False
         return "筛选规则", key in {"video_markers", "excluded_resolutions", "tag_translation_url"}
     if section == "secrets":
-        return ("网页登录", False) if key.startswith("web_") else ("连接凭据", True)
+        return ("网页登录", False) if key.startswith("web_") else ("连接凭据", False)
     if section == "video_archive":
         return ("处理设置", False) if key in {"enabled", "work", "output"} else ("转换与限制", True)
     return "模块设置", key == "timeout_seconds"
