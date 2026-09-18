@@ -29,6 +29,7 @@ from ..logging import (
     session_log_path,
     special_job_log_path,
 )
+from ..management.config_migrations import migrate_configuration
 from ..special import SpecialRepository
 from ..special.handlers import enabled_module_capabilities
 from ..tasks.registry import MODULES
@@ -627,6 +628,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="eharchive-supervisor")
     parser.add_argument("--config-dir", default="config")
     args = parser.parse_args(argv)
+    migrated_files = migrate_configuration(args.config_dir)
     app, _, _, _ = load_config(args.config_dir)
     run_id = str(uuid.uuid4())
     requested_log_path = session_log_path(
@@ -640,6 +642,8 @@ def main(argv: list[str] | None = None) -> int:
         run_id=run_id,
         log_file=requested_log_path,
     )
+    if migrated_files:
+        log.info("配置迁移完成：%s", ", ".join(migrated_files))
     log.info(
         "supervisor started: run_id=%s pid=%s log=%s",
         run_id,

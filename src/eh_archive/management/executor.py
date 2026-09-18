@@ -423,7 +423,6 @@ class Executor:
             revision = MigrationContext.configure(connection).get_current_heads()
         self.state(database_revision=list(revision))
         migration_started = False
-        configuration_started = False
         code_changed = False
         try:
             if self.previous[SUPERVISOR_UNIT]:
@@ -437,8 +436,6 @@ class Executor:
             code_changed = True
             self.step("fast_forward_checkout", git.checkout, info["target_commit"])
             self.step("sync_python_environment", self.sync_environment)
-            configuration_started = True
-            self.step("merge_configuration", self.merge_configuration)
             self.step("validate_configuration", self.validate_configuration)
             migration_started = True
             self.step(
@@ -474,38 +471,16 @@ class Executor:
         except Cancelled:
             raise
         except Exception:
-            if not migration_started and not configuration_started:
+            if not migration_started:
                 if code_changed:
                     self.step("restore_old_commit", git.restore, info["old_commit"])
                     self.step("restore_old_environment", self.sync_environment)
                 self.restore_services()
             raise
         finally:
-            # Merging/migration failures require manual inspection, not recovery writes.
-            if not migration_started and not configuration_started:
+            # Once database migration begins, failures require manual inspection.
+            if not migration_started:
                 self.control(self.previous["control"])
-
-    def merge_configuration(self):
-        backup = (
-            self.config.config_dir
-            / "backups"
-            / datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M%S-%f")
-        )
-        self.state(configuration_backup=str(backup))
-        # Use the newly checked-out code, not modules already imported by this executor.
-        self.runner.run(
-            [
-                self.config.python,
-                "-m",
-                "eh_archive.management.config_sync",
-                self.config.config_dir,
-                "--samples",
-                self.config.repository / "config.sample",
-                "--backup",
-                backup,
-            ],
-            cwd=self.config.repository,
-        )
 
     def sync_environment(self):
         self.runner.run(

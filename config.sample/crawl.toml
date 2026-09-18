@@ -1,3 +1,4 @@
+config_version = 1
 observation_days = 1
 collect_end_days = 6
 collect_end_offset = 3000
@@ -7,6 +8,7 @@ tag_keywords = []
 exclude_categories = []
 video_markers = ["mp4", "video"]
 excluded_resolutions = ["1280x", "800x", "1920x", "2560x"]
+tag_translation_url = "https://github.com/EhTagTranslation/Database/releases/latest/download/db.text.json"
 
 [urls]
 # latest = "https://e-hentai.org/?f_search=..."

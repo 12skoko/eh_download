@@ -1,13 +1,15 @@
+config_version = 2
 database_url = "postgresql+psycopg://localhost/eh_archive"
 timezone = "Asia/Shanghai"
 log_level = "INFO"
 log_dir = "D:/eharchive-data/log"
 # Force "http" or "filesystem", or let "auto" apply the size rule below.
 upload_backend = "auto"
+allowed_archive_extensions = [".zip"]
 # In auto mode, files at or above this size use the SMB filesystem backend.
 # Set to 0 to use HTTP for every file in auto mode.
 large_upload_threshold_bytes = 2147483648
-web_host = "0.0.0.0"
+web_host = "127.0.0.1"
 web_port = 8787
 qbittorrent_url = "http://127.0.0.1:8080"
 # Per-torrent upload limit for torrent_download, in decimal kB/s. 0 means unlimited.

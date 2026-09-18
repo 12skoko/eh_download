@@ -2,10 +2,16 @@ import sys
 from pathlib import Path
 
 from ..config import load_config, load_video_archive_config
+from .config_migrations import prepared_configuration
 
 
 def main():
-    directory = Path(sys.argv[1])
+    # Preview the upgraded representation; only service startup publishes it.
+    with prepared_configuration(Path(sys.argv[1])) as (directory, _, _):
+        validate(directory)
+
+
+def validate(directory):
     load_config(directory)
     if (directory / "special" / "video_archive.toml").exists():
         load_video_archive_config(directory)

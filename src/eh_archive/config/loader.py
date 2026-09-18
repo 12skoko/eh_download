@@ -11,6 +11,8 @@ from typing import Any
 from urllib.parse import quote_plus
 
 from ..tasks.registry import MODULES
+from .defaults import effective_values
+from .validation import validate_structure
 
 DEFAULT_LOCATIONS = (
     "torrent_download",
@@ -137,7 +139,6 @@ class SupervisorConfig:
     modules: dict[str, bool] = field(
         default_factory=lambda: {name: True for name in SUPERVISOR_MODULES}
     )
-    max_concurrency: dict[str, int] = field(default_factory=lambda: {name: 1 for name in MODULES})
 
     def schedule_for(self, operation: str) -> ModuleSchedule:
         module = MODULES[operation]
@@ -271,7 +272,10 @@ def _read_toml(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     with path.open("rb") as handle:
-        return tomllib.load(handle)
+        try:
+            return tomllib.load(handle)
+        except tomllib.TOMLDecodeError:
+            raise ValueError(f"{path.name}: TOML 语法错误，请检查原文件。") from None
 
 
 def _parse_cookie_string(value: str, *, account: str = "default") -> dict[str, str]:
@@ -414,9 +418,10 @@ def load_video_archive_config(directory: str | Path = "config") -> VideoArchiveC
     path = Path(directory) / "special" / "video_archive.toml"
     if not path.is_file():
         raise ValueError(f"special module config is missing: {path}")
-    raw = _read_toml(path)
+    raw = effective_values("special/video_archive.toml", _read_toml(path))
     unknown = sorted(
-        set(raw) - {"enabled", "auto_start", "download", "work", "ffmpeg", "output", "safety"}
+        set(raw)
+        - {"config_version", "enabled", "auto_start", "download", "work", "ffmpeg", "output", "safety"}
     )
     if unknown:
         raise ValueError("unsupported video_archive config sections: " + ", ".join(unknown))
@@ -530,10 +535,13 @@ def load_config(
     """
 
     directory = Path(directory)
-    app_raw = _read_toml(directory / "app.toml")
-    supervisor_raw = _read_toml(directory / "supervisor.toml")
-    crawl_raw = _read_toml(directory / "crawl.toml")
-    secrets_raw = _read_toml(directory / "secrets.toml")
+    app_raw = effective_values("app.toml", _read_toml(directory / "app.toml"))
+    supervisor_raw = effective_values("supervisor.toml", _read_toml(directory / "supervisor.toml"))
+    crawl_raw = effective_values("crawl.toml", _read_toml(directory / "crawl.toml"))
+    secrets_raw = effective_values("secrets.toml", _read_toml(directory / "secrets.toml"))
+    for filename, raw in (("app.toml", app_raw), ("supervisor.toml", supervisor_raw),
+                          ("crawl.toml", crawl_raw), ("secrets.toml", secrets_raw)):
+        validate_structure(filename, raw)
     database_url = (
         os.getenv("EHARCHIVE_DATABASE_URL")
         or secrets_raw.get("database_url")
@@ -547,7 +555,7 @@ def load_config(
         else (Path.cwd() / "log").resolve()
     )
     qbit_torrent_path: str | None = None
-    if app_raw.get("qbit_torrent_path") is not None:
+    if app_raw.get("qbit_torrent_path"):
         qbit_torrent_path = str(app_raw["qbit_torrent_path"]).strip()
         if not _is_absolute_external_path(qbit_torrent_path):
             raise ValueError(
@@ -631,7 +639,6 @@ def load_config(
         raise ValueError("eh_request_retry_delay_seconds must not be negative")
     if app.eh_unavailable_cooldown_seconds < 0:
         raise ValueError("eh_unavailable_cooldown_seconds must not be negative")
-    limits = dict(supervisor_raw.get("max_concurrency", {}))
     special_raw = dict(supervisor_raw.get("special_processing", {}))
     supervisor = SupervisorConfig(
         poll_seconds=float(supervisor_raw.get("poll_seconds", 5)),
@@ -667,10 +674,6 @@ def load_config(
         special_job_lease_seconds=int(special_raw.get("default_job_lease_seconds", 900)),
         special_max_concurrency=int(special_raw.get("max_concurrency", 1)),
         modules=_module_map(supervisor_raw.get("modules", {})),
-        max_concurrency={
-            **SupervisorConfig().max_concurrency,
-            **{str(k): int(v) for k, v in limits.items()},
-        },
     )
     schedules_raw = supervisor_raw.get("schedules", {})
     if not isinstance(schedules_raw, dict):

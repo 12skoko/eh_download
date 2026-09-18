@@ -19,6 +19,7 @@ from ..config.loader import SUPERVISOR_MODULES
 from ..db import Database
 from ..db.models import MangaRecord, SystemControl, SystemHealth
 from ..logging import configure_logging, get_logger
+from ..management.config_migrations import migrate_configuration
 from ..services.paths import safe_filename
 from ..special.remarks import PHASE_LABELS, user_remark
 from ..special.service import (
@@ -40,9 +41,11 @@ from .auth import (
     valid_password_hash,
 )
 from .configuration import (
+    POLICY_LABELS,
     ConfigurationConflict,
     ConfigurationError,
     load_config_sections,
+    update_config_section,
 )
 from .services import (
     BULK_STATUS_TARGETS,
@@ -474,21 +477,42 @@ def create_app(
     @app.get("/config", response_class=HTMLResponse)
     def config_page(
         request: Request,
-        notice: str | None = None,
-        updated_file: str | None = None,
+        section: str = "app",
+        saved: str | None = None,
     ):
-        try:
-            sections = load_config_sections(config_dir)
-        except (ConfigurationError, OSError, TypeError, ValueError) as exc:
-            return _error_response(request, templates, InvalidRequest(f"读取配置失败：{exc}"))
+        return render_config(request, section, saved=saved)
+
+    def render_config(request, selected, *, saved=None, error=None, form=None, status=200):
+        from dataclasses import replace
+
+        sections = load_config_sections(config_dir)
+        active = next((s for s in sections if s.name == selected), sections[0])
+        if isinstance(error, ConfigurationConflict) and form is not None:
+            active = replace(active, revision=str(form.get("revision", "")))
+        if form is not None:
+            active = replace(active, fields=tuple(
+                replace(field,
+                        value=str(form.get(field.name, field.value)) if not field.secret else "",
+                        checked=field.name in form if field.editable else field.checked,
+                        error=error.fields.get(field.name, "") if error else "")
+                for field in active.fields
+            ))
+        messages = {
+            "next_worker": "已保存。下一次 Worker 启动时生效，当前任务继续使用原配置。",
+            "supervisor": "已保存。需要重启 Supervisor 后生效。",
+            "web": "已保存。需要重启 Web 后生效。",
+            "web_and_supervisor": "已保存。需要重启 Web 和 Supervisor 后生效。",
+            "none": "配置没有变化。",
+        }
         return templates.TemplateResponse(
             request=request,
             name="config.html",
+            status_code=status,
             context=_context(
-                request,
-                sections=sections,
-                notice=notice,
-                updated_file=updated_file,
+                request, sections=sections, active_section=active,
+                config_error=str(error) if error else active.error,
+                notice=messages.get(saved), saved_policy=saved,
+                policy_labels=POLICY_LABELS,
             ),
         )
 
@@ -496,31 +520,22 @@ def create_app(
     async def update_config_page(request: Request, section_name: str):
         form = await _validated_form(request)
         try:
-            from ..management.configuration import stage
-            from ..management.service import submit
-
-            result = submit(
-                "apply_config",
-                _actor(request),
-                management_path=Path(management_config),
-                prepare=lambda config, operation: stage(
-                    config,
-                    operation,
-                    section_name,
-                    form,
-                    str(form.get("revision", "")),
-                ),
+            result = update_config_section(
+                config_dir, section_name, form, revision=str(form.get("revision", "")),
             )
-        except ConfigurationConflict as exc:
-            return _error_response(request, templates, Conflict(str(exc)))
         except ConfigurationError as exc:
-            return _error_response(request, templates, InvalidRequest(str(exc)))
-        if request.headers.get("accept") == "application/json":
-            return JSONResponse(result, status_code=202)
-        return _redirect_response(
-            request,
-            f"/system/operations/{result['id']}",
-        )
+            status = 409 if isinstance(exc, ConfigurationConflict) else 422
+            if "application/json" in request.headers.get("accept", ""):
+                return JSONResponse({"detail": str(exc), "fields": exc.fields}, status_code=status)
+            return render_config(request, section_name, error=exc, form=form, status=status)
+        target = "/config?" + urlencode({
+            "section": section_name,
+            "saved": result.restart if result.changed_fields else "none",
+        })
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"redirect": target, "changed_fields": result.changed_fields,
+                                 "policy": result.restart})
+        return _redirect_response(request, target)
 
     from .special_routes import install_special_routes
 
@@ -1509,6 +1524,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="eharchive-web")
     parser.add_argument("--config-dir", default="config")
     args = parser.parse_args(argv)
+    migrated_files = migrate_configuration(args.config_dir)
     app_config, _, _, _ = load_config(args.config_dir)
     configure_logging(
         app_config.log_level,
@@ -1525,6 +1541,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.propagate = True
         logger.setLevel(app_config.log_level.upper())
     logger = get_logger("web")
+    if migrated_files:
+        logger.info("配置迁移完成：%s", ", ".join(migrated_files))
     logger.info("Starting Web on %s:%s", app_config.web_host, app_config.web_port)
     import uvicorn
 

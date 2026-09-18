@@ -1,0 +1,20 @@
+<div class="config-setting {{ 'config-field-wide' if field.kind in ['lines', 'mapping', 'toml'] }}" data-field="{{ field.name }}">
+  <div class="config-setting-heading"><label for="setting-{{ field.name }}">{{ field.label }}</label><span class="config-effect {{ 'effect-restart' if field.policy != 'next_worker' }}">{{ policy_labels[field.policy] }}</span></div>
+  <code class="config-key">{{ field.key }}</code>
+  {% if not field.editable %}
+    <div class="config-readonly"><pre>{{ field.value or '—' }}</pre><small>此项固定，不可修改。</small></div>
+  {% elif field.kind == 'bool' %}
+    <label class="config-switch"><input id="setting-{{ field.name }}" type="checkbox" name="{{ field.name }}" value="true" {{ 'checked' if field.checked }} aria-describedby="error-{{ field.name }}"><span>启用</span></label>
+  {% elif field.kind in ['lines', 'mapping', 'toml'] %}
+    <textarea id="setting-{{ field.name }}" name="{{ field.name }}" rows="4" spellcheck="false" aria-describedby="error-{{ field.name }}" {% if field.secret %}autocomplete="off" placeholder="留空保留已有内容"{% endif %}>{{ field.value }}</textarea>
+  {% elif field.kind == 'choice' %}
+    <select id="setting-{{ field.name }}" name="{{ field.name }}" aria-describedby="error-{{ field.name }}">{% for option in field.options %}<option value="{{ option }}" {{ 'selected' if field.value == option }}>{{ option }}</option>{% endfor %}</select>
+  {% else %}
+    <input id="setting-{{ field.name }}" name="{{ field.name }}" value="{{ field.value }}" type="{{ 'password' if field.secret else 'number' if field.kind in ['int', 'float'] else 'time' if field.kind == 'time' else 'text' }}" {% if field.kind in ['int', 'float'] %}step="{{ '1' if field.kind == 'int' else 'any' }}"{% endif %} {% if field.minimum is not none %}min="{{ field.minimum }}"{% endif %} {% if field.maximum is not none %}max="{{ field.maximum }}"{% endif %} {% if field.secret %}autocomplete="new-password" placeholder="留空保留已有内容"{% endif %} aria-describedby="error-{{ field.name }}">
+  {% endif %}
+  {% if field.help %}<small class="config-help">{{ field.help }}</small>{% endif %}
+  <p class="config-field-error" id="error-{{ field.name }}" {% if not field.error %}hidden{% endif %}>{{ field.error }}</p>
+  {% if field.editable and not field.secret %}
+  <div class="config-default"><small data-override-label>{{ '用户设置' if field.overridden else '使用默认值' }} · 默认：{{ field.default if field.default else '未设置' }}</small><button type="button" class="link-button" data-reset="{{ field.name }}" data-default="{{ field.default }}" data-kind="{{ field.kind }}" title="保存时移除用户覆盖，以后跟随默认值">恢复默认</button></div>
+  {% elif field.secret %}<small class="config-help">{{ '已设置' if field.overridden else '未设置' }}</small>{% endif %}
+</div>

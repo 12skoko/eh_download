@@ -125,6 +125,30 @@ python3.11 -m venv .venv
 
 ### 4.1 创建本地配置文件
 
+`eharchive-web` 和 `eharchive-supervisor` 启动时，在加载业务配置前检查各运行配置文件顶层的
+`config_version`。这是配置结构版本，与程序发布版本无关；没有版本号的已有文件按版本 0 处理。
+低版本按顺序迁移，相同版本不改写，高于程序支持版本则拒绝启动，不进行降级转换。
+普通 CLI 任务和 Worker 不执行迁移，升级后应先启动 Web 或 Supervisor。
+
+目前 `supervisor.toml` 的结构版本为 3，`app.toml` 为 2，`crawl.toml`、
+`secrets.toml` 及已有的三个 `special/*.toml` 配置为 1。`migration.toml` 是旧数据库导入工具
+配置，不在本次运行配置迁移范围内。缺失的特殊模块配置不会自动创建。
+
+迁移先在临时目录转换并使用配置加载器校验，通过后将受影响的原文件备份到
+`config/backups/config-migration-<时间>/`，再逐个原子替换真实文件并记录新版本。
+语法、版本或配置校验失败时，不改写任何真实配置；磁盘写入中断可能留下部分已完成文件，
+修复后再次启动会按每个文件的版本继续处理。两个服务同时启动使用同一个文件锁，不会重复迁移。
+
+首个结构转换将 `collect_initial_delay_seconds`、`collect_interval_seconds` 和
+`torrent_poll_seconds` 分别移到 `schedules.collect.initial_delay_seconds`、
+`schedules.collect.interval_seconds` 和 `schedules.torrent_check.interval_seconds`。
+显式填写的新字段优先，值冲突时输出提示但不输出配置值。其他用户字段和值保留，不按示例删除。
+
+Web 更新流程只在临时目录预先校验迁移结果，不再按模板重写用户配置；真正迁移由服务启动执行。
+迁移步骤和各文件支持版本集中在 `eh_archive.management.config_migrations.steps`。
+以后字段改名或移动时，在对应文件的迁移序列末尾追加一步，并更新示例中的版本号；已发布的
+历史步骤应保持固定，不依赖今后可能变化的模块注册信息。不要手工提高用户文件版本号来跳过迁移。
+
 仓库中的配置模板统一保存在 `config.sample/`，真实运行配置统一保存在 `config/`。Git 跟踪前者并整体忽略后者，因此以后增加真实配置文件时不需要继续修改 `.gitignore`。首次配置时创建真实配置目录并复制四个必要模板：
 
 ```powershell
@@ -281,7 +305,7 @@ latest = "https://e-hentai.org/?f_search=..."
 - `maintenance_retry_seconds`：维护结束后数据库尚未恢复时的重新连接间隔，默认 30 秒；
 - `maintenance_recovery_timeout_seconds`：维护结束后等待数据库恢复的最长时间，默认 900 秒；超时后按数据库严重故障退出；
 - `[modules]`：控制 Supervisor 是否自动调度各业务模块；
-- `max_concurrency`：各任务槽的并发数，默认每类为 1；
+- 普通模块每类最多运行一个 Worker；版本 3 已移除未使用的 `[max_concurrency]` 配置，升级时自动删除旧表；特殊处理的并发配置仍然有效；
 
 不要把 `torrent_download` 的并发数理解为 qBittorrent 的传输数。它只限制 EH Archive 同时查找和提交种子的控制任务；完成检测由独立的 `torrent_check` 定时模块负责；已经提交的种子由 qBittorrent 自己管理。
 
@@ -738,8 +762,20 @@ Linux 上激活 `eh` 环境后，在仓库目录运行
 安装默认不启动、不设置开机自启；使用 `service start all` 启动。
 
 Web 的“系统”页面提供服务控制、更新检查、更新执行和操作历史。
-配置页面提交的是配置发布操作，可在详情页查看修改字段、生效范围和日志。
-`crawl.toml` 由下一次 Worker 读取，其他字段按各自范围重启受影响的运行中服务。
+配置页面按原始 TOML 文件切换，各文件提供普通设置和默认折叠的高级设置。
+字段旁标注“下次任务生效”或需要重启的服务；“下次任务”指新的 Worker 进程启动，
+当前 Worker 不会中途更换配置。保存直接写入当前文件，不自动重启，也不跳到操作历史页面。
+需重启的改动会在保存结果中提供“服务与重启”入口。重启服务仍通过系统页面执行。
+
+程序与网页共同从 `config.sample/` 读取默认值，再逐字段合并 `config/` 的覆盖值。
+“恢复默认”在保存时移除该字段的用户覆盖；没有修改的默认值不会全部写入用户文件。
+示例凭据不参与默认值合并，`secrets.toml` 的密码、Cookie 和令牌只使用用户显式填写的值。
+敏感字段不回显，留空保留原值；高级凭据配置表填写 TOML 内容后整体替换对应表。
+首次采用默认值合并时，app 配置迁移会保留旧版隐含的时区、日志目录等值，避免升级改变现有行为。
+
+保存前统一校验类型、字段名称、取值及关联约束。错误显示在字段和页面顶部，且不写入文件。
+保存会检查文件修订值，防止覆盖外部编辑；原文件保留一份 `.bak`，不提供备份管理界面。
+已有的特殊模块配置文件也各自展示；缺少的特殊配置不会因为打开页面而创建。
 修改日志目录后，锁仍固定使用 `/run/eharchive/deployment.lock`。
 
 `eharchive update check` 检查登记的 Git 分支，`eharchive update apply` 提交更新。

@@ -10,6 +10,7 @@ from ..web.configuration import (
     update_config_section,
 )
 from . import ManagementError
+from .config_migrations import configuration_lock
 from .state import atomic_write, read_json, write_json
 
 
@@ -49,6 +50,11 @@ def stage(config, operation: Path, section: str, values, revision: str) -> dict:
 
 
 def publish(config, operation: Path) -> dict:
+    with configuration_lock(config.config_dir):
+        return _publish(config, operation)
+
+
+def _publish(config, operation: Path) -> dict:
     metadata = read_json(operation / "configuration.json")
     if metadata["filename"] not in CONFIG_FILENAMES.values():
         raise ManagementError("Invalid configuration filename", "invalid_request")
@@ -71,6 +77,11 @@ def publish(config, operation: Path) -> dict:
 
 
 def restore(config, operation: Path) -> None:
+    with configuration_lock(config.config_dir):
+        _restore(config, operation)
+
+
+def _restore(config, operation: Path) -> None:
     metadata = read_json(operation / "configuration.json")
     if not metadata["applied"] or metadata["restored"]:
         return

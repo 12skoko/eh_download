@@ -1,0 +1,34 @@
+.config-layout { display: grid; grid-template-columns: 235px minmax(0, 1fr); gap: 24px; align-items: start; }
+.config-file-nav { display: grid; gap: 6px; position: sticky; top: 20px; }
+.config-file-nav a { padding: 13px 15px; border: 1px solid transparent; border-radius: 9px; display: grid; gap: 6px; color: var(--muted); overflow-wrap: anywhere; }
+.config-file-nav strong { font-size: 13px; color: var(--text); }
+.config-file-nav a[aria-current] { background: var(--surface); border-color: var(--line); box-shadow: var(--shadow); }
+.config-file-nav a[aria-current] strong { color: var(--accent); }
+.config-editor-panel { min-width: 0; padding: 24px; }
+.config-editor-panel h2 { margin-bottom: 8px; }
+.config-note, .config-help, .config-default small { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.config-group { border: 0; padding: 18px 0 24px; margin: 0; border-top: 1px solid var(--line); min-width: 0; }
+.config-group legend { padding-right: 12px; font-weight: 650; font-size: 13px; }
+.config-setting { min-width: 0; display: flex; flex-direction: column; gap: 7px; padding: 8px 0; }
+.config-setting-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between; }
+.config-setting-heading label { font-weight: 600; font-size: 13px; margin: 0; }
+.config-effect { font-size: 10px; font-weight: 500; padding: 3px 7px; border-radius: 5px; color: var(--green); background: var(--green-soft); white-space: nowrap; }
+.config-effect.effect-restart { color: var(--amber); background: var(--amber-soft); }
+.config-key { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.config-setting input:not([type=checkbox]), .config-setting select, .config-setting textarea { width: 100%; }
+.config-switch { display: flex; flex-direction: row; align-items: center; gap: 10px; min-height: 38px; margin: 0; }
+.config-switch input { width: 18px; min-height: 18px; accent-color: var(--accent); }
+.config-default { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.config-default small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 75%; }
+.config-default button { font-size: 11px; white-space: nowrap; min-height: 25px; padding: 0; color: var(--accent); }
+.config-advanced { border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.config-advanced summary { cursor: pointer; font-weight: 650; }
+.config-advanced summary small { color: var(--muted); font-weight: 400; margin-left: 10px; }
+.config-advanced[open] summary { margin-bottom: 24px; }
+.config-save-bar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--surface); border-top: 1px solid var(--line); padding: 18px 0 0; }
+.config-save-bar span { font-size: 12px; color: var(--muted); }
+.config-field-error { margin: 0; color: var(--red); font-size: 12px; }
+.config-setting [aria-invalid=true] { border-color: var(--red); }
+[data-config-editor] [hidden] { display: none !important; }
+#config-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+@media (max-width: 900px) { .config-layout { grid-template-columns: 1fr; } .config-file-nav { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); } .config-editor-panel .config-field-grid { grid-template-columns: 1fr; } .config-save-bar { flex-wrap: wrap; } }

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import re
 import shutil
 import tempfile
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,10 @@ from typing import Any
 import tomlkit
 
 from ..config import load_config, load_video_archive_config
+from ..config.defaults import effective_values, sample_values
 from ..config.loader import DEFAULT_LOCATIONS, SUPERVISOR_MODULES
+from ..config.validation import ConfigValueError, validate_structure
+from ..management.config_migrations import configuration_lock
 from ..tasks.registry import MODULES
 
 CONFIG_FILENAMES = {
@@ -23,13 +27,18 @@ CONFIG_FILENAMES = {
     "supervisor": "supervisor.toml",
     "crawl": "crawl.toml",
     "video_archive": "special/video_archive.toml",
+    "lanraragi_compare": "special/lanraragi_compare.toml",
+    "download_cleanup": "special/download_cleanup.toml",
+    "secrets": "secrets.toml",
 }
 _CONFIG_WRITE_LOCK = threading.Lock()
 _DELETE = object()
 
 
 class ConfigurationError(Exception):
-    pass
+    def __init__(self, message: str, fields: dict[str, str] | None = None):
+        super().__init__(message)
+        self.fields = fields or {}
 
 
 class ConfigurationConflict(ConfigurationError):
@@ -45,6 +54,9 @@ class FieldSpec:
     options: tuple[str, ...] = ()
     minimum: float | None = None
     help: str = ""
+    maximum: float | None = None
+    optional: bool = False
+    secret: bool = False
 
     @property
     def name(self) -> str:
@@ -63,6 +75,15 @@ class ConfigField:
     value: str
     checked: bool = False
     policy: str = ""
+    group: str = "普通设置"
+    advanced: bool = False
+    key: str = ""
+    default: str = ""
+    overridden: bool = False
+    maximum: float | None = None
+    optional: bool = False
+    secret: bool = False
+    error: str = ""
 
 
 @dataclass(frozen=True)
@@ -73,6 +94,8 @@ class ConfigSection:
     revision: str
     restart: str
     fields: tuple[ConfigField, ...]
+    error: str = ""
+    exists: bool = True
 
 
 @dataclass(frozen=True)
@@ -107,7 +130,7 @@ APP_FIELDS = (
         "Web 监听地址",
         help="",
     ),
-    FieldSpec(("web_port",), "Web 端口", "int", minimum=1),
+    FieldSpec(("web_port",), "Web 端口", "int", minimum=1, maximum=65535),
     FieldSpec(("qbittorrent_url",), "qBittorrent 地址", editable=False),
     FieldSpec(("qbit_torrent_path",), "qBittorrent 下载路径", editable=False),
     FieldSpec(("lanraragi_url",), "LANraragi 地址", editable=False),
@@ -184,10 +207,16 @@ SUPERVISOR_FIELDS = (
         for key, label in (("initial_delay_seconds", "首次延迟"), ("interval_seconds", "运行间隔"))
     ),
     *(FieldSpec(("modules", name), f"启动组件：{name}", "bool") for name in SUPERVISOR_MODULES),
-    *(
-        FieldSpec(("max_concurrency", name), f"最大并发：{name}", "int", minimum=1)
-        for name in MODULES
-    ),
+)
+
+SUPERVISOR_FIELDS = tuple(
+    replace(
+        spec,
+        label="启用" + (MODULES[spec.path[1]].label if spec.path[1] in MODULES else "特殊处理"),
+    )
+    if spec.path[0] == "modules"
+    else spec
+    for spec in SUPERVISOR_FIELDS
 )
 
 CRAWL_FIELDS = (
@@ -229,25 +258,189 @@ VIDEO_ARCHIVE_FIELDS = (
     FieldSpec(("safety", "max_expanded_bytes"), "ZIP 最大展开字节数", "int", minimum=1),
 )
 
+SECRETS_FIELDS = (
+    FieldSpec(("web_username",), "网页登录用户名"),
+    FieldSpec(
+        ("web_password_hash",),
+        "网页登录密码哈希",
+        secret=True,
+        optional=True,
+        help="填写 eharchive web-password 生成的哈希；留空保留原值。",
+    ),
+    FieldSpec(
+        ("web_secret",),
+        "Web 会话密钥",
+        secret=True,
+        optional=True,
+        help="修改后需重新登录；留空保留原值。",
+    ),
+    FieldSpec(
+        ("database_url",),
+        "数据库连接地址",
+        secret=True,
+        optional=True,
+        help="仅在更换数据库时填写完整连接地址；留空保留原值。",
+    ),
+    *(
+        FieldSpec(
+            (name,),
+            label,
+            "toml",
+            secret=True,
+            optional=True,
+            help="填写此配置表内的 TOML 内容，将整体替换该表；留空保留原值。",
+        )
+        for name, label in (
+            ("accounts", "站点账号与 Cookie"),
+            ("networks", "代理与网络"),
+            ("sessions", "会话角色覆盖"),
+            ("qbittorrent", "qBittorrent 认证"),
+            ("lanraragi", "LANraragi 请求头"),
+            ("lanraragi_smb", "SMB 认证"),
+        )
+    ),
+)
+
+# Paths and connection endpoints belong to the file's advanced settings.
+APP_FIELDS = tuple(
+    replace(
+        spec,
+        editable=True,
+        optional=spec.path[0]
+        in {
+            "qbit_torrent_path",
+            "lanraragi_smb_server",
+            "lanraragi_smb_share",
+            "lanraragi_smb_relative_dir",
+        },
+    )
+    if not spec.editable and spec.path[0] != "sessions"
+    else spec
+    for spec in APP_FIELDS
+) + (
+    FieldSpec(("sessions", "browse", "account"), "浏览账号"),
+    FieldSpec(("sessions", "browse", "network"), "浏览网络"),
+    FieldSpec(("sessions", "archive", "account"), "归档账号"),
+    FieldSpec(("sessions", "archive", "network"), "归档网络"),
+)
+APP_FIELDS = tuple(
+    spec
+    for spec in APP_FIELDS
+    if spec.path not in {("sessions", "browse"), ("sessions", "archive")}
+)
+VIDEO_ARCHIVE_FIELDS = tuple(
+    replace(spec, maximum=100 if spec.path == ("ffmpeg", "quality") else 6)
+    if spec.path in {("ffmpeg", "quality"), ("ffmpeg", "compression_level")}
+    else spec
+    for spec in VIDEO_ARCHIVE_FIELDS
+)
+
 _SECTION_META = {
     "app": ("应用配置", "Web 和 Supervisor", APP_FIELDS),
     "supervisor": ("调度配置", "Supervisor", SUPERVISOR_FIELDS),
     "crawl": ("采集配置", "next_worker", CRAWL_FIELDS),
+    "secrets": ("账号与认证", "Web 和 Supervisor", SECRETS_FIELDS),
+    "video_archive": ("视频档案特殊处理", "Supervisor", VIDEO_ARCHIVE_FIELDS),
+    "lanraragi_compare": (
+        "LANraragi 核对",
+        "Supervisor",
+        (
+            FieldSpec(("enabled",), "启用核对模块", "bool"),
+            FieldSpec(("max_concurrency",), "最大并发", "int", minimum=1),
+            FieldSpec(("timeout_seconds",), "请求超时（秒）", "float", minimum=0.001),
+        ),
+    ),
+    "download_cleanup": (
+        "下载残留清理",
+        "Supervisor",
+        (FieldSpec(("enabled",), "启用下载残留清理", "bool"),),
+    ),
 }
+
+POLICY_LABELS = {
+    "next_worker": "下次任务生效",
+    "supervisor": "需重启 Supervisor",
+    "web": "需重启 Web",
+    "web_and_supervisor": "需重启 Web 和 Supervisor",
+}
+
+
+def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
+    key = path[0]
+    if section == "app":
+        if key.startswith("web_"):
+            return "Web 服务", False
+        if key in {
+            "upload_backend",
+            "large_upload_threshold_bytes",
+            "fallback_method",
+            "torrent_upload_limit_kb_per_second",
+            "aria2_enabled",
+            "hah_enabled",
+        }:
+            return "下载与上传", False
+        if key in {"timezone", "log_level", "log_dir"}:
+            return "日志与时间", False
+        if key == "roots":
+            return "存储目录", True
+        if key == "sessions" or key.endswith("url") or "path" in key or "smb" in key:
+            return "连接与路径", True
+        return "请求与处理限制", True
+    if section == "supervisor":
+        if key in {"modules", "schedules"}:
+            return "模块开关" if key == "modules" else "定时运行", False
+        if key in {"maintenance_start", "maintenance_end"}:
+            return "维护窗口", False
+        if key in {"batch_size", "direct_download_batch_size", "torrent_stall_seconds"}:
+            return "任务处理", False
+        return "特殊处理" if key == "special_processing" else "调度与重试", True
+    if section == "crawl":
+        if key in {"urls", "collect_tags"}:
+            return "采集来源", False
+        if key in {"observation_days", "collect_end_days", "collect_end_offset"}:
+            return "采集范围", False
+        return "筛选规则", key in {"video_markers", "excluded_resolutions", "tag_translation_url"}
+    if section == "secrets":
+        return ("网页登录", False) if key.startswith("web_") else ("连接凭据", True)
+    if section == "video_archive":
+        return ("处理设置", False) if key in {"enabled", "work", "output"} else ("转换与限制", True)
+    return "模块设置", key == "timeout_seconds"
 
 
 def field_policy(section: str, field: str) -> str:
     if section == "crawl":
         return "next_worker"
     if section == "supervisor":
-        return "supervisor"
+        if field == "health_check_interval_seconds":
+            return "web_and_supervisor"
+        return (
+            "next_worker"
+            if field
+            in {
+                "direct_download_batch_size",
+                "retry_limit",
+                "torrent_stall_seconds",
+                "upload_timeout_seconds",
+            }
+            else "supervisor"
+        )
     if section == "video_archive":
         return "supervisor" if field in {"enabled", "work__max_concurrency"} else "next_worker"
+    if section in {"download_cleanup", "lanraragi_compare"}:
+        return "next_worker" if field == "timeout_seconds" else "supervisor"
+    if section == "secrets":
+        if field.startswith("web_"):
+            return "web"
+        if field == "database_url":
+            return "web_and_supervisor"
+        return "supervisor" if field in {"qbittorrent", "lanraragi"} else "next_worker"
     if field in {"web_host", "web_port"}:
         return "web"
     if field in {"database_url", "timezone", "log_level", "log_dir"} or field.startswith("roots__"):
         return "web_and_supervisor"
-    return "supervisor"
+    return "supervisor" if field in {
+        "eh_unavailable_cooldown_seconds", "qbittorrent_url", "lanraragi_url"
+    } else "next_worker"
 
 
 def merged_policy(section: str, fields) -> str:
@@ -257,44 +450,112 @@ def merged_policy(section: str, fields) -> str:
     return next((p for p in ("web", "supervisor") if p in policies), "next_worker")
 
 
+def _section_document(config_dir: Path, name: str):
+    path = config_dir / CONFIG_FILENAMES[name]
+    raw = path.read_bytes() if path.exists() else b""
+    try:
+        document = tomlkit.parse(raw.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        raise ConfigurationError(
+            f"{CONFIG_FILENAMES[name]} 的 TOML 格式或编码错误，请修正原文件。"
+        ) from None
+    # Two special modules support both legacy flat and named-table layouts.
+    table = (
+        document.get(name, document)
+        if name in {"download_cleanup", "lanraragi_compare"}
+        else document
+    )
+    if not isinstance(table, Mapping):
+        raise ConfigurationError(f"{CONFIG_FILENAMES[name]} 必须使用配置表。")
+    defaults = sample_values(CONFIG_FILENAMES[name])
+    defaults = defaults.get(name, defaults)
+    if name in {"download_cleanup", "lanraragi_compare"}:
+        from ..config.defaults import merge_values
+
+        effective = merge_values(defaults, table.unwrap())
+    else:
+        effective = effective_values(CONFIG_FILENAMES[name], table.unwrap())
+    return raw, document, table, defaults, effective
+
+
 def load_config_sections(config_dir: str | Path) -> tuple[ConfigSection, ...]:
     config_dir = Path(config_dir)
-    app, supervisor, crawl, _ = load_config(config_dir)
-    values = {
-        "app": _app_values(app),
-        "supervisor": _supervisor_values(supervisor),
-        "crawl": _crawl_values(crawl),
-    }
-    section_meta = dict(_SECTION_META)
-    video_path = config_dir / CONFIG_FILENAMES["video_archive"]
-    if video_path.is_file():
-        values["video_archive"] = _video_archive_values(load_video_archive_config(config_dir))
-        section_meta["video_archive"] = (
-            "视频档案特殊处理",
-            "Supervisor 与 Web",
-            VIDEO_ARCHIVE_FIELDS,
-        )
-    sections: list[ConfigSection] = []
-    for name, (title, restart, specs) in section_meta.items():
+    sections = []
+    for name, (title, restart, specs) in _SECTION_META.items():
         path = config_dir / CONFIG_FILENAMES[name]
-        raw = path.read_bytes() if path.exists() else b""
-        from dataclasses import replace
-
-        fields = tuple(
-            replace(
-                _field_view(spec, _nested_value(values[name], spec.path)),
-                policy=field_policy(name, spec.name),
+        if (
+            name in {"video_archive", "lanraragi_compare", "download_cleanup"}
+            and not path.is_file()
+        ):
+            continue
+        try:
+            raw, _, table, defaults, effective = _section_document(config_dir, name)
+        except ConfigurationError as exc:
+            sections.append(
+                ConfigSection(name, title, CONFIG_FILENAMES[name], "", restart, (), str(exc))
             )
-            for spec in specs
-        )
+            continue
+        fields = []
+        section_error = ""
+        structural_errors = {}
+        if name in {"app", "supervisor", "crawl", "secrets"}:
+            try:
+                validate_structure(CONFIG_FILENAMES[name], effective)
+            except ConfigValueError as exc:
+                section_error = str(exc)
+                structural_errors["__".join(exc.path)] = str(exc)
+        for spec in specs:
+            value = _document_value(effective, spec.path)
+            value = None if value is _DELETE else value
+            default = _document_value(defaults, spec.path)
+            default = None if default is _DELETE else default
+            group, advanced = field_group(name, spec.path)
+            field = _field_view(spec, value)
+            error = ""
+            if value is not None and not spec.secret:
+                if spec.kind == "bool" and type(value) is not bool:
+                    error = "必须填写 true 或 false"
+                elif spec.kind in {"int", "float"} and (
+                    type(value) not in (int, float)
+                    or (spec.kind == "int" and type(value) is not int)
+                ):
+                    error = "必须填写整数" if spec.kind == "int" else "必须填写数字"
+            if not error and not spec.secret and spec.editable:
+                try:
+                    form_value = (
+                        {} if spec.kind == "bool" and not value else {spec.name: field.value}
+                    )
+                    _parse_form_value(spec, form_value)
+                except ConfigurationError as exc:
+                    error = str(exc)
+            error = structural_errors.get(spec.name, error)
+            fields.append(
+                replace(
+                    field,
+                    policy=field_policy(name, spec.name),
+                    group=group,
+                    advanced=advanced,
+                    key=".".join(spec.path),
+                    default=_format_field_value(default, safe=True),
+                    overridden=_document_value(table, spec.path) is not _DELETE,
+                    maximum=spec.maximum,
+                    optional=spec.optional,
+                    secret=spec.secret,
+                    value="" if spec.secret else field.value,
+                    error=error,
+                )
+            )
         sections.append(
             ConfigSection(
-                name=name,
-                title=title,
-                filename=CONFIG_FILENAMES[name],
-                revision=_revision(raw),
-                restart=restart,
-                fields=fields,
+                name,
+                title,
+                CONFIG_FILENAMES[name],
+                _revision(raw),
+                restart,
+                tuple(fields),
+                error=section_error
+                or ("配置有错误，请修正标记的字段。" if any(f.error for f in fields) else ""),
+                exists=path.is_file(),
             )
         )
     return tuple(sections)
@@ -309,191 +570,82 @@ def update_config_section(
     publish: bool = True,
 ) -> ConfigUpdateResult:
     section_meta = dict(_SECTION_META)
-    section_meta["video_archive"] = (
-        "视频档案特殊处理",
-        "Supervisor 与 Web",
-        VIDEO_ARCHIVE_FIELDS,
-    )
     if section_name not in section_meta:
         raise ConfigurationError("未知配置区域")
     config_dir = Path(config_dir)
     filename = CONFIG_FILENAMES[section_name]
     path = config_dir / filename
-    if not path.is_file():
-        raise ConfigurationError(f"配置文件不存在：{filename}")
-    _, restart, specs = section_meta[section_name]
+    _, _, specs = section_meta[section_name]
 
-    with _CONFIG_WRITE_LOCK:
-        original = path.read_bytes()
+    with _CONFIG_WRITE_LOCK, configuration_lock(config_dir):
+        original = path.read_bytes() if path.exists() else b""
         if not revision or revision != _revision(original):
             raise ConfigurationConflict("配置文件已经被其他操作修改，请刷新页面后重试")
         try:
             document = tomlkit.parse(original.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError) as exc:
-            raise ConfigurationError(f"无法解析 {filename}：{exc}") from exc
+        except (UnicodeDecodeError, ValueError):
+            raise ConfigurationError(f"无法解析 {filename}，请修正原文件中的 TOML 格式。") from None
+        if not path.exists():
+            from ..management.config_migrations.steps import CURRENT_VERSIONS
+            document["config_version"] = CURRENT_VERSIONS[filename]
 
         changed: list[str] = []
+        errors: dict[str, str] = {}
+        table = (
+            document.get(section_name, document)
+            if section_name in {"download_cleanup", "lanraragi_compare"}
+            else document
+        )
+        _, _, _, _, effective = _section_document(config_dir, section_name)
         for spec in specs:
             if not spec.editable:
                 continue
-            parsed = _parse_form_value(spec, values)
-            previous = _document_value(document, spec.path)
+            reset = values.get("reset__" + spec.name) == "true" and not spec.secret
+            if spec.secret and not str(values.get(spec.name, "")).strip():
+                continue
+            try:
+                parsed = _DELETE if reset else _parse_form_value(spec, values)
+            except ConfigurationError as exc:
+                errors[spec.name] = str(exc)
+                continue
+            previous = _document_value(table, spec.path)
             if parsed is _DELETE:
                 if previous is not _DELETE:
-                    _delete_document_value(document, spec.path)
+                    _delete_document_value(table, spec.path)
                     changed.append(spec.name)
                 continue
             if _plain_value(previous) == parsed:
                 continue
-            _set_document_value(document, spec.path, parsed)
+            if (
+                previous is _DELETE
+                and _plain_value(_document_value(effective, spec.path)) == parsed
+            ):
+                continue
+            _set_document_value(table, spec.path, parsed)
             changed.append(spec.name)
+
+        if errors:
+            raise ConfigurationError(f"有 {len(errors)} 项配置错误，尚未保存。", errors)
 
         if not changed:
             return ConfigUpdateResult(filename, (), "next_worker")
         candidate = tomlkit.dumps(document)
-        _validate_candidate(config_dir, filename, candidate)
-        if _revision(path.read_bytes()) != revision:
+        try:
+            _validate_candidate(config_dir, filename, candidate)
+        except ConfigurationError as exc:
+            matching = exc.fields or {
+                spec.name: str(exc)
+                for spec in specs
+                if spec.path[-1] in str(exc) or spec.label in str(exc)
+            }
+            raise ConfigurationError(str(exc), matching) from None
+        if _revision(path.read_bytes() if path.exists() else b"") != revision:
             raise ConfigurationConflict("配置文件已经被其他操作修改，请刷新页面后重试")
         if publish:
             _atomic_replace(path, candidate)
     return ConfigUpdateResult(
         filename, tuple(changed), merged_policy(section_name, changed), candidate
     )
-
-
-def _app_values(config) -> dict[str, Any]:
-    return {
-        key: getattr(config, key)
-        for key in (
-            "timezone",
-            "log_level",
-            "log_dir",
-            "upload_backend",
-            "large_upload_threshold_bytes",
-            "torrent_upload_limit_kb_per_second",
-            "allowed_archive_extensions",
-            "web_host",
-            "web_port",
-            "qbittorrent_url",
-            "qbit_torrent_path",
-            "lanraragi_url",
-            "lanraragi_smb_server",
-            "lanraragi_smb_port",
-            "lanraragi_smb_share",
-            "lanraragi_smb_relative_dir",
-            "lanraragi_smb_connection_timeout_seconds",
-            "lanraragi_smb_encrypt",
-            "lanraragi_import_poll_timeout_seconds",
-            "lanraragi_import_poll_interval_seconds",
-            "aria2_enabled",
-            "hah_enabled",
-            "fallback_method",
-            "external_request_delay_seconds",
-            "eh_request_retry_limit",
-            "eh_request_retry_delay_seconds",
-            "eh_unavailable_cooldown_seconds",
-        )
-    } | {
-        "sessions": {
-            "browse": f"account={config.browse_session.account}; network={config.browse_session.network}",
-            "archive": f"account={config.archive_session.account}; network={config.archive_session.network}",
-        },
-        "roots": config.roots,
-    }
-
-
-def _supervisor_values(config) -> dict[str, Any]:
-    values = {
-        key: getattr(config, key)
-        for key in (
-            "poll_seconds",
-            "health_check_interval_seconds",
-            "collect_initial_delay_seconds",
-            "collect_interval_seconds",
-            "batch_size",
-            "direct_download_batch_size",
-            "lease_seconds",
-            "retry_limit",
-            "torrent_stall_seconds",
-            "torrent_poll_seconds",
-            "module_restart_delay_seconds",
-            "request_timeout_seconds",
-            "upload_timeout_seconds",
-            "shutdown_grace_seconds",
-            "maintenance_start",
-            "maintenance_end",
-            "maintenance_retry_seconds",
-            "maintenance_recovery_timeout_seconds",
-        )
-    }
-    values["schedules"] = {
-        name: {
-            "initial_delay_seconds": config.schedule_for(name).initial_delay_seconds,
-            "interval_seconds": config.schedule_for(name).interval_seconds,
-        }
-        for name, module in MODULES.items()
-        if module.schedule == "interval"
-    }
-    values["modules"] = config.modules
-    values["max_concurrency"] = config.max_concurrency
-    values["special_processing"] = {
-        "enabled": config.special_processing_enabled,
-        "poll_seconds": config.special_processing_poll_seconds,
-        "default_job_lease_seconds": config.special_job_lease_seconds,
-        "max_concurrency": config.special_max_concurrency,
-    }
-    return values
-
-
-def _video_archive_values(config) -> dict[str, Any]:
-    return {
-        "enabled": config.enabled,
-        "auto_start": config.auto_start,
-        "download": {
-            "category": config.download.category,
-        },
-        "work": {
-            "workspace_root": config.work.workspace_root,
-            "max_concurrency": config.work.max_concurrency,
-        },
-        "ffmpeg": {
-            "executable": config.ffmpeg.executable,
-            "max_workers": config.ffmpeg.max_workers,
-            "quality": config.ffmpeg.quality,
-            "compression_level": config.ffmpeg.compression_level,
-            "loop": config.ffmpeg.loop,
-            "file_timeout_seconds": config.ffmpeg.file_timeout_seconds,
-            "max_output_bytes": config.ffmpeg.max_output_bytes,
-        },
-        "output": {
-            "include_original_mp4": config.output.include_original_mp4,
-            "layout": config.output.layout,
-        },
-        "safety": {
-            "max_members": config.safety.max_members,
-            "max_single_file_bytes": config.safety.max_single_file_bytes,
-            "max_expanded_bytes": config.safety.max_expanded_bytes,
-        },
-    }
-
-
-def _crawl_values(config) -> dict[str, Any]:
-    return {
-        key: getattr(config, key)
-        for key in (
-            "observation_days",
-            "collect_end_days",
-            "collect_end_offset",
-            "collect_tags",
-            "name_keywords",
-            "tag_keywords",
-            "exclude_categories",
-            "video_markers",
-            "excluded_resolutions",
-            "tag_translation_url",
-            "urls",
-        )
-    }
 
 
 def _field_view(spec: FieldSpec, value: Any) -> ConfigField:
@@ -549,14 +701,23 @@ def _parse_form_value(spec: FieldSpec, values: Mapping[str, Any]) -> Any:
             )
         elif spec.kind == "mapping":
             parsed = _parse_mapping(text_value)
+        elif spec.kind == "toml":
+            parsed = tomlkit.parse(text_value).unwrap()
         else:
             if not text_value:
+                if spec.optional:
+                    return ""
                 raise ValueError("不能为空")
             parsed = text_value
     except (TypeError, ValueError) as exc:
-        raise ConfigurationError(f"{spec.label}格式无效：{exc}") from exc
+        detail = "请检查格式" if spec.secret else str(exc)
+        raise ConfigurationError(f"{spec.label}格式无效：{detail}") from None
+    if isinstance(parsed, float) and not math.isfinite(parsed):
+        raise ConfigurationError(f"{spec.label}必须是有限数字")
     if spec.minimum is not None and isinstance(parsed, (int, float)) and parsed < spec.minimum:
         raise ConfigurationError(f"{spec.label}不能小于 {spec.minimum:g}")
+    if spec.maximum is not None and isinstance(parsed, (int, float)) and parsed > spec.maximum:
+        raise ConfigurationError(f"{spec.label}不能大于 {spec.maximum:g}")
     return parsed
 
 
@@ -574,13 +735,6 @@ def _parse_mapping(value: str) -> dict[str, str]:
             raise ValueError(f"第 {line_no} 行名称重复：{key}")
         result[key] = item
     return result
-
-
-def _nested_value(values: Mapping[str, Any], path: tuple[str, ...]) -> Any:
-    value: Any = values
-    for key in path:
-        value = value[key]
-    return value
 
 
 def _document_value(document, path: tuple[str, ...]) -> Any:
@@ -632,19 +786,38 @@ def _validate_candidate(config_dir: Path, filename: str, content: str) -> None:
             (check_dir / filename).parent.mkdir(parents=True, exist_ok=True)
             (check_dir / filename).write_bytes(content.encode("utf-8"))
             app, _, _, secrets = load_config(check_dir)
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+            try:
+                ZoneInfo(app.timezone)
+            except (ZoneInfoNotFoundError, ValueError):
+                raise ConfigurationError("时区无效，请使用如 Asia/Shanghai 的时区名称。",
+                                         {"timezone": "请输入有效时区，如 Asia/Shanghai。"}) from None
             if not 1 <= app.web_port <= 65535:
                 raise ValueError("Web port must be between 1 and 65535")
             from .auth import valid_password_hash
 
             if secrets.web_password_hash:
                 if not valid_password_hash(secrets.web_password_hash) or not secrets.web_secret:
-                    raise ValueError("Web authentication configuration is invalid")
+                    raise ConfigurationError("Web 认证配置无效，密码哈希与会话密钥必须正确填写。",
+                        {"web_password_hash": "请使用 eharchive web-password 生成有效哈希。",
+                         "web_secret": "启用登录时必须填写会话密钥。"} if filename == "secrets.toml" else {})
             elif app.web_host.casefold() not in {"localhost", "127.0.0.1", "::1"}:
                 raise ValueError("Web login is required before listening outside localhost")
             if (check_dir / CONFIG_FILENAMES["video_archive"]).is_file():
                 load_video_archive_config(check_dir)
+            if (check_dir / CONFIG_FILENAMES["lanraragi_compare"]).is_file():
+                from ..special.modules.lanraragi_compare.config import load_compare_config
+
+                load_compare_config(check_dir)
+            if (check_dir / CONFIG_FILENAMES["download_cleanup"]).is_file():
+                from ..special.modules.download_cleanup.config import capability
+
+                capability(check_dir)
+    except ConfigValueError as exc:
+        fields = {"__".join(exc.path): str(exc)} if filename == exc.filename else {}
+        raise ConfigurationError(str(exc), fields) from None
     except (OSError, TypeError, ValueError) as exc:
-        raise ConfigurationError(f"配置校验失败：{exc}") from exc
+        raise ConfigurationError(f"配置校验失败：{exc}") from None
 
 
 def _atomic_replace(path: Path, content: str) -> None:
@@ -657,8 +830,9 @@ def _atomic_replace(path: Path, content: str) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(temporary_name, path.stat().st_mode)
-        shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+        if path.exists():
+            os.chmod(temporary_name, path.stat().st_mode)
+            shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
         os.replace(temporary_name, path)
         temporary_name = None
     except OSError as exc:

@@ -1,3 +1,4 @@
+config_version = 1
 [download_cleanup]
 # Manual preview and confirmation only; requires Supervisor special_processing.
 enabled = true

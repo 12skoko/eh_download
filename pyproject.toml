@@ -45,6 +45,10 @@ where = ["src"]
 [tool.setuptools.package-data]
 "eh_archive.web" = ["templates/*.html", "templates/**/*.html", "static/*"]
 
+[tool.setuptools.data-files]
+"share/eh_archive/config.sample" = ["config.sample/app.toml", "config.sample/supervisor.toml", "config.sample/crawl.toml", "config.sample/secrets.toml"]
+"share/eh_archive/config.sample/special" = ["config.sample/special/video_archive.toml", "config.sample/special/lanraragi_compare.toml", "config.sample/special/download_cleanup.toml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]

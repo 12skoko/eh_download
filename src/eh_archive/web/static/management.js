@@ -1,5 +1,5 @@
 (() => {
-  const root = document.querySelector("[data-system-dashboard], [data-operation-detail], .config-sections");
+  const root = document.querySelector("[data-system-dashboard], [data-operation-detail]");
   if (!root || root.dataset.initialized) return;
   root.dataset.initialized = "true";
   let error = document.getElementById("system-error");
@@ -134,29 +134,6 @@
     renderOperation(operation);
     if (!polling) poll();
   }
-  root.querySelectorAll('form[action^="/config/"]').forEach(form => {
-    form.addEventListener("submit", async event => {
-      event.preventDefault();
-      event.stopPropagation();
-      const button = form.querySelector('button[type="submit"]');
-      button.disabled = true;
-      try {
-        const response = await fetch(form.action, {
-          method: "POST", body: new FormData(form), headers: {Accept: "application/json"},
-          credentials: "same-origin",
-        });
-        if (!response.ok) {
-          const contentType = response.headers.get("content-type") || "";
-          if (contentType.includes("application/json")) {
-            throw new Error((await response.json()).detail);
-          }
-          const page = new DOMParser().parseFromString(await response.text(), "text/html");
-          throw new Error(page.querySelector("main")?.textContent.trim() || "配置提交失败");
-        }
-        displayOperation(await response.json());
-      } catch (exc) { showError(exc.message); button.disabled = false; }
-    });
-  });
   async function refreshDetail() {
     const operation = await api("/api/system/operations/" + identifier);
     renderOperation(operation);

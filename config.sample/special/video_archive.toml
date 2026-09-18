@@ -1,3 +1,4 @@
+config_version = 1
 enabled = true
 # This module always requires an explicit user action. true is rejected.
 auto_start = false

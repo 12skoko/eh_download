@@ -1,4 +1,4 @@
-"""Merge runtime configuration during an update; backups are for manual recovery."""
+"""Legacy merge helper; the update CLI now only previews versioned migrations."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ import argparse
 import shutil
 from collections.abc import Mapping
 from copy import deepcopy
-from datetime import UTC, datetime
 from pathlib import Path
 
 import tomlkit
 
 from ..tasks.registry import MODULES
+from .config_migrations import prepared_configuration
 from .state import atomic_write
 
 RUNTIME_FILES = ("app.toml", "supervisor.toml", "crawl.toml", "secrets.toml")
@@ -32,18 +32,20 @@ OPEN_TABLES = {
     ("secrets.toml", "qbittorrent"),
     ("secrets.toml", "lanraragi"),
     ("secrets.toml", "lanraragi_smb"),
-    ("supervisor.toml", "max_concurrency"),
 }
 
 
 def _merge(current, template, path, *, open_table=False):
     open_table = open_table or path in OPEN_TABLES
     if not open_table:
-        allowed = set(template) | OPTIONAL_KEYS.get(path, set())
+        allowed = set(template) | OPTIONAL_KEYS.get(path, set()) | {"config_version"}
         for key in list(current):
             if key not in allowed:
                 del current[key]
     for key, value in template.items():
+        # A template merge must never claim that a versioned migration ran.
+        if key == "config_version":
+            continue
         if key not in current:
             current[key] = deepcopy(value)
         elif isinstance(value, Mapping):
@@ -119,19 +121,18 @@ def main():
     parser.add_argument("--samples", type=Path, required=True)
     parser.add_argument("--backup", type=Path)
     args = parser.parse_args()
-    backup = args.backup or args.directory / "backups" / datetime.now(UTC).astimezone().strftime(
-        "%Y%m%d-%H%M%S-%f"
-    )
-    print(f"Configuration backup location: {backup}", flush=True)
+    # An executor imported before Git checkout still invokes this command from
+    # the new checkout. Do not let that old process run a template merge or
+    # stamp new versions before service startup performs the real migrations.
     try:
-        changed = sync_configuration(args.directory, args.samples, backup)
+        with prepared_configuration(args.directory):
+            pass
     except Exception as exc:  # noqa: BLE001 - redact parser errors at the CLI boundary
         # Parser exceptions can contain credential values; do not log their text.
         raise SystemExit(
-            f"Configuration merge failed ({type(exc).__name__}); inspect files and backup at "
-            f"{backup}. No automatic recovery was performed."
+            f"Configuration validation failed ({type(exc).__name__}); no files were changed."
         ) from None
-    print("Configuration files changed: " + (", ".join(changed) or "none"), flush=True)
+    print("Configuration validated; migration will run at Web/Supervisor startup.", flush=True)
 
 
 if __name__ == "__main__":

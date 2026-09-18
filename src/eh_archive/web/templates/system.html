@@ -5,7 +5,7 @@
 <div id="system-error" class="alert warning" role="alert" {% if not management_error %}hidden{% endif %}>{{ management_error or '' }}</div>
 {% if not management_error %}
 <div data-system-dashboard>
-  <section>
+  <section id="services">
     <h2>服务</h2>
     <table><thead><tr><th>服务</th><th>状态</th><th>PID</th><th>启动时间</th><th>操作</th></tr></thead>
       <tbody>{% for role in ['web', 'supervisor'] %}
