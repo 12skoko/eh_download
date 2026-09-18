@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import tomllib
@@ -8,6 +9,8 @@ from datetime import time as clock_time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
+
+from ..tasks.registry import MODULES
 
 DEFAULT_LOCATIONS = (
     "torrent_download",
@@ -19,19 +22,7 @@ DEFAULT_LOCATIONS = (
     "trash",
 )
 
-SUPERVISOR_MODULES = (
-    "collect",
-    "screen",
-    "details",
-    "torrent_download",
-    "direct_download",
-    "validate",
-    "prepare",
-    "upload",
-    "cleanup",
-    "delete",
-    "special_processing",
-)
+SUPERVISOR_MODULES = (*MODULES, "special_processing")
 LEGACY_SUPERVISOR_MODULES = {"thumbnail"}
 
 
@@ -107,7 +98,20 @@ class AppConfig:
 
 
 @dataclass(frozen=True)
+class ModuleSchedule:
+    initial_delay_seconds: float
+    interval_seconds: float
+
+    def __post_init__(self) -> None:
+        for name in ("initial_delay_seconds", "interval_seconds"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"schedule {name} must be finite and non-negative")
+
+
+@dataclass(frozen=True)
 class SupervisorConfig:
+    schedules: dict[str, ModuleSchedule] = field(default_factory=dict)
     poll_seconds: float = 5.0
     collect_initial_delay_seconds: float = 60.0
     collect_interval_seconds: float = 3 * 60 * 60
@@ -133,19 +137,22 @@ class SupervisorConfig:
     modules: dict[str, bool] = field(
         default_factory=lambda: {name: True for name in SUPERVISOR_MODULES}
     )
-    max_concurrency: dict[str, int] = field(
-        default_factory=lambda: {
-            "collect": 1,
-            "screen": 1,
-            "torrent_download": 1,
-            "direct_download": 1,
-            "validate": 1,
-            "prepare": 1,
-            "upload": 1,
-            "cleanup": 1,
-            "delete": 1,
-        }
-    )
+    max_concurrency: dict[str, int] = field(default_factory=lambda: {name: 1 for name in MODULES})
+
+    def schedule_for(self, operation: str) -> ModuleSchedule:
+        module = MODULES[operation]
+        if operation in self.schedules:
+            return self.schedules[operation]
+        # Legacy flat settings remain readable; all scheduling consumes this
+        # common representation. New modules only need a registry entry.
+        return ModuleSchedule(
+            getattr(self, module.legacy_initial_delay_setting)
+            if module.legacy_initial_delay_setting
+            else module.initial_delay_seconds,
+            getattr(self, module.legacy_interval_setting)
+            if module.legacy_interval_setting
+            else module.interval_seconds,
+        )
 
     def batch_size_for(self, operation: str) -> int:
         if operation == "direct_download":
@@ -573,9 +580,7 @@ def load_config(
         lanraragi_smb_server=str(app_raw.get("lanraragi_smb_server", "")).strip(),
         lanraragi_smb_port=int(app_raw.get("lanraragi_smb_port", 445)),
         lanraragi_smb_share=str(app_raw.get("lanraragi_smb_share", "")).strip(),
-        lanraragi_smb_relative_dir=str(
-            app_raw.get("lanraragi_smb_relative_dir", "")
-        ).strip(),
+        lanraragi_smb_relative_dir=str(app_raw.get("lanraragi_smb_relative_dir", "")).strip(),
         lanraragi_smb_connection_timeout_seconds=float(
             app_raw.get("lanraragi_smb_connection_timeout_seconds", 60.0)
         ),
@@ -594,8 +599,7 @@ def load_config(
         hah_enabled=bool(app_raw.get("hah_enabled", False)),
         fallback_method=(
             str(app_raw.get("fallback_method", "direct"))
-            if str(app_raw.get("fallback_method", "direct"))
-            in {"direct", "hah", "aria2", "none"}
+            if str(app_raw.get("fallback_method", "direct")) in {"direct", "hah", "aria2", "none"}
             else "direct"
         ),
         external_request_delay_seconds=float(app_raw.get("external_request_delay_seconds", 5.0)),
@@ -668,6 +672,22 @@ def load_config(
             **{str(k): int(v) for k, v in limits.items()},
         },
     )
+    schedules_raw = supervisor_raw.get("schedules", {})
+    if not isinstance(schedules_raw, dict):
+        raise TypeError("supervisor.toml [schedules] must be a table")
+    for name, raw in schedules_raw.items():
+        if name not in MODULES or MODULES[name].schedule != "interval":
+            raise ValueError(f"unknown timed module in schedules: {name}")
+        if not isinstance(raw, dict) or set(raw) - {"initial_delay_seconds", "interval_seconds"}:
+            raise ValueError(f"invalid schedule settings for {name}")
+        default = supervisor.schedule_for(name)
+        supervisor.schedules[name] = ModuleSchedule(
+            float(raw.get("initial_delay_seconds", default.initial_delay_seconds)),
+            float(raw.get("interval_seconds", default.interval_seconds)),
+        )
+    for name, module in MODULES.items():
+        if module.schedule == "interval":
+            supervisor.schedule_for(name)
     if supervisor.batch_size <= 0:
         raise ValueError("batch_size must be greater than zero")
     if supervisor.collect_initial_delay_seconds < 0:

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import tomlkit
 
+from ..tasks.registry import MODULES
 from .state import atomic_write
 
 RUNTIME_FILES = ("app.toml", "supervisor.toml", "crawl.toml", "secrets.toml")
@@ -69,6 +70,23 @@ def sync_configuration(directory: Path, samples: Path, backup: Path) -> list[str
         current = tomlkit.parse(original.decode("utf-8") if original is not None else "")
         before = current.unwrap()
         template = tomlkit.parse((samples / relative).read_text(encoding="utf-8"))
+        if relative.as_posix() == "supervisor.toml" and "schedules" in template:
+            # Carry existing intervals forward before the template removes
+            # legacy flat keys and fills in the new schedule tables.
+            for name, module in MODULES.items():
+                if name not in template["schedules"]:
+                    continue
+                for key, legacy in (
+                    ("initial_delay_seconds", module.legacy_initial_delay_setting),
+                    ("interval_seconds", module.legacy_interval_setting),
+                ):
+                    if legacy and legacy in current:
+                        if "schedules" not in current:
+                            current["schedules"] = tomlkit.table()
+                        if name not in current["schedules"]:
+                            current["schedules"][name] = tomlkit.table()
+                        if key not in current["schedules"][name]:
+                            current["schedules"][name][key] = current[legacy]
         # These loaders accept both flat and named-table configuration.
         if relative.stem in {"lanraragi_compare", "download_cleanup"}:
             name = relative.stem

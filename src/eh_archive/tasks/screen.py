@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..config import load_config
 from ..db import ArchiveRepository, Database
-from ..domain.errors import ErrorClass, classify_exception
+from ..domain.errors import classify_exception, task_exit_code
 from ..logging import RunReport, clean_report_value, configure_logging, get_logger
 from ..services.screening import ScreenDecision, ScreeningService
 
@@ -52,7 +52,9 @@ def _write_report(report: RunReport, decisions: list[ScreenDecision]) -> None:
     report.finish({"status": "succeeded", "processed": len(decisions), **dict(statuses)})
 
 
-def run(config_dir: str | Path = "config", *, limit: int | None = None) -> int:
+def run(
+    config_dir: str | Path = "config", *, limit: int | None = None, operation: str = "screen"
+) -> int:
     app, supervisor, crawl, _ = load_config(config_dir)
     run_id = str(uuid.uuid4())
     configure_logging(
@@ -75,7 +77,7 @@ def run(config_dir: str | Path = "config", *, limit: int | None = None) -> int:
         error = classify_exception(exc)
         report.fatal(exc, result={"processed": 0})
         log.exception("screen submodule failed: run_id=%s", run_id)
-        return 2 if error.category == ErrorClass.SYSTEM else 1
+        return task_exit_code(error)
     _write_report(report, result.decisions)
     log.info(
         "screen completed: run_id=%s processed=%s queued=%s filtered_out=%s skipped=%s",

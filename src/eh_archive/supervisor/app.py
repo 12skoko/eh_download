@@ -31,21 +31,12 @@ from ..logging import (
 )
 from ..special import SpecialRepository
 from ..special.handlers import enabled_module_capabilities
+from ..tasks.registry import MODULES
 
 log = get_logger(__name__)
 
 
-TASK_OPERATIONS = (
-    "screen",
-    "details",
-    "torrent_download",
-    "direct_download",
-    "validate",
-    "prepare",
-    "upload",
-    "cleanup",
-    "delete",
-)
+TASK_OPERATIONS = tuple(MODULES)
 SEVERE_CHILD_EXIT_CODES = {1, 2}
 TEMPORARY_CHILD_EXIT_CODE = 3
 
@@ -76,7 +67,12 @@ class Supervisor:
         self._last_graceful_children: tuple[str, ...] | None = None
         self.exit_code = 0
         self.failed_operations: set[str] = set()
-        self.next_collect_at = time.monotonic() + self.config.collect_initial_delay_seconds
+        now = time.monotonic()
+        self.next_run_at = {
+            name: now + self.config.schedule_for(name).initial_delay_seconds
+            for name, module in MODULES.items()
+            if module.schedule == "interval"
+        }
         self.last_health_check = 0.0
         self.next_special_start_at = 0.0
         self.health_checks_enabled = True
@@ -98,7 +94,9 @@ class Supervisor:
             self.special_enabled_kinds = tuple(item.kind for item in capabilities)
             if capabilities:
                 self.special_concurrency_limit = self.config.special_max_concurrency
-                self.special_module_limits = {item.kind: item.max_concurrency for item in capabilities}
+                self.special_module_limits = {
+                    item.kind: item.max_concurrency for item in capabilities
+                }
 
     def stop(self, *_args) -> None:
         self.stopping = True
@@ -124,47 +122,41 @@ class Supervisor:
         if self.control_state == "paused":
             return
         self._complete_cancellations()
-        self._maybe_collect()
         self._maybe_special_jobs()
-        for operation in TASK_OPERATIONS:
-            if not self.config.modules[operation] or self._paused(operation):
-                continue
-            if time.monotonic() < self.next_start_at.get(operation, 0.0):
-                continue
-            child = self.children.get(operation)
-            if child is not None and child.poll() is None:
-                continue
-            self.children.pop(operation, None)
+        for operation in MODULES:
+            self._maybe_module(operation)
+
+    def _maybe_module(self, operation: str) -> None:
+        module = MODULES[operation]
+        if not self.config.modules[operation] or self._paused(operation):
+            return
+        now = time.monotonic()
+        if now < self.next_start_at.get(operation, 0.0):
+            return
+        child = self.children.get(operation)
+        if child is not None and child.poll() is None:
+            return
+        if module.schedule == "interval":
+            if now < self.next_run_at[operation]:
+                return
+        else:
             with self.database.session() as session:
                 if not ArchiveRepository(session).has_work(operation):
-                    continue
-            # One bounded child per operation. qBittorrent's own background
-            # transfer count is intentionally not controlled here.
-            task_module = "eh_archive.tasks.screen" if operation == "screen" else self.runner_module
-            self._start_child(
+                    return
+        self._start_child(
+            operation,
+            [
+                sys.executable,
+                "-m",
+                self.runner_module,
+                "--operation",
                 operation,
-                [
-                    sys.executable,
-                    "-m",
-                    task_module,
-                    "--config-dir",
-                    self.config_dir,
-                    "--limit",
-                    str(self.config.batch_size_for(operation)),
-                ]
-                if operation == "screen"
-                else [
-                    sys.executable,
-                    "-m",
-                    task_module,
-                    "--operation",
-                    operation,
-                    "--config-dir",
-                    self.config_dir,
-                    "--limit",
-                    str(self.config.batch_size_for(operation)),
-                ],
-            )
+                "--config-dir",
+                self.config_dir,
+            ],
+        )
+        if module.schedule == "interval":
+            self.next_run_at[operation] = now + self.config.schedule_for(operation).interval_seconds
 
     def _maintenance_tick(self) -> tuple[bool, bool]:
         """Return whether scheduling is blocked and whether heartbeat already ran."""
@@ -552,23 +544,6 @@ class Supervisor:
         self.children[operation] = child
         log.info("submodule started: operation=%s pid=%s", operation, child.pid)
         return child
-
-    def _maybe_collect(self) -> None:
-        if not self.config.modules["collect"] or self._paused("collect"):
-            return
-        now = time.monotonic()
-        if now < self.next_start_at.get("collect", 0.0):
-            return
-        child = self.children.get("collect")
-        if child is not None and child.poll() is None:
-            return
-        if now < self.next_collect_at:
-            return
-        self._start_child(
-            "collect",
-            [sys.executable, "-m", "eh_archive.tasks.collect", "--config-dir", self.config_dir],
-        )
-        self.next_collect_at = now + self.config.collect_interval_seconds
 
     def _maybe_special_jobs(self) -> None:
         enabled_kinds = getattr(self, "special_enabled_kinds", ())

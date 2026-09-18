@@ -267,12 +267,13 @@ latest = "https://e-hentai.org/?f_search=..."
 常用项：
 
 - `poll_seconds`：Supervisor 调度轮询间隔；
-- `collect_initial_delay_seconds`：Supervisor 启动后的首次自动采集延迟，默认 60 秒；
-- `collect_interval_seconds`：首次采集实际启动后的自动采集周期，默认 3 小时；
+- `schedules.collect.initial_delay_seconds`：Supervisor 启动后的首次自动采集延迟，默认 60 秒；
+- `schedules.collect.interval_seconds`：按实际启动时间计算的自动采集周期，默认 3 小时；
 - `batch_size`：每个任务子进程处理的最大条数；
 - `lease_seconds`：任务租约有效期；过期租约不会自动接管，需要人工核对；
 - `retry_limit`：网络或临时失败的重试次数；
-- `torrent_poll_seconds`：qBittorrent 后台任务未完成时的再次检查间隔，默认 60 秒；
+- `schedules.torrent_check.initial_delay_seconds`：首次种子完成检测延迟，默认 60 秒；
+- `schedules.torrent_check.interval_seconds`：种子完成检测周期，默认 60 秒；
 - `module_restart_delay_seconds`：同一个普通模块的子进程批次结束后，启动下一批前的等待时间，默认 5 秒；
 - `request_timeout_seconds`：普通网络请求的连接和读取超时，默认 30 秒；
 - `upload_timeout_seconds`：上传 ZIP 后等待 LANraragi 响应的超时，默认 1800 秒；上传连接超时仍使用 `request_timeout_seconds`；
@@ -282,7 +283,7 @@ latest = "https://e-hentai.org/?f_search=..."
 - `[modules]`：控制 Supervisor 是否自动调度各业务模块；
 - `max_concurrency`：各任务槽的并发数，默认每类为 1；
 
-不要把 `torrent_download` 的并发数理解为 qBittorrent 的传输数。它只限制 EH Archive 同时查找、提交和轮询种子的控制任务；已经提交的种子由 qBittorrent 自己管理。
+不要把 `torrent_download` 的并发数理解为 qBittorrent 的传输数。它只限制 EH Archive 同时查找和提交种子的控制任务；完成检测由独立的 `torrent_check` 定时模块负责；已经提交的种子由 qBittorrent 自己管理。
 
 例如数据库和 LANraragi 每天 06:00 关机备份，可以配置：
 
@@ -398,7 +399,7 @@ eharchive-supervisor --config-dir config
 
 ### 7.1 自动采集
 
-把列表 URL 写入 `crawl.toml` 后，Supervisor 启动满 `collect_initial_delay_seconds` 后运行首次 Collect，之后按 `collect_interval_seconds` 自动运行，并使用动态终点。如果首次到期时 Collect 处于暂停状态，恢复后会在下一次 Supervisor 轮询立即补跑一次；后续周期从实际启动时间重新计算。也可以立即执行一次同样的自动抓取任务：
+把列表 URL 写入 `crawl.toml` 后，Supervisor 启动满 `schedules.collect.initial_delay_seconds` 后运行首次 Collect，之后按 `schedules.collect.interval_seconds` 自动运行，并使用动态终点。如果首次到期时 Collect 处于暂停状态，恢复后会在下一次 Supervisor 轮询立即补跑一次；后续周期从实际启动时间重新计算。也可以立即执行一次同样的自动抓取任务：
 
 ```powershell
 python -m eh_archive.tasks.collect --config-dir config
@@ -452,9 +453,15 @@ download_pending
         -> uploading -> uploaded -> completed
 ```
 
+所有普通模块均由 `eh_archive.tasks.runner --operation <模块名>` 启动。Supervisor 根据统一注册表中的调度模式运行模块：`collect` 和 `torrent_check` 定时触发，其余普通模块在满足数据库任务条件时触发。两种模式共用启停、暂停、单模块不重叠、退出冷却和故障处理；严重错误会让 Supervisor 收尾退出。特殊处理仍使用自己的调度和故障隔离机制。
+
+定时模块无需有待处理记录即可启动，每轮结束后退出。计时从实际启动时刻计算，暂停或上一轮未结束时不会重复启动，也不会积攒补跑次数。`torrent_check` 每轮默认检查启动时所有符合条件的种子记录，每条最多一次；CLI 的 `--limit` 可限制本轮数量。它保留每条记录的租约、错误退避和完成后文件校验。种子提交模块只领取尚无 hash 的记录，检测模块只领取已有 hash 的种子下载记录；关闭提交模块不影响已有种子的定时检测。
+
+旧配置 `collect_initial_delay_seconds`、`collect_interval_seconds`、`torrent_poll_seconds` 仍可读取，对应的 `[schedules.<模块名>]` 新配置优先。新增定时模块时，在 `tasks/registry.py` 注册执行函数与默认周期即可复用调度，不需要在 Supervisor 中添加专用分支。
+
 Supervisor 会按需运行 `screen`、`details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。首次选择种子前必须取得完整 MangaInfo。程序忽略 `Outdated Torrents` 和红色时间的过时种子以及明确的 `1280x/800x/1920x/2560x` 重采样；仅剩这些种子时根据 `fallback_method` 切换 direct/H@H/aria2，配置为 `none` 时则进入 `download_blocked`。非过时种子中出现视频标记时进入 `manual_review`，即使它同时是重采样；只有 remark 包含 `skip video` 时才把视频种子当作普通种子。小于预计大小 60% 的种子视为异常。其余候选用“同时更大且更新”淘汰旧版本；胜出版本没有 Seeder 或不同大小版本无法比较时进入 `manual_review`；剩余候选大小相同时依次按 Seeder 数和发布时间选择。
 
-qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的任务按 `torrent_poll_seconds` 延迟后再次检查，`stalledDL` 超过 `torrent_stall_seconds` 后会自动删除任务并切换 fallback。提交的新任务使用 manga ID 的数字部分作为 qBittorrent 显示名称，不改变种子内文件名。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小和 CRC，再为最终 ZIP 计算 LANraragi 所需的 SHA-1。
+qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的任务保留到 `torrent_check` 的下一轮定时运行再次检查，`stalledDL` 超过 `torrent_stall_seconds` 后会自动删除任务并切换 fallback。提交的新任务使用 manga ID 的数字部分作为 qBittorrent 显示名称，不改变种子内文件名。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小和 CRC，再为最终 ZIP 计算 LANraragi 所需的 SHA-1。
 
 只有画廊页面明确返回 `gallery_unavailable` 时，自动流程才会把档案设为 `unavailable`。direct 使用的 archive 页面和实际下载文件位于不同域名；下载主机返回 404/410 会记录为 `archive_unavailable` 并转入 `manual_review`，不会据此断定画廊永久不可用。
 
@@ -477,6 +484,7 @@ qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会
 ```powershell
 .\.venv\Scripts\eharchive.exe --config-dir config task details --limit 10
 .\.venv\Scripts\eharchive.exe --config-dir config task torrent_download --limit 10
+.\.venv\Scripts\eharchive.exe --config-dir config task torrent_check
 .\.venv\Scripts\eharchive.exe --config-dir config task direct_download --limit 10
 .\.venv\Scripts\eharchive.exe --config-dir config task validate --limit 10
 .\.venv\Scripts\eharchive.exe --config-dir config task prepare --limit 10

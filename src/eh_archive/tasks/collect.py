@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..config import load_config
 from ..db import ArchiveRepository, Database
-from ..domain.errors import EH_SITE_UNAVAILABLE_EXIT_CODE, ErrorClass, classify_exception
+from ..domain.errors import classify_exception, task_exit_code
 from ..logging import RunReport, clean_report_value, configure_logging, get_logger
 from ..services.collector import CollectionResult, Collector
 
@@ -61,7 +61,13 @@ def _write_collect_report(
     )
 
 
-def run(config_dir: str | Path = "config", *, end: int | None = None) -> int:
+def run(
+    config_dir: str | Path = "config",
+    *,
+    end: int | None = None,
+    operation: str = "collect",
+    limit: int | None = None,
+) -> int:
     app, _, crawl, secrets = load_config(config_dir)
     run_id = str(uuid.uuid4())
     configure_logging(
@@ -128,15 +134,7 @@ def run(config_dir: str | Path = "config", *, end: int | None = None) -> int:
             result={"sources_completed": len(source_results)},
         )
         log.exception("automatic collection failed: run_id=%s", run_id)
-        if error.code == "eh_site_unavailable":
-            return EH_SITE_UNAVAILABLE_EXIT_CODE
-        return (
-            2
-            if error.category == ErrorClass.SYSTEM
-            else 3
-            if error.category == ErrorClass.TEMPORARY
-            else 1
-        )
+        return task_exit_code(error)
 
     _write_collect_report(report, source_results)
     log.info(

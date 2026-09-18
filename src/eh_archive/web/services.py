@@ -28,6 +28,7 @@ from ..domain.states import Status, can_transition, transition_target
 from ..services.paths import ArtifactPathService, UnsafePathError, safe_filename
 from ..special.registry import WORKFLOW_REGISTRY
 from ..special.remarks import PHASE_LABELS, replace_user_remark, user_remark
+from ..tasks.registry import MODULES
 
 CONTROL_COMPONENTS = ("supervisor", *SUPERVISOR_MODULES)
 DOWNLOAD_METHOD_LOCATIONS = {
@@ -67,16 +68,7 @@ STATUS_LABELS = {
 
 COMPONENT_LABELS = {
     "supervisor": "调度器",
-    "collect": "采集",
-    "screen": "筛选",
-    "details": "详情补全",
-    "torrent_download": "Torrent 下载",
-    "direct_download": "直接下载",
-    "validate": "校验",
-    "prepare": "压缩准备",
-    "upload": "上传",
-    "cleanup": "清理",
-    "delete": "档案删除",
+    **{name: module.label for name, module in MODULES.items()},
     "special_processing": "特殊处理",
     "qbittorrent": "qBittorrent",
     "lanraragi": "LANraragi",

@@ -10,6 +10,7 @@ from .db.models import EventLog, MangaRecord
 from .db.schema import upgrade
 from .domain.states import Status
 from .logging import configure_logging, get_logger
+from .tasks.registry import MODULES
 
 log = get_logger(__name__)
 
@@ -30,17 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     task = sub.add_parser("task")
     task.add_argument(
         "operation",
-        choices=(
-            "screen",
-            "details",
-            "torrent_download",
-            "direct_download",
-            "validate",
-            "prepare",
-            "upload",
-            "cleanup",
-            "delete",
-        ),
+        choices=tuple(MODULES),
     )
     task.add_argument("--limit", type=int, default=None)
     sub.add_parser("supervisor")
@@ -91,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("两次输入的密码不一致")
         print(hash_password(password))
         return 0
-    app, supervisor_config, crawl, secrets = load_config(args.config_dir)
+    app, _, crawl, secrets = load_config(args.config_dir)
     session_run_id = str(uuid.uuid4())
     component = args.command if args.command in {"supervisor", "web"} else "cli"
     main_log_path = configure_logging(
@@ -108,30 +99,19 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         return 0 if database.ping() else 1
     if args.command == "task":
-        if args.operation == "screen":
-            from .services.screening import ScreeningService
+        from .tasks.runner import main as task_main
 
-            with database.session() as session:
-                result = ScreeningService(ArchiveRepository(session), crawl).run_batch(
-                    args.limit
-                    if args.limit is not None
-                    else supervisor_config.batch_size_for("screen"),
-                    actor="cli",
-                )
-            print(
-                f"screen processed={result.processed} queued={result.queued} "
-                f"filtered_out={result.filtered_out} skipped={result.skipped}"
-            )
-            return 0
-        from .tasks.runner import TaskExecutor
+        task_args = ["--operation", args.operation, "--config-dir", args.config_dir]
+        if args.limit is not None:
+            task_args.extend(["--limit", str(args.limit)])
+        return task_main(task_args)
 
-        TaskExecutor(database, config_dir=args.config_dir).run_batch(args.operation, args.limit)
-        return 0
     if args.command == "special":
         from .special.service import SpecialWorkflowService
 
         if args.special_kind in {"create", "action"}:
             import json
+
             from .special.core.service import ModuleService
 
             with database.session() as session:

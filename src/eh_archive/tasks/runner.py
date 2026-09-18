@@ -10,6 +10,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from ..domain.errors import (
     ArchiveError,
     ErrorClass,
     classify_exception,
+    task_exit_code,
 )
 from ..domain.states import REPLACEMENT_DELETE_READY_STATUSES, Status
 from ..integrations.http import RoleSession
@@ -62,6 +64,7 @@ from ..services.uploader.selector import (
 )
 from ..services.uploader.smb_store import SmbStore
 from ..services.validator.artifact import ValidationError, quarantine_artifact, validate_artifact
+from .registry import MODULES
 
 log = get_logger(__name__)
 DIRECT_REPORT_PROGRESS_INTERVAL_SECONDS = 10.0
@@ -207,13 +210,14 @@ class TaskExecutor:
             self._http_sessions[role] = session
         return session
 
-    def run_once(self, operation: str) -> bool:
+    def run_once(self, operation: str, *, manga_id: str | None = None) -> bool:
         with self.database.session() as session:
             repository = ArchiveRepository(session, run_id=self.run_id)
             claim = repository.claim_next(
                 operation,
                 owner=self.owner,
                 lease_seconds=self.supervisor.lease_seconds,
+                **({"manga_id": manga_id} if manga_id is not None else {}),
             )
         if claim is None:
             return False
@@ -398,8 +402,7 @@ class TaskExecutor:
         report = self.report
         if self._active_report_line is not None and report is not None:
             line = (
-                f"[{self._report_item_index}] "
-                f"{_task_result_line(result, timezone=report.timezone)}"
+                f"[{self._report_item_index}] {_task_result_line(result, timezone=report.timezone)}"
             )
             if self._active_report_stage == "progress":
                 self._active_report_line.finish(self._direct_report_progress_line())
@@ -459,14 +462,23 @@ class TaskExecutor:
 
     def run_batch(self, operation: str, limit: int | None = None) -> int:
         count = 0
-        if limit is None:
-            limit = self.supervisor.batch_size_for(operation)
-        if limit < 0:
+        if limit is not None and limit < 0:
             raise ValueError("limit must be non-negative")
-        while count < limit and self.run_once(operation):
-            count += 1
-            if self.system_error or self.eh_site_unavailable:
-                break
+        if MODULES[operation].sweep:
+            with self.database.session() as session:
+                candidates = ArchiveRepository(session).ready_ids(operation, limit=limit)
+            for manga_id in candidates:
+                if self.run_once(operation, manga_id=manga_id):
+                    count += 1
+                if self.system_error or self.eh_site_unavailable:
+                    break
+        else:
+            if limit is None:
+                limit = self.supervisor.batch_size_for(operation)
+            while count < limit and self.run_once(operation):
+                count += 1
+                if self.system_error or self.eh_site_unavailable:
+                    break
         if (
             operation == "upload"
             and count > 0
@@ -579,7 +591,10 @@ class TaskExecutor:
         def progress(transferred: int, total: int) -> None:
             nonlocal last_progress_at
             now = time.monotonic()
-            if transferred != total and now - last_progress_at < DIRECT_WEB_PROGRESS_INTERVAL_SECONDS:
+            if (
+                transferred != total
+                and now - last_progress_at < DIRECT_WEB_PROGRESS_INTERVAL_SECONDS
+            ):
                 checkpoint()
                 return
             with self.database.session() as session:
@@ -621,13 +636,16 @@ class TaskExecutor:
 
         return progress, checkpoint, phase, archive_identified
 
-    def _filesystem_upload_backend(
-        self, api: LANraragiApiGateway
-    ) -> FilesystemUploadBackend:
+    def _filesystem_upload_backend(self, api: LANraragiApiGateway) -> FilesystemUploadBackend:
         options = dict(getattr(self.secrets, "lanraragi_smb", {}) or {})
         username = options.get("username")
         password = options.get("password")
-        if not isinstance(username, str) or not username or not isinstance(password, str) or not password:
+        if (
+            not isinstance(username, str)
+            or not username
+            or not isinstance(password, str)
+            or not password
+        ):
             raise ArchiveError(
                 "smb_configuration_error",
                 "filesystem upload requires lanraragi_smb username and password",
@@ -749,6 +767,8 @@ class TaskExecutor:
             raise ArchiveError("manga_missing", claim.manga_id, ErrorClass.ITEM)
         if claim.operation == "torrent_download":
             self._torrent(repository, claim, record)
+        elif claim.operation == "torrent_check":
+            self._torrent_check(repository, claim, record)
         elif claim.operation == "direct_download":
             self._direct(repository, claim, record)
         elif claim.operation == "validate":
@@ -774,128 +794,10 @@ class TaskExecutor:
         qbit_options = dict(self.secrets.qbittorrent)
         qbit_options.setdefault("host", self.app.qbittorrent_url)
         qbit = QBittorrentClient(**qbit_options)
-        # A submitted torrent is polled by this short-lived task; it must not
-        # be submitted again when the Supervisor sees downloading status.
         if record.external_download_id:
-            info = qbit.info(record.external_download_id)
-            if info is None:
-                missing_hash = record.external_download_id
-                record.external_download_id = None
-                raise ArchiveError(
-                    "torrent_missing",
-                    f"qBittorrent no longer reports external hash {missing_hash}",
-                    ErrorClass.ITEM,
-                )
-            if not is_managed_torrent(info):
-                self._defer_torrent_poll(repository, claim)
-                return
-            self._apply_torrent_upload_limit(qbit, record.external_download_id, info)
-            if _has_qbit_tag(info, "failed"):
-                self._fallback_torrent(
-                    repository,
-                    claim,
-                    record,
-                    qbit,
-                    error_code="torrent_failed",
-                    error_detail="qBittorrent task was manually tagged failed",
-                )
-                return
-            state = str(getattr(info, "state", "") or "").lower()
-            if state in {"error", "missingfiles"}:
-                raise ArchiveError(
-                    "torrent_error",
-                    f"qBittorrent task is in error state: {state}",
-                    ErrorClass.ITEM,
-                )
-            raw_completion_on = getattr(info, "completion_on", 0) or 0
-            raw_progress = getattr(info, "progress", 0) or 0
-            try:
-                completion_on = float(raw_completion_on)
-            except (TypeError, ValueError):
-                completion_on = 0.0
-            if state == "stalleddl" and completion_on <= 0:
-                raw_added_on = getattr(info, "added_on", 0) or 0
-                try:
-                    added_on = float(raw_added_on)
-                except (TypeError, ValueError):
-                    added_on = 0.0
-                if added_on > 0 and time.time() - added_on >= self.supervisor.torrent_stall_seconds:
-                    self._fallback_torrent(
-                        repository,
-                        claim,
-                        record,
-                        qbit,
-                        error_code="torrent_stalled",
-                        error_detail=(
-                            "qBittorrent stalledDL exceeded "
-                            f"{self.supervisor.torrent_stall_seconds} seconds"
-                        ),
-                    )
-                    return
-            try:
-                progress = float(raw_progress)
-            except (TypeError, ValueError):
-                progress = 0.0
-            complete = (
-                completion_on > 0
-                or progress >= 1
-                or state
-                in {
-                    "uploading",
-                    "stalledup",
-                    "completed",
-                }
+            raise ArchiveError(
+                "torrent_already_submitted", "torrent already has an external hash", ErrorClass.ITEM
             )
-            if not complete:
-                self._defer_torrent_poll(repository, claim)
-                return
-            raw_external = str(getattr(info, "content_path", "") or "")
-            root = self.app.root("torrent_download").resolve()
-            qbit_root = self.app.qbit_torrent_path or str(root)
-            try:
-                raw_content = map_external_path(raw_external, qbit_root, root)
-            except UnsafePathError as exc:
-                raise ArchiveError("torrent_path_escape", str(exc), ErrorClass.SYSTEM) from exc
-            gallery_root = root / safe_filename(record.manga_id.split("/", 1)[0])
-            if not raw_content.exists():
-                raise ArchiveError(
-                    "torrent_content_missing",
-                    f"mapped torrent content path does not exist: {raw_content}",
-                    ErrorClass.ITEM,
-                )
-            try:
-                relative = raw_content.resolve().relative_to(gallery_root)
-            except ValueError as exc:
-                raise ArchiveError(
-                    "torrent_path_escape", str(raw_external), ErrorClass.SYSTEM
-                ) from exc
-            if not relative.parts:
-                children = list(raw_content.iterdir()) if raw_content.is_dir() else []
-                if len(children) != 1:
-                    raise ArchiveError(
-                        "torrent_content_ambiguous",
-                        "qBittorrent content path has no unique artifact",
-                        ErrorClass.ITEM,
-                    )
-                filename, content_path = children[0].name, children[0]
-            elif len(relative.parts) != 1:
-                # qBittorrent produced a nested content path. Keep only a
-                # registered directory name and validate its members later.
-                filename = relative.parts[0]
-                content_path = gallery_root / filename
-            else:
-                filename, content_path = relative.name, raw_content
-            fingerprint = validate_artifact(content_path)
-            generation = (record.artifact_generation or 0) + 1
-            if repository.fenced(claim, owner=self.owner) is None:
-                raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
-            record.artifact_location, record.artifact_filename = "torrent_download", filename
-            record.artifact_kind, record.artifact_generation = fingerprint.kind, generation
-            record.artifact_size = fingerprint.size
-            record.artifact_sha1 = fingerprint.sha1
-            record.artifact_checked_at = fingerprint.checked_at
-            repository.finish(claim, owner=self.owner, event="downloaded")
-            return
         if not record.torrent_link:
             if self.app.fallback_method == "none":
                 self._block_download(
@@ -951,10 +853,136 @@ class TaskExecutor:
         record.download_method = "torrent"
         record.external_download_id = torrent_hash
         self._set_external_id(repository, claim, torrent_hash)
-        # qBittorrent owns the long-running transfer. Release this EH Archive
-        # control attempt immediately while retaining downloading status. The
-        # next poll is deliberately delayed so this batch cannot reclaim it.
-        self._defer_torrent_poll(repository, claim)
+        # Persisted hash hands the record to the independent timed checker.
+        repository.finish(claim, owner=self.owner)
+
+    def _torrent_check(
+        self, repository: ArchiveRepository, claim: ClaimedAttempt, record: MangaRecord
+    ) -> None:
+        from ..integrations.qbittorrent import QBittorrentClient
+
+        if not record.external_download_id:
+            raise ArchiveError("torrent_missing", "torrent has no external hash", ErrorClass.ITEM)
+        qbit_options = dict(self.secrets.qbittorrent)
+        qbit_options.setdefault("host", self.app.qbittorrent_url)
+        qbit = QBittorrentClient(**qbit_options)
+        info = qbit.info(record.external_download_id)
+        if info is None:
+            missing_hash = record.external_download_id
+            record.external_download_id = None
+            raise ArchiveError(
+                "torrent_missing",
+                f"qBittorrent no longer reports external hash {missing_hash}",
+                ErrorClass.ITEM,
+            )
+        if not is_managed_torrent(info):
+            repository.finish(claim, owner=self.owner)
+            return
+        self._apply_torrent_upload_limit(qbit, record.external_download_id, info)
+        if _has_qbit_tag(info, "failed"):
+            self._fallback_torrent(
+                repository,
+                claim,
+                record,
+                qbit,
+                error_code="torrent_failed",
+                error_detail="qBittorrent task was manually tagged failed",
+            )
+            return
+        state = str(getattr(info, "state", "") or "").lower()
+        if state in {"error", "missingfiles"}:
+            raise ArchiveError(
+                "torrent_error",
+                f"qBittorrent task is in error state: {state}",
+                ErrorClass.ITEM,
+            )
+        raw_completion_on = getattr(info, "completion_on", 0) or 0
+        raw_progress = getattr(info, "progress", 0) or 0
+        try:
+            completion_on = float(raw_completion_on)
+        except (TypeError, ValueError):
+            completion_on = 0.0
+        if state == "stalleddl" and completion_on <= 0:
+            raw_added_on = getattr(info, "added_on", 0) or 0
+            try:
+                added_on = float(raw_added_on)
+            except (TypeError, ValueError):
+                added_on = 0.0
+            if added_on > 0 and time.time() - added_on >= self.supervisor.torrent_stall_seconds:
+                self._fallback_torrent(
+                    repository,
+                    claim,
+                    record,
+                    qbit,
+                    error_code="torrent_stalled",
+                    error_detail=(
+                        "qBittorrent stalledDL exceeded "
+                        f"{self.supervisor.torrent_stall_seconds} seconds"
+                    ),
+                )
+                return
+        try:
+            progress = float(raw_progress)
+        except (TypeError, ValueError):
+            progress = 0.0
+        complete = (
+            completion_on > 0
+            or progress >= 1
+            or state
+            in {
+                "uploading",
+                "stalledup",
+                "completed",
+            }
+        )
+        if not complete:
+            repository.finish(claim, owner=self.owner)
+            return
+        raw_external = str(getattr(info, "content_path", "") or "")
+        root = self.app.root("torrent_download").resolve()
+        qbit_root = self.app.qbit_torrent_path or str(root)
+        try:
+            raw_content = map_external_path(raw_external, qbit_root, root)
+        except UnsafePathError as exc:
+            raise ArchiveError("torrent_path_escape", str(exc), ErrorClass.SYSTEM) from exc
+        gallery_root = root / safe_filename(record.manga_id.split("/", 1)[0])
+        if not raw_content.exists():
+            raise ArchiveError(
+                "torrent_content_missing",
+                f"mapped torrent content path does not exist: {raw_content}",
+                ErrorClass.ITEM,
+            )
+        try:
+            relative = raw_content.resolve().relative_to(gallery_root)
+        except ValueError as exc:
+            raise ArchiveError("torrent_path_escape", str(raw_external), ErrorClass.SYSTEM) from exc
+        if not relative.parts:
+            children = list(raw_content.iterdir()) if raw_content.is_dir() else []
+            if len(children) != 1:
+                raise ArchiveError(
+                    "torrent_content_ambiguous",
+                    "qBittorrent content path has no unique artifact",
+                    ErrorClass.ITEM,
+                )
+            filename, content_path = children[0].name, children[0]
+        elif len(relative.parts) != 1:
+            # qBittorrent produced a nested content path. Keep only a
+            # registered directory name and validate its members later.
+            filename = relative.parts[0]
+            content_path = gallery_root / filename
+        else:
+            filename, content_path = relative.name, raw_content
+        fingerprint = validate_artifact(content_path)
+        generation = (record.artifact_generation or 0) + 1
+        if repository.fenced(claim, owner=self.owner) is None:
+            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        record.artifact_location, record.artifact_filename = "torrent_download", filename
+        record.artifact_kind, record.artifact_generation = fingerprint.kind, generation
+        record.artifact_size = fingerprint.size
+        record.artifact_sha1 = fingerprint.sha1
+        record.artifact_checked_at = fingerprint.checked_at
+        repository.finish(claim, owner=self.owner, event="downloaded")
+        return
 
     def _apply_torrent_upload_limit(self, qbit: Any, torrent_hash: str, info: Any) -> None:
         """Keep the configured limit applied to already-submitted torrents."""
@@ -974,10 +1002,6 @@ class TaskExecutor:
             current = None
         if current != desired:
             qbit.set_upload_limit(torrent_hash, desired)
-
-    def _defer_torrent_poll(self, repository: ArchiveRepository, claim: ClaimedAttempt) -> None:
-        retry_at = utcnow() + timedelta(seconds=self.supervisor.torrent_poll_seconds)
-        repository.defer(claim, owner=self.owner, retry_at=retry_at)
 
     def _details(self, record: MangaRecord, *, role: str = "archive") -> Any:
         http = self._http_session(role)
@@ -1707,10 +1731,7 @@ class TaskExecutor:
             replacement = (
                 repository.get(record.superseded_by_id) if record.superseded_by_id else None
             )
-            if (
-                replacement is None
-                or replacement.status not in REPLACEMENT_DELETE_READY_STATUSES
-            ):
+            if replacement is None or replacement.status not in REPLACEMENT_DELETE_READY_STATUSES:
                 # The claim query normally keeps this row waiting. If the
                 # replacement changed concurrently, release the claim without
                 # turning the old archive into manual_review.
@@ -1726,7 +1747,8 @@ class TaskExecutor:
             and record.lrr_archive_id == replacement.lrr_archive_id
         ):
             raise ArchiveError(
-                "replacement_archive_shared", "旧档案与替代档案共享 LANraragi ID，需人工核对",
+                "replacement_archive_shared",
+                "旧档案与替代档案共享 LANraragi ID，需人工核对",
                 ErrorClass.ITEM,
             )
         if record.lrr_archive_id:
@@ -1760,10 +1782,13 @@ class TaskExecutor:
             replacement_path = None
             if (
                 replacement is not None
-                and replacement.artifact_location and replacement.artifact_filename
+                and replacement.artifact_location
+                and replacement.artifact_filename
             ):
                 replacement_path = (
-                    self.paths.torrent_registered(replacement.manga_id, replacement.artifact_filename)
+                    self.paths.torrent_registered(
+                        replacement.manga_id, replacement.artifact_filename
+                    )
                     if replacement.artifact_location == "torrent_download"
                     else self.paths.validate_registered(
                         replacement.artifact_location, replacement.artifact_filename
@@ -1921,10 +1946,7 @@ class TaskExecutor:
             finish_error_code = info.code
             finish_error_detail = info.message
             finish_detail = None
-            if (
-                info.code in TORRENT_FALLBACK_CODES
-                and claim.operation == "torrent_download"
-            ):
+            if info.code in TORRENT_FALLBACK_CODES and claim.operation == "torrent_download":
                 record = repository.get(claim.manga_id)
                 if record:
                     if self.app.fallback_method == "none":
@@ -2027,7 +2049,7 @@ def _task_outcome(result: TaskRunResult) -> str:
         return "abandoned"
     if result.error_code:
         if (
-            result.operation == "torrent_download"
+            result.operation in {"torrent_download", "torrent_check"}
             and result.resulting_status == Status.DOWNLOAD_PENDING.value
             and result.download_method != "torrent"
         ):
@@ -2043,7 +2065,7 @@ def _task_outcome(result: TaskRunResult) -> str:
         return "failed"
     if result.operation == "details":
         return "updated"
-    if result.operation in {"torrent_download", "direct_download"}:
+    if result.operation in {"torrent_download", "torrent_check", "direct_download"}:
         return result.resulting_status
     return {
         "validate": "validated",
@@ -2065,7 +2087,13 @@ def _task_result_line(result: TaskRunResult, *, timezone: str) -> str:
                 f"pages={result.pages if result.pages is not None else 'unknown'}",
             ]
         )
-    elif result.operation in {"torrent_download", "direct_download", "validate", "prepare"}:
+    elif result.operation in {
+        "torrent_download",
+        "torrent_check",
+        "direct_download",
+        "validate",
+        "prepare",
+    }:
         if result.artifact_filename:
             fields.append(f"file={clean_report_value(result.artifact_filename)}")
         if result.artifact_kind:
@@ -2115,7 +2143,8 @@ def _write_task_lines(report: RunReport, operation: str, results: list[TaskRunRe
 def _task_section(operation: str) -> str:
     return {
         "details": "details",
-        "torrent_download": "torrent downloads",
+        "torrent_download": "torrent submissions",
+        "torrent_check": "torrent completion checks",
         "direct_download": "direct downloads",
         "validate": "validations",
         "prepare": "preparations",
@@ -2184,38 +2213,37 @@ def _finish_task_report(
     report.finish(summary)
 
 
-def main(argv: list[str] | None = None) -> int:
+def run_records(
+    *, operation: str, config_dir: str | Path = "config", limit: int | None = None
+) -> int:
     global log
 
-    parser = argparse.ArgumentParser(prog="eharchive-task")
-    parser.add_argument("--operation", required=True)
-    parser.add_argument("--config-dir", default="config")
-    parser.add_argument("--limit", type=int, default=None)
-    args = parser.parse_args(argv)
-    log = _operation_logger(args.operation)
-    app, supervisor, _, _ = load_config(args.config_dir)
+    log = _operation_logger(operation)
+    app, supervisor, _, _ = load_config(config_dir)
     run_id = str(uuid.uuid4())
     configure_logging(
         app.log_level,
         app.log_dir,
         timezone=app.timezone,
-        component=args.operation,
+        component=operation,
         run_id=run_id,
     )
     batch_limit = (
-        args.limit if args.limit is not None else supervisor.batch_size_for(args.operation)
+        limit
+        if limit is not None
+        else (None if MODULES[operation].sweep else supervisor.batch_size_for(operation))
     )
-    report = RunReport(app.log_dir, args.operation, timezone=app.timezone, run_id=run_id)
+    report = RunReport(app.log_dir, operation, timezone=app.timezone, run_id=run_id)
     report.fields({"batch_limit": batch_limit})
-    report.section(_task_section(args.operation))
+    report.section(_task_section(operation))
     executor = TaskExecutor(
         Database(app.database_url),
-        config_dir=args.config_dir,
+        config_dir=config_dir,
         run_id=run_id,
         report=report,
     )
     try:
-        executor.run_batch(args.operation, args.limit)
+        executor.run_batch(operation, limit)
     except Exception as exc:
         error = classify_exception(exc)
         current = executor.current_claim
@@ -2225,13 +2253,11 @@ def main(argv: list[str] | None = None) -> int:
             attempt_id=current.attempt_id if current else None,
             result={"claimed": len(executor.results)},
         )
-        log.exception("task submodule failed: operation=%s run_id=%s", args.operation, run_id)
-        if error.code == "eh_site_unavailable":
-            return EH_SITE_UNAVAILABLE_EXIT_CODE
-        return 2 if error.category == ErrorClass.SYSTEM else 1
+        log.exception("task submodule failed: operation=%s run_id=%s", operation, run_id)
+        return task_exit_code(error)
     _finish_task_report(
         report,
-        args.operation,
+        operation,
         executor.results,
         system_error=executor.system_error or executor.eh_site_unavailable,
         write_task_lines=False,
@@ -2240,6 +2266,19 @@ def main(argv: list[str] | None = None) -> int:
     if executor.eh_site_unavailable:
         return EH_SITE_UNAVAILABLE_EXIT_CODE
     return 2 if executor.system_error or report.write_failed else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="eharchive-task")
+    parser.add_argument("--operation", required=True, choices=tuple(MODULES))
+    parser.add_argument("--config-dir", default="config")
+    parser.add_argument("--limit", type=int, default=None)
+    args = parser.parse_args(argv)
+    if args.limit is not None and args.limit < 0:
+        parser.error("--limit must be non-negative")
+    module_path, function_name = MODULES[args.operation].handler.split(":", 1)
+    handler = getattr(import_module(module_path), function_name)
+    return handler(operation=args.operation, config_dir=args.config_dir, limit=args.limit)
 
 
 if __name__ == "__main__":

@@ -91,3 +91,10 @@ def classify_exception(exc: BaseException) -> ErrorInfo:
         }.get(exc.errno, "filesystem_error")
         return ErrorInfo(code, str(exc), ErrorClass.SYSTEM)
     return ErrorInfo("unexpected_error", str(exc), ErrorClass.ITEM)
+
+
+def task_exit_code(error: ErrorInfo) -> int:
+    """One exit-code contract for every ordinary module."""
+    if error.code == "eh_site_unavailable":
+        return EH_SITE_UNAVAILABLE_EXIT_CODE
+    return {ErrorClass.SYSTEM: 2, ErrorClass.TEMPORARY: 3, ErrorClass.ITEM: 1}[error.category]

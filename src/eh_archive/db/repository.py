@@ -49,6 +49,10 @@ OPERATION_STATES: dict[str, tuple[tuple[str, ...], str | None]] = {
         (Status.DOWNLOAD_PENDING.value, Status.DOWNLOADING.value),
         Status.DOWNLOADING.value,
     ),
+    "torrent_check": (
+        (Status.DOWNLOAD_PENDING.value, Status.DOWNLOADING.value),
+        Status.DOWNLOADING.value,
+    ),
     "direct_download": (
         (Status.DOWNLOAD_PENDING.value, Status.DOWNLOADING.value),
         Status.DOWNLOADING.value,
@@ -97,7 +101,9 @@ def upload_blockers_clause(replacement_id):
     """Keep failed deletions blocking too: the relation outlives OUTDATED."""
     old = MangaRecord.__table__.alias("upload_blocker")
     return exists(
-        select(1).select_from(old).where(
+        select(1)
+        .select_from(old)
+        .where(
             old.c.superseded_by_id == replacement_id,
             old.c.status != Status.DELETED.value,
         )
@@ -130,7 +136,7 @@ def _retry_ready_clause(operation: str, now: datetime):
             MangaRecord.last_error_operation.is_(None),
             MangaRecord.last_error_operation != "details",
         )
-    if operation == "torrent_download":
+    if operation in {"torrent_download", "torrent_check"}:
         # A details backoff must not stop qBittorrent from being submitted or
         # polled. Other operation backoffs remain authoritative.
         return or_(ready, MangaRecord.last_error_operation == "details")
@@ -457,26 +463,33 @@ class ArchiveRepository:
             )
         return len(rows)
 
-    def has_work(self, operation: str) -> bool:
+    def _work_query(self, operation: str):
         try:
             states, _ = OPERATION_STATES[operation]
         except KeyError as exc:
             raise ValueError(f"Unsupported operation: {operation}") from exc
-        now = utcnow()
         query = (
-            select(MangaRecord.manga_id)
+            select(MangaRecord)
             .where(MangaRecord.status.in_(states))
-            .where(_retry_ready_clause(operation, now))
-            # Expired attempts require manual inspection; only unleased rows
-            # are eligible for automatic scheduling.
+            .where(_retry_ready_clause(operation, utcnow()))
+            # Expired attempts require manual inspection, not automatic reuse.
             .where(MangaRecord.lease_until.is_(None))
-            .limit(1)
         )
-        if operation == "details":
+        if operation == "screen":
+            query = query.where(~MangaRecord.manga_id.like("picacg/%"))
+        elif operation == "details":
             query = query.where(_details_missing_clause())
         elif operation == "torrent_download":
             query = query.where(
-                or_(MangaRecord.download_method.is_(None), MangaRecord.download_method == "torrent")
+                or_(
+                    MangaRecord.download_method.is_(None), MangaRecord.download_method == "torrent"
+                ),
+                MangaRecord.external_download_id.is_(None),
+            )
+        elif operation == "torrent_check":
+            query = query.where(
+                MangaRecord.download_method == "torrent",
+                MangaRecord.external_download_id.is_not(None),
             )
         elif operation == "direct_download":
             query = query.where(
@@ -489,7 +502,22 @@ class ArchiveRepository:
             query = query.where(_delete_ready_clause())
         elif operation == "upload":
             query = query.where(~upload_blockers_clause(MangaRecord.manga_id))
+        return query
+
+    def has_work(self, operation: str) -> bool:
+        query = self._work_query(operation).with_only_columns(MangaRecord.manga_id).limit(1)
         return self.session.scalar(query) is not None
+
+    def ready_ids(self, operation: str, *, limit: int | None = None) -> list[str]:
+        """Snapshot one sweep; later claims recheck eligibility and acquire leases."""
+        query = (
+            self._work_query(operation)
+            .with_only_columns(MangaRecord.manga_id)
+            .order_by(desc(MangaRecord.priority), MangaRecord.created_at, MangaRecord.manga_id)
+        )
+        if limit is not None:
+            query = query.limit(limit)
+        return list(self.session.scalars(query))
 
     def claim_next(
         self,
@@ -498,38 +526,18 @@ class ArchiveRepository:
         owner: str,
         lease_seconds: int = 900,
         actor: str | None = None,
+        manga_id: str | None = None,
     ) -> ClaimedAttempt | None:
-        try:
-            states, execution_state = OPERATION_STATES[operation]
-        except KeyError as exc:
-            raise ValueError(f"Unsupported operation: {operation}") from exc
-        now = utcnow()
         query = (
-            select(MangaRecord)
-            .where(MangaRecord.status.in_(states))
-            .where(_retry_ready_clause(operation, now))
-            .where(MangaRecord.lease_until.is_(None))
+            self._work_query(operation)
             .order_by(desc(MangaRecord.priority), MangaRecord.created_at)
             .with_for_update(skip_locked=True)
             .limit(1)
         )
-        if operation == "details":
-            query = query.where(_details_missing_clause())
-        elif operation == "torrent_download":
-            query = query.where(
-                or_(MangaRecord.download_method.is_(None), MangaRecord.download_method == "torrent")
-            )
-        elif operation == "direct_download":
-            query = query.where(
-                or_(
-                    MangaRecord.download_method.in_(("direct", "hah", "aria2")),
-                    and_(MangaRecord.download_method.is_(None), MangaRecord.torrent_link == ""),
-                )
-            )
-        elif operation == "delete":
-            query = query.where(_delete_ready_clause())
-        elif operation == "upload":
-            query = query.where(~upload_blockers_clause(MangaRecord.manga_id))
+        if manga_id is not None:
+            query = query.where(MangaRecord.manga_id == manga_id)
+        _, execution_state = OPERATION_STATES[operation]
+        now = utcnow()
         manga = self.session.scalars(query).first()
         if manga is None:
             return None

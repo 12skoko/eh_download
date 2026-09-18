@@ -1,13 +1,10 @@
 poll_seconds = 5
 health_check_interval_seconds = 60
-collect_initial_delay_seconds = 60
-collect_interval_seconds = 10800
 batch_size = 10
 direct_download_batch_size = 1
 lease_seconds = 900
 retry_limit = 5
 torrent_stall_seconds = 604800
-torrent_poll_seconds = 60
 module_restart_delay_seconds = 5
 request_timeout_seconds = 30
 upload_timeout_seconds = 1800
@@ -17,6 +14,16 @@ shutdown_grace_seconds = 30
 # maintenance_end = "06:30"
 maintenance_retry_seconds = 30
 maintenance_recovery_timeout_seconds = 900
+
+# Ordinary timed modules use the same scheduler. No work is required to start.
+# Each interval is measured from the actual start; overlapping runs are skipped.
+[schedules.collect]
+initial_delay_seconds = 60
+interval_seconds = 10800
+
+[schedules.torrent_check]
+initial_delay_seconds = 60
+interval_seconds = 60
 
 [special_processing]
 enabled = true
@@ -29,6 +36,7 @@ collect = true
 screen = true
 details = true
 torrent_download = true
+torrent_check = true
 direct_download = true
 validate = true
 prepare = true
@@ -41,6 +49,7 @@ special_processing = true
 collect = 1
 screen = 1
 torrent_download = 1
+torrent_check = 1
 direct_download = 1
 validate = 1
 prepare = 1

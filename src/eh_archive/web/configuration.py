@@ -16,6 +16,7 @@ import tomlkit
 
 from ..config import load_config, load_video_archive_config
 from ..config.loader import DEFAULT_LOCATIONS, SUPERVISOR_MODULES
+from ..tasks.registry import MODULES
 
 CONFIG_FILENAMES = {
     "app": "app.toml",
@@ -154,14 +155,11 @@ APP_FIELDS = (
 SUPERVISOR_FIELDS = (
     FieldSpec(("poll_seconds",), "调度轮询间隔（秒）", "float", minimum=0),
     FieldSpec(("health_check_interval_seconds",), "健康检查间隔（秒）", "float", minimum=0.001),
-    FieldSpec(("collect_initial_delay_seconds",), "首次采集延迟（秒）", "float", minimum=0),
-    FieldSpec(("collect_interval_seconds",), "采集间隔（秒）", "float", minimum=0),
     FieldSpec(("batch_size",), "批处理数量", "int", minimum=1),
     FieldSpec(("direct_download_batch_size",), "直接下载批处理数量", "int", minimum=1),
     FieldSpec(("lease_seconds",), "任务租约时长（秒）", "int", minimum=1),
     FieldSpec(("retry_limit",), "重试次数上限", "int", minimum=0),
     FieldSpec(("torrent_stall_seconds",), "Torrent 停滞判定（秒）", "int", minimum=0),
-    FieldSpec(("torrent_poll_seconds",), "Torrent 轮询间隔（秒）", "float", minimum=0),
     FieldSpec(("module_restart_delay_seconds",), "组件重启间隔（秒）", "float", minimum=0),
     FieldSpec(("request_timeout_seconds",), "普通请求超时（秒）", "float", minimum=0.001),
     FieldSpec(("upload_timeout_seconds",), "上传超时（秒）", "float", minimum=0.001),
@@ -179,19 +177,16 @@ SUPERVISOR_FIELDS = (
         minimum=1,
     ),
     FieldSpec(("special_processing", "max_concurrency"), "特殊任务总并发", "int", minimum=1),
+    *(
+        FieldSpec(("schedules", name, key), f"{module.label}：{label}（秒）", "float", minimum=0)
+        for name, module in MODULES.items()
+        if module.schedule == "interval"
+        for key, label in (("initial_delay_seconds", "首次延迟"), ("interval_seconds", "运行间隔"))
+    ),
     *(FieldSpec(("modules", name), f"启动组件：{name}", "bool") for name in SUPERVISOR_MODULES),
     *(
         FieldSpec(("max_concurrency", name), f"最大并发：{name}", "int", minimum=1)
-        for name in (
-            "collect",
-            "torrent_download",
-            "direct_download",
-            "validate",
-            "prepare",
-            "upload",
-            "cleanup",
-            "delete",
-        )
+        for name in MODULES
     ),
 )
 
@@ -285,8 +280,13 @@ def load_config_sections(config_dir: str | Path) -> tuple[ConfigSection, ...]:
         raw = path.read_bytes() if path.exists() else b""
         from dataclasses import replace
 
-        fields = tuple(replace(_field_view(spec, _nested_value(values[name], spec.path)),
-                               policy=field_policy(name, spec.name)) for spec in specs)
+        fields = tuple(
+            replace(
+                _field_view(spec, _nested_value(values[name], spec.path)),
+                policy=field_policy(name, spec.name),
+            )
+            for spec in specs
+        )
         sections.append(
             ConfigSection(
                 name=name,
@@ -356,8 +356,9 @@ def update_config_section(
             raise ConfigurationConflict("配置文件已经被其他操作修改，请刷新页面后重试")
         if publish:
             _atomic_replace(path, candidate)
-    return ConfigUpdateResult(filename, tuple(changed),
-                              merged_policy(section_name, changed), candidate)
+    return ConfigUpdateResult(
+        filename, tuple(changed), merged_policy(section_name, changed), candidate
+    )
 
 
 def _app_values(config) -> dict[str, Any]:
@@ -424,6 +425,14 @@ def _supervisor_values(config) -> dict[str, Any]:
             "maintenance_retry_seconds",
             "maintenance_recovery_timeout_seconds",
         )
+    }
+    values["schedules"] = {
+        name: {
+            "initial_delay_seconds": config.schedule_for(name).initial_delay_seconds,
+            "interval_seconds": config.schedule_for(name).interval_seconds,
+        }
+        for name, module in MODULES.items()
+        if module.schedule == "interval"
     }
     values["modules"] = config.modules
     values["max_concurrency"] = config.max_concurrency
@@ -626,6 +635,7 @@ def _validate_candidate(config_dir: Path, filename: str, content: str) -> None:
             if not 1 <= app.web_port <= 65535:
                 raise ValueError("Web port must be between 1 and 65535")
             from .auth import valid_password_hash
+
             if secrets.web_password_hash:
                 if not valid_password_hash(secrets.web_password_hash) or not secrets.web_secret:
                     raise ValueError("Web authentication configuration is invalid")
