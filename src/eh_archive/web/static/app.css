@@ -137,13 +137,13 @@ input:focus, select:focus, textarea:focus { outline: 3px solid rgb(23 107 135 / 
 .metric-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: .75rem; margin-bottom: 1.5rem; }
 .metric-card { display: grid; gap: .2rem; min-height: 112px; padding: 1rem; color: var(--text); border: 1px solid var(--line); border-top: 3px solid #8aa4b3; border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
 .metric-card:hover { color: var(--text); border-color: #aebec8; transform: translateY(-1px); }
-.metric-card.status-downloading, .metric-card.status-uploading, .metric-card.status-validating, .metric-card.status-preparing { border-top-color: var(--blue); }
-.metric-card.status-downloaded, .metric-card.status-uploaded, .metric-card.status-completed, .metric-card.status-deleted, .metric-card.status-cancelled, .metric-card.status-skipped { border-top-color: var(--green); }
-.metric-card.status-discovered, .metric-card.status-deferred, .metric-card.status-download_blocked, .metric-card.status-manual_review, .metric-card.status-special_processing, .metric-card.status-rename_pending, .metric-card.status-force_delete_pending, .metric-card.status-outdated, .metric-card.status-cancel_requested { border-top-color: var(--amber); }
+.metric-card.status-downloading, .metric-card.status-uploading, .metric-card.status-validating, .metric-card.status-preparing, .metric-card.status-special_processing { border-top-color: var(--blue); }
+.metric-card.status-downloaded, .metric-card.status-uploaded, .metric-card.status-completed { border-top-color: var(--green); }
+.metric-card.status-discovered, .metric-card.status-deferred, .metric-card.status-download_pending, .metric-card.status-upload_pending, .metric-card.status-rename_pending, .metric-card.status-force_delete_pending, .metric-card.status-outdated, .metric-card.status-cancel_requested { border-top-color: var(--amber); }
 
 .risk-confirmations { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .45rem .8rem; margin: 1rem 0; padding: .9rem; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); }
 .risk-confirmations p { grid-column: 1 / -1; margin: 0; }
-.metric-card.status-quarantined, .metric-card.status-unavailable { border-top-color: var(--red); }
+.metric-card.status-quarantined, .metric-card.status-manual_review { border-top-color: var(--red); }
 .metric-card span { color: var(--muted); }
 .metric-card strong { font-size: 1.75rem; letter-spacing: -.03em; }
 .metric-card small { color: var(--muted); }

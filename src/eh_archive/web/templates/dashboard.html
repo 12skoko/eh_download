@@ -34,17 +34,7 @@
         <div class="dialog-head"><div><p class="eyebrow">调度器控制</p><h2>暂停 Supervisor</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
         <p>暂停后不会再启动新的子进程；已经启动的任务不会被强制终止。</p>
         <label>暂停原因（可选）<textarea name="reason" rows="3"></textarea></label>
-        <div class="dialog-actions"><button type="button" class="warning-button" data-open-dialog="supervisor-drain-dialog">终止</button><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认暂停</button></div>
-      </form>
-    </dialog>
-    <dialog id="supervisor-drain-dialog" class="status-dialog">
-      <form method="post" action="/control/supervisor" class="status-dialog-form" hx-post="/control/supervisor" hx-target="#supervisor-row" hx-swap="outerHTML" hx-on::after-request="this.closest('dialog').close()">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}"><input type="hidden" name="state" value="draining">
-        <div class="dialog-head"><div><p class="eyebrow">调度器控制</p><h2>终止 Supervisor</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
-        <p>终止后停止领取新任务，等待正在执行的任务结束，然后自动转为暂停状态。</p>
-        <label>排空原因（可选）<textarea name="reason" rows="3"></textarea></label>
-        <div class="alert warning">该操作会停止整个归档流程继续调度新任务。</div>
-        <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认终止</button></div>
+        <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认暂停</button></div>
       </form>
     </dialog>
   </article>

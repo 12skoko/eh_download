@@ -643,7 +643,7 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
   -Headers $headers -ContentType 'application/json' -Body $body
 ```
 
-总览页面的 Supervisor“暂停”和“排空”都会先打开确认窗口。“暂停”立即停止启动新的子进程，但不会强制终止已经启动的任务；“排空”停止领取新任务，等待正在执行的任务结束后自动转为暂停。
+总览页面的 Supervisor“暂停”会先打开确认窗口，确认后停止启动新的子进程，但不会强制终止已经启动的任务。如需退出 Supervisor，请在系统页使用“停止 Supervisor”：停止领取新任务，等待正在执行的任务结束后退出进程。
 
 档案队列会在搜索输入停止一秒后自动更新，状态、来源和错误筛选也会立即更新；搜索范围包括 manga ID、标题、原始标题和本地归档文件名。人工复核使用独立的进入时间游标，按 `status_updated_at` 从新到旧排列，并可按错误码和发生环节筛选。
 
