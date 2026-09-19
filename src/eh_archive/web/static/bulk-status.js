@@ -27,6 +27,10 @@
       form.querySelector('[data-bulk-method-label]').hidden = !needsMethod;
       form.elements.download_method.disabled = !needsMethod;
       form.elements.download_method.required = needsMethod;
+      const needsReplacement = event.target.value === 'outdated';
+      form.querySelector('[data-bulk-replacement-label]').hidden = !needsReplacement;
+      form.elements.superseded_by_id.disabled = !needsReplacement;
+      form.elements.superseded_by_id.required = needsReplacement;
       const needsReason = option.dataset.requiresReason === 'yes';
       form.elements.reason.required = needsReason;
       form.querySelector('[data-bulk-reason-label]').textContent = needsReason
@@ -96,6 +100,7 @@
       items, target_status: form.elements.target_status.value,
       reason: form.elements.reason.value,
       download_method: form.elements.download_method.disabled ? null : form.elements.download_method.value,
+      superseded_by_id: form.elements.superseded_by_id.disabled ? null : form.elements.superseded_by_id.value.trim(),
     };
     busy = true;
     form.querySelectorAll('button').forEach(button => { button.disabled = true; });

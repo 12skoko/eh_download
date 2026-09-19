@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 import uuid
 from datetime import UTC, datetime
@@ -88,6 +89,7 @@ class BulkStatusUpdate(BaseModel):
     target_status: str
     reason: str | None = Field(default=None, max_length=4000)
     download_method: str | None = None
+    superseded_by_id: str | None = None
 
 
 def _filter_query(params: list[tuple[str, str]]) -> str:
@@ -183,6 +185,7 @@ def create_app(
             return bulk_override_status(
                 database, items=payload.items, target_status=payload.target_status,
                 reason=payload.reason, download_method=payload.download_method,
+                superseded_by_id=payload.superseded_by_id,
                 actor=_actor(request), app_config=app_config,
             )
         except WebServiceError as exc:
@@ -1497,20 +1500,26 @@ def _manga_tab_id(value) -> str:
     return manga_id.partition("/")[0] or manga_id
 
 
-def _error_summary(value) -> str:
+def _error_summary(value, error_code=None) -> str:
     detail = str(value or "").strip()
     if not detail:
         return "未记录原因"
     try:
         parsed = json.loads(detail)
     except (TypeError, ValueError):
-        return detail
+        parsed = None
     if isinstance(parsed, dict):
         for key in ("error", "message", "detail"):
             summary = parsed.get(key)
             if isinstance(summary, str) and summary.strip():
-                return summary.strip()
-    return detail
+                detail = summary.strip()
+                break
+    if re.search(r"<!doctype\s+html\b|<html\b|<head\b|<body\b", detail, re.IGNORECASE):
+        if error_code == "lrr_metadata_non_json_response":
+            return "LANraragi 元数据接口返回了 HTML 页面，预期为 JSON；响应片段请展开查看。"
+        return "服务返回了 HTML 页面；响应片段请展开查看。"
+    summary = " ".join(detail.split())
+    return summary if len(summary) <= 200 else summary[:199] + "…"
 
 
 def _serialize(row):

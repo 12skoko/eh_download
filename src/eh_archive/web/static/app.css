@@ -383,7 +383,7 @@ pre { max-height: 350px; overflow: auto; padding: .8rem; color: #d8e5ec; border-
 .review-card > .bulk-check { margin-bottom: .75rem; }
 .bulk-result { margin-bottom: 1rem; overflow-wrap: anywhere; }
 .bulk-result ul { max-height: 20rem; overflow: auto; }
-[data-bulk-method-label][hidden], [data-bulk-result][hidden] { display: none; }
+[data-bulk-method-label][hidden], [data-bulk-replacement-label][hidden], [data-bulk-result][hidden] { display: none; }
 .report-tabs a { display: inline-flex; align-items: center; gap: .4rem; }
 
 .log-breadcrumbs { display: flex; flex-wrap: wrap; gap: .65rem; margin-bottom: 1rem; overflow-wrap: anywhere; }

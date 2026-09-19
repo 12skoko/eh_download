@@ -167,7 +167,7 @@ MANUAL_STATUS_TARGETS = (
 MANUAL_STATUS_VALUES = frozenset(target["status"] for target in MANUAL_STATUS_TARGETS)
 BULK_STATUS_VALUES = frozenset({
     "discovered", "manual_review", "skipped", "download_blocked",
-    "unavailable", "quarantined", "download_pending",
+    "unavailable", "quarantined", "download_pending", "outdated",
 })
 BULK_STATUS_TARGETS = tuple(
     target for target in MANUAL_STATUS_TARGETS if target["status"] in BULK_STATUS_VALUES
@@ -896,6 +896,7 @@ class WebService:
 def bulk_override_status(
     database, *, items: list[tuple[str, int]], target_status: str,
     actor: str, reason: str | None = None, download_method: str | None = None,
+    superseded_by_id: str | None = None,
     app_config: AppConfig | None = None,
 ) -> dict[str, Any]:
     """Commit each archive independently; failed items must leave no partial writes."""
@@ -909,6 +910,12 @@ def bulk_override_status(
         raise InvalidRequest("档案 ID 或版本无效")
     reason = reason.strip() if reason else None
     download_method = download_method.strip() if download_method else None
+    superseded_by_id = superseded_by_id.strip() if superseded_by_id else None
+    if target_status == Status.OUTDATED.value:
+        if not superseded_by_id:
+            raise InvalidRequest("标记过时必须填写替代档案 ID")
+        if superseded_by_id in {identifier for identifier, _ in items}:
+            raise InvalidRequest("替代档案不能包含在本次选中的档案中")
     if target_status in {"download_blocked", "unavailable", "quarantined"} and not reason:
         raise InvalidRequest("这个状态必须填写操作原因")
     if target_status == "download_pending" and download_method not in DOWNLOAD_METHOD_VALUES:
@@ -927,6 +934,7 @@ def bulk_override_status(
                     service.override_status(
                         manga_id, target_status=target_status, row_version=version,
                         reason=reason, download_method=download_method, batch_id=batch_id,
+                        superseded_by_id=superseded_by_id,
                     )
                     outcome, message = "success", "状态已修改"
             # Only report success after the transaction has committed.
