@@ -1,0 +1,15 @@
+.metadata-picker[hidden], [data-metadata-raw][hidden], .metadata-empty[hidden] { display: none; }
+.metadata-picker { min-width: 0; }
+.metadata-picker-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .5rem; }
+.metadata-picker-head .link-button { color: var(--muted); }
+.metadata-picker-box { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; background: var(--surface); }
+.metadata-picker-box:focus-within { border-color: var(--accent); }
+.metadata-chips { display: flex; flex-wrap: wrap; gap: .5rem; max-height: 22rem; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.metadata-chip { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; max-width: 100%; padding: .2rem .35rem .2rem .6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); }
+.metadata-chip-id { font-family: "Cascadia Code", Consolas, monospace; font-size: .875rem; overflow-wrap: anywhere; }
+.metadata-chip button { flex-shrink: 0; padding: 0; width: 1.75rem; min-height: 1.75rem; border: 0; background: transparent; color: var(--muted); font-size: 1.1rem; }
+.metadata-chip button:hover { background: var(--red-soft); color: var(--red); }
+.metadata-empty { margin: 0 0 .75rem; color: var(--muted); font-size: .9rem; }
+.metadata-entry { display: flex; gap: .5rem; margin-top: .75rem; }
+.metadata-entry input { flex: 1; min-width: 0; width: auto; }
+.metadata-entry button { flex-shrink: 0; }

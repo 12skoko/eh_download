@@ -48,6 +48,25 @@ ACTION_LABELS = {
 }
 
 
+def mismatch_conditions():
+    return (
+        MangaRecord.status == "manual_review",
+        MangaRecord.last_error_code == "lrr_metadata_mismatch",
+        MangaRecord.last_error_operation == "upload",
+    )
+
+
+def pending_mismatch_ids(session):
+    """Return selection candidates only; creating a workflow validates eligibility."""
+    return list(
+        session.scalars(
+            select(MangaRecord.manga_id)
+            .where(*mismatch_conditions())
+            .order_by(MangaRecord.manga_id)
+        )
+    )
+
+
 def create(service, inputs):
     config = load_metadata_config(service.config_dir)
     if set(inputs) - {"manga_ids", "mismatch_only"}:
@@ -63,11 +82,7 @@ def create(service, inputs):
         raise SpecialInvalidRequest("请选择指定档案或元数据错误批量筛选")
     query = select(MangaRecord).order_by(MangaRecord.manga_id).with_for_update()
     if batch:
-        query = query.where(
-            MangaRecord.status == "manual_review",
-            MangaRecord.last_error_code == "lrr_metadata_mismatch",
-            MangaRecord.last_error_operation == "upload",
-        ).limit(config.batch_limit + 1)
+        query = query.where(*mismatch_conditions()).limit(config.batch_limit + 1)
     else:
         ids = list(dict.fromkeys(i.strip() for i in ids))
         if len(ids) > config.batch_limit:

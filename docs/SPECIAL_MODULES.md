@@ -42,7 +42,9 @@ eharchive --config-dir config special action 123 cancel --row-version 7
 ## LANraragi 元数据更新
 
 Web **特殊处理 → LANraragi 元数据更新**，或档案详情页的 **更新元数据** 按钮。
-输入一个或多个完整 Gallery ID，也可选择全部 `lrr_metadata_mismatch` 待复核任务。
+在同一个选择区域输入或批量粘贴完整 Gallery ID，档案以横向换行的标签显示，支持逐项删除和清空。
+也可点击 **加入元数据不一致的待复核档案**，将这些任务追加到列表并去重。
+提交时只处理列表中最终保留的 ID。
 每批默认最多 500 个档案，超过上限需指定 ID 分批执行。
 
 1. **生成差异预览**：读取本地详细元数据和 LANraragi，展示标题差异、待补入/移除的标签。
