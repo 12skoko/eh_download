@@ -33,6 +33,7 @@ from ..management.config_migrations import migrate_configuration
 from ..special import SpecialRepository
 from ..special.handlers import enabled_module_capabilities
 from ..tasks.registry import MODULES
+from .scheduling import ACTIVE_REQUESTS, INTERVAL_MODULES, aware
 
 log = get_logger(__name__)
 
@@ -58,7 +59,8 @@ class Supervisor:
         self.runner_module = runner_module
         self.run_id = run_id or str(uuid.uuid4())
         self.main_log_path = Path(main_log_path).resolve() if main_log_path else None
-        self.owner = f"supervisor-{self.run_id}"
+        # Ownership identifies this process, even when a log run_id is reused.
+        self.owner = f"supervisor-{uuid.uuid4()}"
         self.children: dict[str, subprocess.Popen] = {}
         self.next_start_at: dict[str, float] = {}
         self.stopping = False
@@ -138,26 +140,114 @@ class Supervisor:
         if child is not None and child.poll() is None:
             return
         if module.schedule == "interval":
-            if now < self.next_run_at[operation]:
+            manual = self._prepare_interval_start(operation)
+            if manual is None:
                 return
         else:
             with self.database.session() as session:
                 if not ArchiveRepository(session).has_work(operation):
                     return
-        self._start_child(
-            operation,
-            [
-                sys.executable,
-                "-m",
-                self.runner_module,
-                "--operation",
+        try:
+            self._start_child(
                 operation,
-                "--config-dir",
-                self.config_dir,
-            ],
-        )
+                [
+                    sys.executable,
+                    "-m",
+                    self.runner_module,
+                    "--operation",
+                    operation,
+                    "--config-dir",
+                    self.config_dir,
+                ],
+            )
+        except OSError:
+            if module.schedule == "interval":
+                self._finish_interval_start(operation, manual, failed=True)
+            raise
         if module.schedule == "interval":
-            self.next_run_at[operation] = now + self.config.schedule_for(operation).interval_seconds
+            self.next_run_at[operation] = (
+                time.monotonic() + self.config.schedule_for(operation).interval_seconds
+            )
+            self._finish_interval_start(operation, manual)
+
+    def _interval_block_reason(self, operation, control):
+        if not self.config.modules[operation]:
+            return "模块已禁用"
+        if self.draining or self.control_state == "draining":
+            return "Supervisor 正在停止调度"
+        if self.control_state == "paused":
+            return "Supervisor 已暂停"
+        if control.state == "paused":
+            return "模块已暂停"
+        if self.maintenance_active or self._in_maintenance_window():
+            return "维护期间，暂不可执行"
+        if time.monotonic() < self.next_start_at.get(operation, 0.0):
+            return "等待重试冷却结束"
+        return None
+
+    def _publish_interval(self, session, operation):
+        control = session.get(SystemControl, operation, with_for_update=True)
+        if control is None:
+            control = SystemControl(component=operation, state="running", updated_by=self.owner)
+            session.add(control)
+        if control.trigger_status in ACTIVE_REQUESTS and control.trigger_owner != self.owner:
+            control.trigger_status = "expired"
+            control.trigger_message = "请求已失效：Supervisor 已重启，请重新触发"
+        child = self.children.get(operation)
+        control.schedule_running = child is not None and child.poll() is None
+        control.schedule_block_reason = self._interval_block_reason(operation, control)
+        if control.trigger_status == "pending" and (
+            control.schedule_block_reason or control.schedule_running
+        ):
+            control.trigger_status = "rejected"
+            control.trigger_message = "请求未执行：" + (
+                control.schedule_block_reason or "模块已在运行"
+            )
+        control.lease_owner = self.owner
+        control.next_run_at = utcnow() + timedelta(seconds=(
+            max(self.next_run_at[operation], self.next_start_at.get(operation, 0.0))
+            - time.monotonic()
+        ))
+        control.schedule_updated_at = utcnow()
+        return control
+
+    def _prepare_interval_start(self, operation):
+        """Claim before Popen; an interrupted claim is never automatically replayed."""
+        with self.database.session() as session:
+            supervisor = session.get(SystemControl, "supervisor", with_for_update=True)
+            if (
+                supervisor is None or supervisor.lease_owner != self.owner
+                or not supervisor.lease_until or aware(supervisor.lease_until) <= utcnow()
+                or supervisor.state != "running"
+            ):
+                return None
+            control = self._publish_interval(session, operation)
+            if control.schedule_running or control.schedule_block_reason:
+                return None
+            manual = control.trigger_status == "pending" and control.trigger_owner == self.owner
+            if not manual and time.monotonic() < self.next_run_at[operation]:
+                return None
+            if control.trigger_status == "starting":
+                return None
+            # Reserve the start before releasing the lock, including timer starts.
+            # This closes the window in which Web could queue a second run.
+            control.schedule_running = True
+            if manual:
+                control.trigger_status = "starting"
+                control.trigger_message = "Supervisor 已接收，正在启动"
+            return manual
+
+    def _finish_interval_start(self, operation, manual, *, failed=False):
+        with self.database.session() as session:
+            supervisor = session.get(SystemControl, "supervisor", with_for_update=True)
+            if supervisor is None or supervisor.lease_owner != self.owner:
+                return
+            control = self._publish_interval(session, operation)
+            if manual:
+                control.trigger_status = "failed" if failed else "started"
+                control.trigger_message = (
+                    "启动失败，请查看 Supervisor 日志" if failed else "已启动（不代表执行完成）"
+                )
 
     def _maintenance_tick(self) -> tuple[bool, bool]:
         """Return whether scheduling is blocked and whether heartbeat already ran."""
@@ -330,7 +420,7 @@ class Supervisor:
             if (
                 control
                 and control.lease_until
-                and control.lease_until > utcnow()
+                and aware(control.lease_until) > utcnow()
                 and control.lease_owner not in {None, self.owner}
             ):
                 raise RuntimeError("another Supervisor currently owns the lease")
@@ -343,6 +433,8 @@ class Supervisor:
             control.lease_owner = self.owner
             control.lease_until = utcnow() + timedelta(seconds=self.config.lease_seconds)
             self._set_control_state(control.state)
+            for operation in INTERVAL_MODULES:
+                self._publish_interval(session, operation)
 
     def _set_control_state(self, state: str) -> None:
         previous = self.control_state

@@ -5,8 +5,17 @@
 <section class="module-grid" aria-label="特殊模块">
   {% for module in modules %}
   <a class="module-card" href="{{ module.url }}">
-    <div class="module-card-head"><span class="mono">{{ module.kind }}</span><span class="badge {{ 'healthy' if module.health.available else 'warning' }}">{{ '已启用' if module.health.available else '未启用' }}</span></div>
-    <h2>{{ module.label }}</h2>
+    <div class="module-card-head">
+      <h2>{{ module.label }}</h2>
+      {% if module.health.available %}
+      <span class="badge healthy">已启用</span>
+      {% elif module.health.reason == '模块配置无效，请检查配置文件' %}
+      <span class="badge degraded">配置异常</span>
+      {% else %}
+      <span class="badge">未启用</span>
+      {% endif %}
+    </div>
+    <span class="module-card-kind mono">{{ module.kind }}</span>
     <p>{{ module.description }}</p>
     {% if not module.health.available and module.health.reason %}<small>{{ module.health.reason }}</small>{% endif %}
     <span class="module-card-link">进入模块 →</span>

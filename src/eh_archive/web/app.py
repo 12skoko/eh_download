@@ -36,6 +36,7 @@ from ..special.service import (
     special_module_health,
     special_workflow_detail,
 )
+from ..supervisor.scheduling import INTERVAL_MODULES, request_run, schedule_view
 from .auth import (
     SESSION_COOKIE,
     SESSION_MAX_AGE_SECONDS,
@@ -133,6 +134,10 @@ def create_app(
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
     templates.env.globals["css_version"] = hashlib.sha256((STATIC_DIR / "app.css").read_bytes()).hexdigest()[:12]
     templates.env.filters["datetime"] = _format_datetime
+    templates.env.filters["schedule_datetime"] = lambda value: (
+        value.astimezone(ZoneInfo(app_config.timezone)).strftime("%Y-%m-%d %H:%M:%S %Z")
+        if value else "—"
+    )
     templates.env.filters["collected_at"] = lambda value: _format_collected_at(value, app_config.timezone)
     templates.env.filters["filesize"] = _format_filesize
     templates.env.filters["status_label"] = lambda value: STATUS_LABELS.get(value, value)
@@ -300,8 +305,56 @@ def create_app(
                 **data,
                 health_states=health_states,
                 supervisor_state=supervisor_state,
+                module_schedules={
+                    name: schedule_view(
+                        data["controls"].get(name), data["controls"].get("supervisor"),
+                        supervisor_config, app_config.timezone,
+                    ) for name in INTERVAL_MODULES
+                },
             ),
         )
+
+    def module_schedule_data(component):
+        with database.session() as session:
+            return schedule_view(
+                session.get(SystemControl, component), session.get(SystemControl, "supervisor"),
+                supervisor_config, app_config.timezone,
+            )
+
+    def module_schedule_response(request, component, error=None):
+        return templates.TemplateResponse(
+            request=request, name="_module_schedule.html",
+            context=_context(
+                request, component=component, schedule=module_schedule_data(component),
+                trigger_error=error,
+            ),
+        )
+
+    @app.get("/partials/module-schedule/{component}", response_class=HTMLResponse)
+    def module_schedule_partial(request: Request, component: str):
+        if component not in INTERVAL_MODULES:
+            return _error_response(request, templates, InvalidRequest("此模块不支持定时调度"))
+        return module_schedule_response(request, component)
+
+    @app.post("/control/{component}/run")
+    async def run_module_page(request: Request, component: str):
+        form = await _validated_form(request)
+        try:
+            if form.get("confirmed") != "yes":
+                raise ValueError("请先确认手动运行")
+            with database.session() as session:
+                request_run(
+                    session, component, owner=str(form.get("owner", "")),
+                    request_version=str(form.get("request_version", "")),
+                    actor=_actor(request), config=supervisor_config, timezone=app_config.timezone,
+                )
+        except ValueError as exc:
+            if request.headers.get("HX-Request") == "true" and component in INTERVAL_MODULES:
+                return module_schedule_response(request, component, str(exc))
+            return _error_response(request, templates, InvalidRequest(str(exc)))
+        if request.headers.get("HX-Request") == "true":
+            return module_schedule_response(request, component)
+        return _redirect_response(request, "/?notice=module-trigger-requested")
 
     @app.get("/partials/running-tasks", response_class=HTMLResponse)
     def running_tasks_partial(request: Request):
@@ -1069,6 +1122,8 @@ def create_app(
                             else None
                         ),
                         component_error=str(error),
+                        module_schedules={component: module_schedule_data(component)}
+                        if component in INTERVAL_MODULES else {},
                     ),
                 )
             return _error_response(request, templates, error)
@@ -1089,6 +1144,8 @@ def create_app(
                         else None
                     ),
                     component_error=None,
+                    module_schedules={component: module_schedule_data(component)}
+                    if component in INTERVAL_MODULES else {},
                 ),
             )
         return _redirect_response(request, "/?notice=control-updated")

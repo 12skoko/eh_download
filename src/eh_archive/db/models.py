@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     Float,
@@ -448,6 +449,14 @@ class SystemControl(Base):
     lease_owner: Mapped[str | None] = mapped_column(Text)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    schedule_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    schedule_running: Mapped[bool | None] = mapped_column(Boolean)
+    schedule_block_reason: Mapped[str | None] = mapped_column(Text)
+    trigger_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    trigger_owner: Mapped[str | None] = mapped_column(Text)
+    trigger_status: Mapped[str | None] = mapped_column(String(16))
+    trigger_message: Mapped[str | None] = mapped_column(Text)
     row_version: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False

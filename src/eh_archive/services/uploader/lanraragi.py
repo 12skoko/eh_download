@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,13 +22,25 @@ def tag_values(value: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(tag.strip() for tag in value.split(",") if tag.strip()))
 
 
+def comparison_tags(value: str) -> dict[str, str]:
+    """Index tags by NFC for comparison, retaining original text for reports."""
+    tags = {}
+    for tag in tag_values(value):
+        tags.setdefault(unicodedata.normalize("NFC", tag), tag)
+    return tags
+
+
 def metadata_differences(payload: Mapping[str, Any], expected: Mapping[str, str]) -> list[str]:
     mismatched = []
     for key, value in expected.items():
         actual = payload.get(key)
         equal = actual == value
+        if key == "title" and isinstance(actual, str):
+            equal = unicodedata.normalize("NFC", actual) == unicodedata.normalize("NFC", value)
         if key == "tags":
-            equal = isinstance(actual, str) and set(tag_values(actual)) == set(tag_values(value))
+            equal = isinstance(actual, str) and (
+                comparison_tags(actual).keys() == comparison_tags(value).keys()
+            )
         if not equal:
             mismatched.append(key)
     return mismatched

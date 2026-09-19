@@ -58,6 +58,19 @@ document.addEventListener("htmx:afterSwap", (event) => {
 });
 
 document.addEventListener("htmx:beforeSwap", (event) => {
+  // Do not let a poll that was already in flight replace an open run dialog.
+  if (event.detail.target?.classList.contains("module-schedule")
+      && event.detail.target.querySelector("dialog[open]")
+      && event.detail.requestConfig?.verb === "get") {
+    event.detail.shouldSwap = false;
+    return;
+  }
+  // A progress response already in flight must not dismiss the confirmation.
+  if (event.detail.target?.id === "direct-download-progress"
+      && event.detail.target.querySelector("#cancel-direct-download-dialog[open]")) {
+    event.detail.shouldSwap = false;
+    return;
+  }
   if (event.detail.xhr.status >= 400 && event.detail.xhr.status < 500) {
     event.detail.shouldSwap = true;
     event.detail.isError = false;

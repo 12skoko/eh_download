@@ -6,7 +6,7 @@ import re
 from dataclasses import fields
 
 from ..domain.models import MangaInfo
-from .uploader.lanraragi import build_tags, metadata_differences, tag_values
+from .uploader.lanraragi import build_tags, comparison_tags, metadata_differences, tag_values
 
 ARCHIVE_ID = re.compile(r"[0-9a-fA-F]{40}")
 GALLERY = re.compile(r"https?://(?:exhentai|e-hentai)\.org/g/(\d+/[a-zA-Z0-9]+)/?")
@@ -98,16 +98,17 @@ class MetadataMaintenance:
             or source_ids(expected["tags"]) != {candidate["manga_id"]}
         ):
             raise ValueError("本地标题或来源地址无效")
-        wanted, actual = set(tag_values(expected["tags"])), set(tag_values(payload["tags"]))
+        wanted, actual = comparison_tags(expected["tags"]), comparison_tags(payload["tags"])
+        differences = metadata_differences(payload, expected)
         return {
             **candidate,
             "archive_id": archive_id,
             "expected": expected,
             "actual": remote_snapshot(payload),
-            "missing_tags": sorted(wanted - actual),
-            "extra_tags": sorted(actual - wanted),
-            "title_changed": payload.get("title") != expected["title"],
-            "action": "update" if metadata_differences(payload, expected) else "verify",
+            "missing_tags": sorted(wanted[tag] for tag in wanted.keys() - actual.keys()),
+            "extra_tags": sorted(actual[tag] for tag in actual.keys() - wanted.keys()),
+            "title_changed": "title" in differences,
+            "action": "update" if differences else "verify",
         }
 
     def apply(self, preview, info, *, checkpoint=lambda: None):

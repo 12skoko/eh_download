@@ -4,12 +4,17 @@
   <section class="panel download-progress-panel">
     <div class="section-head"><div><p class="eyebrow">直接下载</p><h2>下载进度</h2></div><span class="badge running">{{ '正在取消' if row.status == 'cancel_requested' else '运行中' }}</span></div>
     {% if row.download_method == 'direct' and row.status == 'downloading' %}
-    <form method="post" action="/manga/{{ row.manga_id }}/actions/cancel">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <input type="hidden" name="row_version" value="{{ row.row_version }}">
-      <input type="hidden" name="reason" value="用户主动取消直接下载">
-      <button type="submit" class="warning-button">取消下载并转人工复核</button>
-    </form>
+    <button type="button" class="warning-button" data-open-dialog="cancel-direct-download-dialog">取消下载并转人工复核</button>
+    <dialog id="cancel-direct-download-dialog" class="status-dialog" aria-labelledby="cancel-direct-download-title" aria-describedby="cancel-direct-download-description">
+      <form method="post" action="/manga/{{ row.manga_id }}/actions/cancel" class="status-dialog-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="row_version" value="{{ row.row_version }}">
+        <input type="hidden" name="reason" value="用户主动取消直接下载">
+        <div class="dialog-head"><h2 id="cancel-direct-download-title">确认取消下载</h2><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+        <p id="cancel-direct-download-description">确定取消当前下载吗？已下载的临时文件将被清理，任务停止后转为人工复核，不会自动重试。</p>
+        <div class="dialog-actions"><button type="button" data-close-dialog autofocus>返回</button><button type="submit" class="warning-button">确认取消下载</button></div>
+      </form>
+    </dialog>
     {% elif row.status == 'cancel_requested' %}
     <p>正在停止下载，停止后将转为人工复核。网络读取阻塞时需要等待超时。</p>
     {% endif %}
