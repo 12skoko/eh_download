@@ -13,7 +13,7 @@
   <form method="post" action="/special/workflows/{{ workflow.id }}/actions/confirm" class="stack-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ workflow.row_version }}">
     <p>本次最多清理 {{ payload.get('summary', {}).get('would_delete', 0) }} 个条目。先删除种子任务，再清理文件；执行时会重新检查，已变化的条目会保留。</p>
-    <label><input type="checkbox" name="confirmed" value="yes" required>我已查看预览，确认永久删除清单中的种子任务和下载文件。</label>
+    <label class="cleanup-confirmation"><input type="checkbox" name="confirmed" value="yes" required>我已查看预览，确认永久删除清单中的种子任务和下载文件。</label>
     <button class="warning-button" type="submit">确认清理预览中的条目</button>
   </form>{% endif %}
   <div class="panel-actions">

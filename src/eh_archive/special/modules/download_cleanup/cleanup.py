@@ -24,6 +24,10 @@ DIRECT_NAME = re.compile(r"^\[(\d+)](?=.+\.zip$)", re.IGNORECASE)
 HAH_NAME = re.compile(r"^\[(\d+)]")
 ARIA2_NAME = re.compile(r"^(\d+)_[A-Za-z0-9._-]+\.g\d+\.zip$", re.IGNORECASE)
 ARIA2_LEGACY_NAME = re.compile(r"^\[(\d+)].+\.zip$", re.IGNORECASE)
+TEMPORARY_NAME = re.compile(
+    r"^(\d+)_[A-Za-z0-9._-]+\.g\d+\.a(?:\d+|pending)\.tmp(?:\.part)?$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -66,7 +70,9 @@ def torrent_identity(item: Any) -> tuple[str, str] | None:
 
 
 def _direct_id(entry: Path) -> str | None:
-    match = DIRECT_NAME.match(entry.name) if entry.is_file() else None
+    if not entry.is_file():
+        return None
+    match = DIRECT_NAME.match(entry.name) or TEMPORARY_NAME.fullmatch(entry.name)
     return match.group(1) if match else None
 
 
@@ -80,7 +86,13 @@ def _hah_id(entry: Path) -> str | None:
 def _aria2_id(entry: Path) -> str | None:
     if not entry.is_file():
         return None
-    match = ARIA2_NAME.match(entry.name) or ARIA2_LEGACY_NAME.match(entry.name)
+    # A control file belongs to the same download as the name before .aria2.
+    name = entry.name[:-6] if entry.name.lower().endswith(".aria2") else entry.name
+    match = (
+        ARIA2_NAME.fullmatch(name)
+        or ARIA2_LEGACY_NAME.fullmatch(name)
+        or TEMPORARY_NAME.fullmatch(name)
+    )
     return match.group(1) if match else None
 
 
@@ -166,7 +178,7 @@ def _classification(state: DatabaseState | None) -> tuple[str, str | None]:
     if state.has_active_task:
         return "active_task_skipped", "terminal row still has an active attempt or lease"
     if state.status not in TERMINAL_STATUSES:
-        return "status_skipped", f"status is {state.status}"
+        return "status_skipped", None
     return "eligible", None
 
 
