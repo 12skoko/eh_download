@@ -16,6 +16,23 @@ AUTH_HTTP_STATUSES = frozenset({401, 403})
 LANRARAGI_ID_PREFIX_BYTES = 512_000
 
 
+def tag_values(value: str) -> tuple[str, ...]:
+    """Keep tag text intact while ignoring empty entries and duplicate tags."""
+    return tuple(dict.fromkeys(tag.strip() for tag in value.split(",") if tag.strip()))
+
+
+def metadata_differences(payload: Mapping[str, Any], expected: Mapping[str, str]) -> list[str]:
+    mismatched = []
+    for key, value in expected.items():
+        actual = payload.get(key)
+        equal = actual == value
+        if key == "tags":
+            equal = isinstance(actual, str) and set(tag_values(actual)) == set(tag_values(value))
+        if not equal:
+            mismatched.append(key)
+    return mismatched
+
+
 def lanraragi_archive_id(path: str | Path) -> str:
     """Return SHA-1 of exactly the first 512000 bytes (or all of a short file)."""
 
@@ -40,7 +57,9 @@ def build_tags(info: MangaInfo, *, date_added: int | None = None) -> str:
         "date_added": date_added,
     }
     metadata = ",".join(f"{key}:{str(value).replace(',', '，')}" for key, value in fields.items())
-    return ",".join(x for x in (metadata, info.tags_translated_raw, info.tags_raw) if x)
+    return ",".join(tag_values(",".join(
+        x for x in (metadata, info.tags_translated_raw, info.tags_raw) if x
+    )))
 
 
 class LANraragiApiGateway:
@@ -316,7 +335,7 @@ class LANraragiApiGateway:
                 "archive ID, size, or filename did not match metadata",
                 "lrr_metadata_artifact_mismatch",
             )
-        mismatched = [key for key, value in expected.items() if payload.get(key) != value]
+        mismatched = metadata_differences(payload, expected)
         if mismatched:
             return UploadOutcome(
                 "review",

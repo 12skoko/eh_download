@@ -39,6 +39,55 @@ eharchive --config-dir config special action 123 cancel --row-version 7
 
 原 `scripts/compare_lanraragi_database.py` 命令、输入参数、输出 JSON 结构保留。解析与基础比较逻辑已经抽到主包，脚本和 Web 使用同一实现。
 
+## LANraragi 元数据更新
+
+Web **特殊处理 → LANraragi 元数据更新**，或档案详情页的 **更新元数据** 按钮。
+输入一个或多个完整 Gallery ID，也可选择全部 `lrr_metadata_mismatch` 待复核任务。
+每批默认最多 500 个档案，超过上限需指定 ID 分批执行。
+
+1. **生成差异预览**：读取本地详细元数据和 LANraragi，展示标题差异、待补入/移除的标签。
+   预览不修改远端或档案状态。仅接受无普通任务/租约的 `completed` 档案，或因
+   `upload / lrr_metadata_mismatch` 进入 `manual_review` 的档案；有其他活动特殊工作流时拒绝接管。
+2. **确认更新并校验**：以本地保存的信息更新标题和标签，不重新从 E 站抓取，也不上传文件。
+   原有 `date_added` 保留；不改摘要。标签按精确文本去重、去首尾空白、忽略顺序比较，
+   大小写和标签内部文字仍参与比较。已一致的档案跳过写入，只做复核。
+3. 文件身份及元数据确认通过后补回 `lrr_archive_id`。原来是 `completed` 的保持完成；
+   指定元数据错误的 `manual_review` 通过公共仓储的 `confirm_uploaded` 状态转换进入
+   `uploaded`，再由普通 cleanup 流程完成清理。失败的档案保留原有状态和错误。
+
+定位顺序为主记录 ID、当前产物 generation 对应的最新上传尝试 `expected_archive_id`、
+远端标签中的完整 EH/EX 来源 ID。来源回退要求唯一命中。每次读写前都检查远端 ID、文件名、
+字节大小及已有来源标签；缺少本地文件信息、来源冲突或多重匹配时只报告，不猜测目标。
+后续普通上传遇到 `lrr_metadata_mismatch` 时，也会保留已通过文件身份校验的 LANraragi ID。
+
+预览与确认之间检查本地行版本、产物 generation 和元数据指纹，执行时再次检查远端预览快照。
+有变化则要求新预览。确认后由 Manga 集成组件临时接管可处理的档案，并持有工作流资源；
+网络请求均在短事务之外。逐个成功结果和状态恢复在租约校验事务中提交，失败/取消恢复剩余
+接管状态。停止不撤销远端已经发生的写入；未完成确认的写入需要重新预览。
+过期 Worker 必须先确认已停止，再解除租约；重试总是重新生成预览，不自动重放写入。
+
+报告可在任务详情中分页查看或下载 JSON；中途停止生成部分结果，已确认成功的档案也在详情中列出。
+新模块仅在 `special/catalog.py` 注册，没有在 Supervisor、通用 worker 或核心仓储中增加模块分支。
+网络比较/更新位于 `services/lanraragi_metadata.py`，业务状态协调位于模块的 `integration.py`。
+
+可选配置 `config/special/lanraragi_metadata.toml` 见同名 sample；不存在时使用默认值。
+URL 和认证复用现有配置。无需数据库迁移；更新代码后重启 Web 和 Supervisor 才会加载新模块。
+
+```powershell
+conda activate eh
+eharchive --config-dir config special create lanraragi_metadata --inputs '{"manga_ids":["4194902/07c0c45119"]}'
+eharchive --config-dir config special create lanraragi_metadata --inputs '{"mismatch_only":true}'
+# 查看预览后，用详情页的当前 row_version 确认：
+eharchive --config-dir config special action 123 confirm --row-version 7 --inputs '{"confirmed":true}'
+```
+
+验证（2026-09-19）：新模块 20 项隔离测试及上传、特殊模块、Supervisor 回归共 96 项通过；
+Ruff 与 `git diff --check` 通过。测试包含 Web/CSRF、重复标签、身份冲突、批量部分失败、
+预览后本地/远端变化、取消、过期租约和更新回读不一致。测试文件保留在 Git 忽略的 `tests/`。
+另行运行的旧下载残留清理测试有 12 项失败，与其使用已移除的 `only_id` 接口有关；
+该接口在 HEAD 中同样不存在，本次未修改清理模块或其通用路由。
+四个用户提供的真实样本只读预览均为内容一致，未对生产任务或远端执行恢复/更新。
+
 ## 视频模块不改变操作流程
 
 五个后台操作仍是加载候选、提交选中种子、检查并整合、取消、完成后源清理。

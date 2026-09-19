@@ -1,0 +1,27 @@
+<div id="metadata-panel"{% if active_metadata_job %} hx-get="/partials/special-workflows/{{ workflow.id }}" hx-trigger="every 4s" hx-swap="outerHTML"{% endif %}>
+<section class="panel">
+<h2>{{ phase_labels.get(workflow.phase, workflow.phase) }}</h2>
+{% if workflow.progress %}<p>已处理 {{ workflow.progress.get('completed', 0) }} / {{ workflow.progress.get('total', payload.get('count', 0)) }}</p>{% endif %}
+{% if execution_reason %}<div class="alert warning">{{ execution_reason }}</div>{% endif %}
+{% if not module_health.available %}<div class="alert warning">{{ module_health.reason }}</div>{% endif %}
+{% if workflow.error_code %}<div class="alert warning">{{ workflow.error_detail }}</div>{% endif %}
+{% if workflow.cancel_requested_at %}<p>已请求停止。已确认成功的结果保留，其余档案需要重新预览。</p>{% endif %}
+<div class="metric-grid">{% for key, count in payload.get('summary', {}).items() %}<div class="metric-card"><span>{{ action_labels.get(key, key) }}</span><strong>{{ count }}</strong></div>{% endfor %}</div>
+{% for output in payload.get('outputs', []) %}<div class="panel-actions"><a class="button primary" href="/special/workflows/{{ workflow.id }}/outputs/{{ output.id }}">{{ '查看差异预览' if output.id == 'preview' else '查看处理结果' }}</a><a class="button" href="/special/workflows/{{ workflow.id }}/outputs/{{ output.id }}/download" hx-boost="false" download>下载 JSON</a></div>{% endfor %}
+{% if workflow.phase == 'awaiting_confirmation' and not active_metadata_job and not workflow.cancel_requested_at and module_health.available %}
+<form method="post" action="/special/workflows/{{ workflow.id }}/actions/confirm" class="stack-form">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ workflow.row_version }}">
+<p>将以本地数据更新有差异的标题和标签。内容一致的档案只做复核；校验通过后补齐 LANraragi ID，并恢复对应上传任务。预览中无法核实的档案会保留。</p>
+<label><input type="checkbox" name="confirmed" value="yes" required>已查看差异，确认更新和恢复可处理的档案</label>
+<button class="primary">确认更新并校验</button>
+</form>{% endif %}
+<div class="panel-actions">
+{% if workflow.status == 'active' and not workflow.cancel_requested_at %}<form method="post" action="/special/workflows/{{ workflow.id }}/actions/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ workflow.row_version }}"><button>停止处理</button></form>{% endif %}
+{% if workflow.phase == 'failed' and not active_metadata_job and not workflow.cancel_requested_at and module_health.available %}<form method="post" action="/special/workflows/{{ workflow.id }}/actions/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ workflow.row_version }}"><button>重新生成预览</button></form>{% endif %}
+<a class="button" href="{{ module_url }}">新建预览</a></div>
+</section>
+{% if expired_job %}<section class="panel"><h2>处理过期任务</h2><p>先确认旧 Worker 已停止。解除后重新预览，核实远端已经发生的更新。</p><form method="post" action="/special/workflows/{{ workflow.id }}/actions/release-expired"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ workflow.row_version }}"><label>原因<input name="reason" required></label><label><input type="checkbox" name="confirmed" value="yes" required>旧 Worker 已停止</label><button>解除过期租约</button></form></section>{% endif %}
+<section class="panel"><h2>任务历史</h2>{% for job in jobs %}<p>#{{ job.id }} · {{ '预览' if job.operation == 'scan' else '更新并校验' }} · {{ job.status }} · {{ job.error_detail or '' }}</p>{% endfor %}</section>
+{% if confirmed_items %}<section class="panel"><h2>已确认成功的档案</h2><p>即使后续任务失败或停止，这些结果也已保存。</p>{% for item in confirmed_items %}<p><a href="/manga/{{ item.manga_id }}">{{ item.manga_id }}</a> · {{ action_labels.get(item.action, item.action) }}</p>{% endfor %}</section>{% endif %}
+<section class="panel"><h2>事件</h2>{% for event in events %}<p>{{ event.created_at|datetime }} · {{ event.event_type }} · {{ event.error_code or '' }}</p>{% endfor %}{% if page > 1 %}<a href="?page={{ page - 1 }}">上一页</a>{% endif %}{% if jobs|length == 50 or events|length == 100 %}<a href="?page={{ page + 1 }}">下一页</a>{% endif %}</section>
+</div>

@@ -828,6 +828,34 @@ class ArchiveRepository:
             claim, owner=owner, event="retry", error_code=error_code, error_detail=detail
         )
 
+    def confirm_remote_metadata(self, manga, *, archive_id: str, actor: str, detail=None):
+        """Commit a verified remote identity; callers hold a fenced Manga row lock."""
+        import re
+
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", archive_id):
+            raise ValueError("invalid LANraragi ID")
+        if manga.status not in {"manual_review", "completed"} or any((
+            manga.active_attempt_id, manga.lease_token, manga.lease_owner, manga.lease_until,
+        )):
+            raise ValueError("档案当前状态不允许确认远端元数据")
+        previous = manga.status
+        if previous == "manual_review":
+            if manga.last_error_code != "lrr_metadata_mismatch":
+                raise ValueError("只能恢复因元数据不一致进入人工复核的档案")
+            manga.status = transition_target(previous, "confirm_uploaded").value
+            manga.status_updated_at = utcnow()
+            manga.last_error_operation = manga.last_error_code = manga.last_error_detail = None
+            manga.last_error_at = manga.next_retry_at = None
+            manga.attempt_count = 0
+        manga.lrr_archive_id = archive_id
+        manga.row_version += 1
+        manga.updated_at = utcnow()
+        self._event(
+            manga.manga_id, "remote_metadata_confirmed", actor=actor,
+            operation="metadata_update", from_status=previous, to_status=manga.status,
+            detail={**(detail or {}), "archive_id": archive_id},
+        )
+
     def _event(
         self,
         manga_id: str | None,

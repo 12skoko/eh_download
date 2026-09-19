@@ -119,6 +119,8 @@ def load_modules():
         return
     from .modules.download_cleanup import module as cleanup
     from .modules.lanraragi_compare.module import DEFINITION, dashboard, detail
+    from .modules.lanraragi_metadata import module as metadata
+    from .modules.lanraragi_metadata.routes import install_routes as metadata_routes
     from .modules.video_archive.definition import VIDEO_ARCHIVE
     from .modules.video_archive.integration import VideoIntegration
 
@@ -143,6 +145,13 @@ def load_modules():
         },
     )
     registrations = (
+        ModuleRegistration(
+            metadata.DEFINITION, metadata.executor, metadata.capability,
+            "预览并更新 LANraragi 标题、标签，复核并恢复元数据不一致的上传任务。",
+            "special/lanraragi_metadata.html", metadata.dashboard, metadata.detail,
+            "special/lanraragi_metadata_detail.html", "special/_lanraragi_metadata_panel.html",
+            metadata_routes,
+        ),
         ModuleRegistration(
             cleanup.DEFINITION,
             cleanup.executor,

@@ -4,6 +4,9 @@
 <div class="page-head detail-head"><div><a class="back" href="/manga">← 返回队列</a><p class="eyebrow mono detail-manga-id">{{ row.manga_id }}</p><h1>{{ row.name or row.real_name or row.manga_id }}</h1><p class="muted">{{ row.real_name }}</p></div><span class="badge large status-{{ row.status }}">{{ row.status|status_label }}</span></div>
 {% if notice %}<div class="alert success">操作已完成，页面显示的是数据库最新状态。</div>{% endif %}
 {% include "_direct_download_progress.html" %}
+{% if row.status == 'completed' or (row.status == 'manual_review' and row.last_error_code == 'lrr_metadata_mismatch') %}
+<section class="panel"><h2>LANraragi 元数据</h2><p>查看标题和标签差异，更新元数据或复核上传结果。</p><a class="button" href="/special/modules/lanraragi_metadata?manga_id={{ row.manga_id|urlencode }}">更新元数据</a></section>
+{% endif %}
 {% if upload_blockers %}
 <section class="panel"><h2>上传等待旧档案删除</h2><p>以下档案全部标记为已删除后，上传调度才会放行。删除失败或进入人工复核时仍会等待。</p><ul>{% for old in upload_blockers %}<li><a href="/manga/{{ old.manga_id }}">{{ old.name or old.manga_id }}（{{ old.manga_id }}）</a> · {{ old.status|status_label }}{% if old.last_error_code %} · {{ old.last_error_code }}{% endif %}</li>{% endfor %}</ul></section>
 {% endif %}

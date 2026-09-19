@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}元数据差异报告 #{{ workflow.id }}{% endblock %}
+{% block content %}
+<a class="back" href="/special/workflows/{{ workflow.id }}">← 返回更新任务</a>
+<div class="page-head"><h1>{{ '元数据差异预览' if output.id == 'preview' else '元数据处理结果' }}</h1><a class="button" href="/special/workflows/{{ workflow.id }}/outputs/{{ output.id }}/download" hx-boost="false" download>下载完整 JSON</a></div>
+<section class="panel"><p>“需要补入”表示本地有、远端没有的标签；“将移除”表示远端有、本地没有的标签。确认更新会使用本地标题和标签，保留添加时间。标签顺序和重复次数不计为差异。</p></section>
+{% for row in report_rows %}<section class="panel">
+<div class="section-head"><h2><a href="/manga/{{ row.manga_id }}">{{ row.manga_id }}</a></h2><span>{{ action_labels.get(row.action, row.action) }}</span></div>
+{% if row.detail %}<div class="alert warning">{{ row.detail }}</div>{% endif %}
+{% if row.expected %}
+<p>LANraragi ID：<span class="mono">{{ row.archive_id }}</span></p>
+{% if row.title_changed %}<p>远端标题：{{ row.actual.title }}</p><p>将更新为：{{ row.expected.title }}</p>{% else %}<p>标题一致：{{ row.expected.title }}</p>{% endif %}
+<p>需要补入：{{ row.missing_tags|join(', ') or '无' }}</p><p>将移除：{{ row.extra_tags|join(', ') or '无' }}</p>
+{% if row.status == 'manual_review' %}<p>校验通过后恢复为“已上传”，继续正常清理流程。</p>{% endif %}
+{% endif %}</section>{% else %}<section class="panel">没有条目。</section>{% endfor %}
+<div class="pagination"><span>共 {{ report_total }} 条，每页 100 条</span>{% if report_page > 1 %}<a href="?page={{ report_page - 1 }}">上一页</a>{% endif %}<span>第 {{ report_page }} 页</span>{% if report_page * 100 < report_total %}<a href="?page={{ report_page + 1 }}">下一页</a>{% endif %}</div>
+{% endblock %}

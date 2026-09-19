@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}LANraragi 元数据更新 ▪ EH Archive{% endblock %}
+{% block content %}
+<div class="page-head"><div><a class="back" href="/special">← 特殊模块</a><h1>LANraragi 元数据更新</h1></div></div>
+<section class="panel">
+  <h2>选择档案并预览差异</h2>
+  <p>使用本地已保存的作品信息更新 LANraragi 的标题和标签。先查看差异，再确认执行。添加时间保留，不重新上传文件。</p>
+  <p>支持已完成档案，以及因标签校验不一致进入人工复核的上传任务。复核通过的任务会恢复为“已上传”，由正常清理流程继续处理。</p>
+  {% if module_health.available %}
+  <form method="post" action="{{ module.url }}/start" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>选择方式<select name="mode"><option value="selected">指定一个或多个档案</option><option value="mismatch">所有元数据不一致的待复核档案</option></select></label>
+    <label>完整档案 ID<textarea name="manga_ids" rows="5" placeholder="4194902/07c0c45119，每行一个，也可用逗号分隔">{{ request.query_params.get('manga_id', '') }}</textarea></label>
+    <button class="primary" type="submit">生成差异预览</button>
+  </form>
+  {% else %}<div class="alert warning">{{ module_health.reason }}</div>{% endif %}
+</section>
+<section class="panel table-panel"><h2>处理历史（{{ total }}）</h2>
+<div class="table-wrap"><table><thead><tr><th>工作流</th><th>阶段</th><th>档案数量</th><th>创建时间</th></tr></thead><tbody>
+{% for item in workflows %}<tr><td><a href="/special/workflows/{{ item.id }}">#{{ item.id }}</a></td><td>{{ phase_labels.get(item.phase, item.phase) }}</td><td>{{ item.payload.get('count', 0) }}</td><td>{{ item.created_at|datetime }}</td></tr>{% else %}<tr><td colspan="4">暂无记录</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="pagination">{% if page > 1 %}<a href="?page={{ page - 1 }}">上一页</a>{% endif %}<span>第 {{ page }} 页</span>{% if page * 50 < total %}<a href="?page={{ page + 1 }}">下一页</a>{% endif %}</div></section>
+{% endblock %}

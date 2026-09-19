@@ -1554,6 +1554,10 @@ class TaskExecutor:
             archive_identified=archive_identified,
         )
         outcome = backend.upload(request)
+        # This error is emitted only after the remote artifact identity passed
+        # verification. Keep that identity even if its metadata needs review.
+        if outcome.error_code == "lrr_metadata_mismatch" and outcome.archive_id:
+            record.lrr_archive_id = outcome.archive_id
         if outcome.kind == "success":
             record.lrr_archive_id = outcome.archive_id
             repository.finish(
