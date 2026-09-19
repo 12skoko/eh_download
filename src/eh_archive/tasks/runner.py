@@ -247,6 +247,8 @@ class TaskExecutor:
         if report is None:
             return
         self._report_item_index += 1
+        if claim.operation == "torrent_check":
+            report.start()
         report.write(f"[{self._report_item_index}] {clean_report_value(claim.manga_id)} | started")
 
     def _begin_direct_report_line(self, claim: ClaimedAttempt) -> None:
@@ -2237,7 +2239,10 @@ def run_records(
         if limit is not None
         else (None if MODULES[operation].sweep else supervisor.batch_size_for(operation))
     )
-    report = RunReport(app.log_dir, operation, timezone=app.timezone, run_id=run_id)
+    report = RunReport(
+        app.log_dir, operation, timezone=app.timezone, run_id=run_id,
+        deferred=operation == "torrent_check",
+    )
     report.fields({"batch_limit": batch_limit})
     report.section(_task_section(operation))
     executor = TaskExecutor(
@@ -2259,6 +2264,16 @@ def run_records(
         )
         log.exception("task submodule failed: operation=%s run_id=%s", operation, run_id)
         return task_exit_code(error)
+    if (
+        operation == "torrent_check"
+        and report.path is None
+        and not executor.results
+        and not executor.system_error
+        and not executor.eh_site_unavailable
+        and not report.write_failed
+    ):
+        report.close()
+        return 0
     _finish_task_report(
         report,
         operation,

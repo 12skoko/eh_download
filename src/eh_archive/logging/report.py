@@ -85,6 +85,7 @@ class RunReport:
         timezone: str = "UTC",
         run_id: str | None = None,
         pid: int | None = None,
+        deferred: bool = False,
     ) -> None:
         self.module = module
         self.run_id = run_id or str(uuid.uuid4())
@@ -100,6 +101,19 @@ class RunReport:
         safe_module = re.sub(r"[^A-Za-z0-9_-]+", "_", module).strip("_") or "unknown"
         started_at = datetime.now(_load_timezone(timezone)).strftime("%Y%m%d_%H%M%S")
         path = Path(log_dir) / "detail" / safe_module / f"{started_at}_{self.run_id}.log"
+        self._pending_path = path
+        self._pending_lines: list[str] = []
+        self._deferred = deferred
+        if not deferred:
+            self.start()
+        self.fields({"module": module, "run_id": self.run_id, "pid": self.pid})
+
+    def start(self) -> None:
+        """Create a deferred report when work or an error requires it."""
+        if self._stream is not None or self._closed or self._write_failed:
+            return
+        self._deferred = False
+        path = self._pending_path
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._stream = path.open("x", encoding="utf-8", buffering=1)
@@ -108,7 +122,9 @@ class RunReport:
             log.warning("failed to create detailed run report: %s", path, exc_info=True)
             return
         self.path = path
-        self.fields({"module": module, "run_id": self.run_id, "pid": self.pid})
+        for line in self._pending_lines:
+            self.write(line)
+        self._pending_lines.clear()
 
     def fields(self, values: Mapping[str, Any]) -> None:
         for key, value in values.items():
@@ -124,6 +140,9 @@ class RunReport:
             self.write(value)
 
     def write(self, value: str) -> None:
+        if self._deferred and not self._closed:
+            self._pending_lines.append(value)
+            return
         if self._stream is None or self._closed or self._write_failed:
             return
         try:
@@ -182,6 +201,7 @@ class RunReport:
     def finish(self, values: Mapping[str, Any]) -> None:
         if self._closed:
             return
+        self.start()
         self.section("result")
         self.fields(values)
         if "duration" not in values:
@@ -199,6 +219,7 @@ class RunReport:
     ) -> None:
         if self._closed:
             return
+        self.start()
         self.section("fatal error")
         if current_manga:
             self.write(f"current_manga: {clean_report_value(current_manga)}")
@@ -220,6 +241,7 @@ class RunReport:
         if self._closed:
             return
         self._closed = True
+        self._pending_lines.clear()
         if self._stream is None:
             return
         try:
