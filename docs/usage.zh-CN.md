@@ -636,7 +636,7 @@ Invoke-RestMethod -Method Post `
   -Headers $headers -ContentType 'application/json' -Body $body
 ```
 
-取消是两阶段操作：Web 先写入 `cancel_requested`，当前任务到达安全边界后 Supervisor 收尾为 `cancelled`。暂停全部新调度使用 `supervisor` 组件；其他组件可独立暂停：
+取消是两阶段操作：Web 先写入 `cancel_requested`，当前任务到达安全边界后收尾。运行中的直接下载可在详情页点击“取消下载并转人工复核”：Worker 在下载分块之间检查取消请求，关闭连接、清理本次下载的临时文件并释放任务占用后，转为 `manual_review`，记录“用户主动取消直接下载”，不自动重试。网络读取阻塞时需等待读取返回或超时；临时文件清理失败会记录在复核原因中。其他下载方式保持原有 `cancelled` 收尾行为。暂停全部新调度使用 `supervisor` 组件；其他组件可独立暂停：
 
 ```powershell
 $body = @{ state = 'paused'; reason = '维护存储' } | ConvertTo-Json

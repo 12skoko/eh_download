@@ -159,7 +159,7 @@ TRANSITIONS: dict[str, dict[str, str]] = {
         "special_downloaded": Status.DOWNLOADED,
         "special_cancel": Status.MANUAL_REVIEW,
     },
-    Status.CANCEL_REQUESTED: {"cancelled": Status.CANCELLED},
+    Status.CANCEL_REQUESTED: {"cancelled": Status.CANCELLED, "review": Status.MANUAL_REVIEW},
     Status.CANCELLED: {
         "resume": Status.DOWNLOAD_PENDING,
         "resume_validate": Status.VALIDATING,

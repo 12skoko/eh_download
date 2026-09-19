@@ -12,6 +12,11 @@ from typing import Any
 from ...domain.errors import ArchiveError, ErrorClass, classify_exception
 
 
+class DownloadCancelled(ArchiveError):
+    def __init__(self) -> None:
+        super().__init__("direct_download_cancelled", "用户主动取消直接下载")
+
+
 @dataclass(frozen=True)
 class DownloadResult:
     path: Path
@@ -60,6 +65,7 @@ class DirectDownloader:
         expected_size: int | None = None,
         started: Callable[[int, int | None], None] | None = None,
         progress: Callable[[int], None] | None = None,
+        checkpoint: Callable[[], None] | None = None,
     ) -> DownloadResult:
         if self.session is None:
             import requests
@@ -73,6 +79,9 @@ class DirectDownloader:
         last_error: Exception | None = None
         network_failure = False
         for attempt in range(1, self.retries + 1):
+            if checkpoint:
+                checkpoint()
+            response = None
             existing = part.stat().st_size if part.exists() else 0
             if expected_size and existing >= expected_size:
                 if existing == expected_size:
@@ -153,6 +162,8 @@ class DirectDownloader:
                     progress(written)
                 with part.open(mode) as handle:
                     for chunk in response.iter_content(chunk_size=self.chunk_size):
+                        if checkpoint:
+                            checkpoint()
                         if not chunk:
                             continue
                         handle.write(chunk)
@@ -161,6 +172,8 @@ class DirectDownloader:
                             progress(written)
                     handle.flush()
                     os.fsync(handle.fileno())
+                if checkpoint:
+                    checkpoint()
                 if expected_total is not None and written != expected_total:
                     raise ArchiveError(
                         "download_size_mismatch",
@@ -171,6 +184,8 @@ class DirectDownloader:
                 os.replace(part, destination)
                 return DownloadResult(destination, written, resumed, attempt)
             except ArchiveError as exc:
+                if checkpoint:
+                    checkpoint()
                 if not exc.info.retryable or attempt >= self.retries:
                     if exc.info.retryable and attempt >= self.retries:
                         raise ArchiveError(
@@ -183,6 +198,8 @@ class DirectDownloader:
                 network_failure = True
                 time.sleep(self.backoff ** (attempt - 1) + random.random() * self.jitter)
             except Exception as exc:
+                if checkpoint:
+                    checkpoint()
                 info = classify_exception(exc)
                 if info.category == ErrorClass.SYSTEM:
                     raise ArchiveError(info.code, info.message, ErrorClass.SYSTEM) from exc
@@ -191,6 +208,9 @@ class DirectDownloader:
                 if attempt >= self.retries:
                     break
                 time.sleep(self.retry_delay + random.random() * self.jitter)
+            finally:
+                if response is not None and hasattr(response, "close"):
+                    response.close()
         message = str(last_error or "download failed")
         message = re.sub(r"https?://[^\s)]+", "<redacted-url>", message)
         if network_failure:

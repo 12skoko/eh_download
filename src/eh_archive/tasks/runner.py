@@ -39,7 +39,7 @@ from ..logging import (
 from ..services.cleanup import CleanupService
 from ..services.collector.parser import EhTagTranslation, parse_info
 from ..services.downloader.archive import request_direct_download_url
-from ..services.downloader.direct import DirectDownloader
+from ..services.downloader.direct import DirectDownloader, DownloadCancelled
 from ..services.downloader.torrent import TorrentService, is_managed_torrent
 from ..services.paths import (
     ArtifactPathService,
@@ -1137,41 +1137,81 @@ class TaskExecutor:
         )
         destination = paths.temporary
         self._begin_external_effect(repository, claim)
-        download_url = request_direct_download_url(
-            archive_session,
-            info.archive_url,
-            timeout=self.supervisor.request_timeout_seconds,
-            headers={"Referer": record.link},
-        )
-        download_result = downloader.download(
-            download_url,
-            destination,
-            headers={"User-Agent": "EH-Archive/6", "Referer": record.link},
-            cookies=self.secrets.cookies(self.app.archive_session),
-            proxies=self.secrets.network(self.app.archive_session).get("proxies"),
-            started=self._start_direct_report_transfer,
-            progress=self._update_direct_report_progress,
-        )
-        self._update_direct_report_progress(download_result.size, force=True)
-        fingerprint = validate_artifact(destination, expected_kind="zip")
-        repository_obj = repository.fenced(claim, owner=self.owner, require_generation=True)
-        if repository_obj is None:
-            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
-        if final_path.exists():
-            raise ArchiveError(
-                "artifact_generation_exists",
-                f"artifact already exists: {final_path.name}",
-                ErrorClass.ITEM,
+        last_check = float("-inf")
+
+        def checkpoint() -> None:
+            nonlocal last_check
+            now = time.monotonic()
+            if now - last_check < 1.0:
+                return
+            last_check = now
+            with self.database.session() as session:
+                current = ArchiveRepository(session).fenced(claim, owner=self.owner)
+                if current is None:
+                    raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.ITEM)
+                if current.status == Status.CANCEL_REQUESTED.value:
+                    raise DownloadCancelled()
+
+        try:
+            checkpoint()
+            download_url = request_direct_download_url(
+                archive_session,
+                info.archive_url,
+                timeout=self.supervisor.request_timeout_seconds,
+                headers={"Referer": record.link},
             )
-        os.replace(destination, final_path)
-        record = repository.get(record.manga_id)
-        record.artifact_location, record.artifact_filename = "direct_download", final_path.name
-        record.artifact_kind, record.artifact_generation = "zip", generation
-        record.artifact_size = fingerprint.size
-        record.artifact_sha1 = fingerprint.sha1
-        record.artifact_checked_at = fingerprint.checked_at
-        record.download_method = "direct"
-        repository.finish(claim, owner=self.owner, event="downloaded")
+            download_result = downloader.download(
+                download_url,
+                destination,
+                headers={"User-Agent": "EH-Archive/6", "Referer": record.link},
+                cookies=self.secrets.cookies(self.app.archive_session),
+                proxies=self.secrets.network(self.app.archive_session).get("proxies"),
+                started=self._start_direct_report_transfer,
+                progress=self._update_direct_report_progress,
+                checkpoint=checkpoint,
+            )
+            self._update_direct_report_progress(download_result.size, force=True)
+            fingerprint = validate_artifact(destination, expected_kind="zip")
+            # Serialize promotion with Web cancellation so an accepted request
+            # cannot race with registering the completed artifact.
+            with repository.session.no_autoflush:
+                repository.session.get(MangaRecord, claim.manga_id, with_for_update=True)
+            repository_obj = repository.fenced(claim, owner=self.owner, require_generation=True)
+            if repository_obj is None:
+                raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+            if repository_obj.status == Status.CANCEL_REQUESTED.value:
+                raise DownloadCancelled()
+            if final_path.exists():
+                raise ArchiveError(
+                    "artifact_generation_exists",
+                    f"artifact already exists: {final_path.name}",
+                    ErrorClass.ITEM,
+                )
+            os.replace(destination, final_path)
+            record = repository.get(record.manga_id)
+            record.artifact_location, record.artifact_filename = "direct_download", final_path.name
+            record.artifact_kind, record.artifact_generation = "zip", generation
+            record.artifact_size = fingerprint.size
+            record.artifact_sha1 = fingerprint.sha1
+            record.artifact_checked_at = fingerprint.checked_at
+            record.download_method = "direct"
+            repository.finish(claim, owner=self.owner, event="downloaded")
+        except DownloadCancelled as exc:
+            # Only remove the files owned by this attempt, never registered artifacts.
+            cleanup_errors = []
+            for temporary in (destination, destination.with_name(destination.name + ".part")):
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError as cleanup_error:
+                    cleanup_errors.append(str(cleanup_error))
+            repository.finish(
+                claim,
+                owner=self.owner,
+                event="review",
+                error_code=exc.info.code,
+                error_detail=str(exc)
+                + ("；临时文件清理失败：" + "; ".join(cleanup_errors) if cleanup_errors else ""),
+            )
 
     def _start_optional_download(
         self,

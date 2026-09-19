@@ -450,7 +450,17 @@ class ArchiveRepository:
         )
         for row in rows:
             previous = row.status
-            row.status = Status.CANCELLED.value
+            row.status = (
+                Status.MANUAL_REVIEW.value
+                if row.download_method == "direct"
+                else Status.CANCELLED.value
+            )
+            if row.download_method == "direct":
+                row.next_retry_at = None
+                row.last_error_code = "direct_download_cancelled"
+                row.last_error_detail = "用户主动取消直接下载"
+                row.last_error_operation = "direct_download"
+                row.last_error_at = now
             row.status_updated_at = row.updated_at = now
             row.row_version += 1
             self._event(
@@ -754,6 +764,11 @@ class ArchiveRepository:
         if previous == Status.CANCEL_REQUESTED.value and event != "cancelled":
             event = "cancelled"
             status = None
+        if previous == Status.CANCEL_REQUESTED.value and manga.download_method == "direct":
+            event = "review"
+            status = None
+            error_code = error_code or "direct_download_cancelled"
+            error_detail = error_detail or "用户主动取消直接下载"
         if status is not None:
             target = Status(status)
             if (

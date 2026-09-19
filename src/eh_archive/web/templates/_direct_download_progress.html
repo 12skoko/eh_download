@@ -2,7 +2,17 @@
   {% if active_attempt and active_attempt.operation == 'direct_download' %}
   {% set progress = active_attempt|attempt_progress %}
   <section class="panel download-progress-panel">
-    <div class="section-head"><div><p class="eyebrow">直接下载</p><h2>下载进度</h2></div><span class="badge running">运行中</span></div>
+    <div class="section-head"><div><p class="eyebrow">直接下载</p><h2>下载进度</h2></div><span class="badge running">{{ '正在取消' if row.status == 'cancel_requested' else '运行中' }}</span></div>
+    {% if row.download_method == 'direct' and row.status == 'downloading' %}
+    <form method="post" action="/manga/{{ row.manga_id }}/actions/cancel">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="row_version" value="{{ row.row_version }}">
+      <input type="hidden" name="reason" value="用户主动取消直接下载">
+      <button type="submit" class="warning-button">取消下载并转人工复核</button>
+    </form>
+    {% elif row.status == 'cancel_requested' %}
+    <p>正在停止下载，停止后将转为人工复核。网络读取阻塞时需要等待超时。</p>
+    {% endif %}
     <progress max="100" {% if progress.percent is not none %}value="{{ progress.percent }}"{% endif %}></progress>
     <div class="download-progress-meta">
       <strong>{% if progress.percent is not none %}{{ '%.1f'|format(progress.percent) }}%{% else %}正在下载{% endif %}</strong>
@@ -12,6 +22,8 @@
       <small>进度更新时间：{{ active_attempt.progress_updated_at|datetime }}</small>
     </div>
   </section>
+  {% elif row.status == 'manual_review' and row.last_error_code == 'direct_download_cancelled' %}
+  <section class="panel"><p>下载已取消，已转为人工复核。</p><a href="/manga/{{ row.manga_id }}">刷新档案详情</a></section>
   {% elif progress_poll %}
   <section class="panel download-progress-panel waiting"><div><p class="eyebrow">直接下载</p><h2>等待下载任务启动</h2></div></section>
   {% endif %}
