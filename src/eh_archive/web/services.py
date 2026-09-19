@@ -374,6 +374,8 @@ class WebService:
         self._require_version(row, row_version)
         if row.status != "manual_review" or row.last_error_operation != "torrent_download":
             raise InvalidRequest("当前档案不是种子下载人工复核")
+        if row.last_error_code != "invalid_torrent":
+            raise InvalidRequest("当前错误不适用备用下载链接设置")
         if any((row.active_attempt_id, row.lease_owner, row.lease_token, row.lease_until,
                 row.external_download_id)):
             raise Conflict("档案仍有活动任务或外部下载，不能修改链接授权")

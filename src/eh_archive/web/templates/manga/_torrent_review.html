@@ -10,19 +10,10 @@
     {% for warning in review.warnings %}
     <label class="lease-confirmation"><input type="checkbox" name="warnings" value="{{ warning }}" required {% if warning in review.get('accepted_warnings', []) %}checked{% endif %}><span>允许忽略：{{ torrent_warning_labels.get(warning, warning) }}{% if warning == 'torrent_personalized_link_required' %}（可能关联账号统计）{% endif %}</span></label>
     {% endfor %}
-    {% if 'torrent_personalized_link_required' not in review.warnings %}
-    <label class="lease-confirmation"><input type="checkbox" name="warnings" value="torrent_personalized_link_required" {% if 'torrent_personalized_link_required' in review.get('accepted_warnings', []) %}checked{% endif %}><span>若普通链接明确返回种子不存在，允许尝试个性化链接（可能关联账号统计）</span></label>
-    {% endif %}
     <div class="panel-actions"><button type="submit" class="primary">跳过已确认告警并继续下载</button></div>
   </form>
-  {% else %}
-  {% if row.last_error_code == 'invalid_torrent' %}
+  {% elif row.last_error_code == 'invalid_torrent' %}
   <p>下载链接返回的内容不是有效的种子文件</p>
-  {% elif row.last_error_code in torrent_warning_labels %}
-  <p>这条记录缺少确认告警所需的种子信息。可通过下方“等待下载”重新检查，或进入手动下载，加载种子后自行选择。</p>
-  {% elif row.last_error_code != 'invalid_torrent' %}
-  <p>下载因上方错误停止。可通过下方“等待下载”重试，或进入手动下载，加载种子后自行选择。若确认是普通下载链接失效，可设置下面的备用链接。</p>
-  {% endif %}
   <form method="post" action="/manga/{{ row.manga_id }}/torrent-link-permission" class="stack-form torrent-link-preference">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}">
     <label class="lease-confirmation"><input type="checkbox" name="allow_personalized" value="yes" {% if review.get('allow_personalized_next_attempt') %}checked{% endif %}><span>允许尝试带账号信息的备用链接，此方式下载将计入账号下载统计</span></label>
