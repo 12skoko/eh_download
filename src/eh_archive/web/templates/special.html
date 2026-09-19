@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}特殊处理 ▪ EH Archive控制台{% endblock %}
+{% block title %}特殊模块 ▪ EH Archive控制台{% endblock %}
 {% block content %}
-<div class="page-head"><div><p class="eyebrow">模块目录</p><h1>特殊处理</h1><p class="muted">选择一个模块进入它自己的控制台。不同模块独立管理操作、状态和处理记录。</p></div></div>
-<section class="module-grid" aria-label="特殊处理模块">
+<div class="page-head"><div><p class="eyebrow">模块目录</p><h1>特殊模块</h1><p class="muted">选择一个模块进入它自己的控制台。不同模块独立管理操作、状态和处理记录。</p></div></div>
+<section class="module-grid" aria-label="特殊模块">
   {% for module in modules %}
   <a class="module-card" href="{{ module.url }}">
     <div class="module-card-head"><span class="mono">{{ module.kind }}</span><span class="badge {{ 'healthy' if module.health.available else 'warning' }}">{{ '已启用' if module.health.available else '未启用' }}</span></div>
@@ -12,7 +12,7 @@
     <span class="module-card-link">进入模块 →</span>
   </a>
   {% else %}
-  <div class="panel empty">当前没有已安装的特殊处理模块。</div>
+  <div class="panel empty">当前没有已安装的特殊模块。</div>
   {% endfor %}
 </section>
 {% endblock %}

@@ -119,6 +119,9 @@ class MangaRecord(Base):
     rating: Mapped[int | None] = mapped_column(Integer)
     uploader: Mapped[str] = mapped_column(Text, default="")
     remark: Mapped[str | None] = mapped_column(Text)
+    torrent_review: Mapped[dict[str, Any]] = mapped_column(
+        JSON_OBJECT, default=dict, server_default="{}", nullable=False
+    )
     source_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     queue_source: Mapped[str] = mapped_column(String(16), default="automatic")
 

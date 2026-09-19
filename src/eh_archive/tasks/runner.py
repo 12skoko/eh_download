@@ -77,6 +77,7 @@ TORRENT_FALLBACK_CODES = frozenset(
     {
         "no_torrent",
         "no_seeded_torrent",
+        "latest_torrent_no_seeder",
         "only_outdated_torrents",
         "only_resampled_torrents",
     }
@@ -849,6 +850,7 @@ class TaskExecutor:
             record.torrent_link,
             estimated_size_raw=info.estimated_size_raw,
             skip_video=bool(record.remark and "skip video" in record.remark.lower()),
+            review=record.torrent_review,
             excluded_resolutions=self.crawl.excluded_resolutions,
             video_markers=self.crawl.video_markers,
         )
@@ -1816,6 +1818,13 @@ class TaskExecutor:
         self, repository: ArchiveRepository, claim: ClaimedAttempt, exc: Exception
     ) -> None:
         info = classify_exception(exc)
+        from ..services.downloader.torrent.review import TorrentReviewRequired
+
+        if isinstance(exc, TorrentReviewRequired):
+            record = repository.fenced(claim, owner=self.owner)
+            if record is None:
+                return
+            record.torrent_review = exc.review
         if info.category == ErrorClass.SYSTEM:
             if info.code == "eh_site_unavailable":
                 self.eh_site_unavailable = True
@@ -1955,7 +1964,10 @@ class TaskExecutor:
             if info.code in TORRENT_FALLBACK_CODES and claim.operation == "torrent_download":
                 record = repository.get(claim.manga_id)
                 if record:
-                    if self.app.fallback_method == "none":
+                    if info.code in {"latest_torrent_no_seeder", "no_seeded_torrent"}:
+                        event = "fallback"
+                        record.download_method = "direct"
+                    elif self.app.fallback_method == "none":
                         event = "block"
                         record.download_method = None
                         record.external_download_id = None
@@ -2000,7 +2012,8 @@ class TaskExecutor:
     def _log_torrent_fallback(self, claim: ClaimedAttempt, *, reason: str) -> None:
         """Record expected torrent-selection fallbacks without a traceback."""
 
-        blocked = self.app.fallback_method == "none"
+        method = "direct" if reason in {"latest_torrent_no_seeder", "no_seeded_torrent"} else self.app.fallback_method
+        blocked = method == "none"
         log.info(
             (
                 "torrent unavailable; download blocked"
@@ -2012,7 +2025,7 @@ class TaskExecutor:
                     "manga_id": claim.manga_id,
                     "operation": claim.operation,
                     "reason": reason,
-                    "fallback": self.app.fallback_method,
+                    "fallback": method,
                     "result": "download_blocked" if blocked else "fallback",
                 }
             },

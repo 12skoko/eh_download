@@ -368,6 +368,36 @@ class WebService:
         )
         return row
 
+    def confirm_torrent_warnings(self, manga_id, *, row_version, warnings, revoke=False):
+        from ..services.downloader.torrent.review import WARNING_LABELS
+
+        row = self._manga(manga_id)
+        self._require_version(row, row_version)
+        if any((row.active_attempt_id, row.lease_owner, row.lease_token, row.lease_until,
+                row.external_download_id)) or row.status == "special_processing":
+            raise Conflict("档案仍由活动任务控制，不能修改告警授权")
+        review = dict(row.torrent_review or {})
+        if revoke:
+            review["accepted_warnings"] = []
+        else:
+            if row.status != "manual_review" or row.last_error_operation != "torrent_download":
+                raise InvalidRequest("当前档案不是种子下载人工复核")
+            if (not review.get("scope") or not review.get("warnings")
+                    or any(w not in WARNING_LABELS for w in warnings)
+                    or not set(review["warnings"]).issubset(warnings)):
+                raise InvalidRequest("请确认当前全部种子告警")
+            review["accepted_warnings"] = sorted(set(warnings))
+            row.status, row.download_method, row.queue_source = "download_pending", "torrent", "manual"
+            row.status_updated_at = utcnow()
+            row.next_retry_at = row.defer_until = None
+            row.last_error_operation = row.last_error_code = row.last_error_detail = row.last_error_at = None
+        row.torrent_review = review
+        row.row_version += 1
+        row.updated_at = utcnow()
+        self._event(row, "torrent_warning_revoke" if revoke else "torrent_warning_confirm",
+                    detail={"scope": review.get("scope"), "warnings": review.get("accepted_warnings", [])})
+        return row
+
     def action(
         self,
         manga_id: str,
@@ -422,9 +452,16 @@ class WebService:
         confirmation_manga_id: str | None = None,
         allow_web_only: bool = False,
         batch_id: str | None = None,
+        config_dir: str | Path | None = None,
     ) -> MangaRecord:
         """Apply an explicit, audited administrator status override."""
 
+        manual_torrent = target_status == "download_pending" and download_method == "manual_torrent"
+        if manual_torrent:
+            from ..special.core.repository import SpecialRepository
+
+            # Special workers lock the scheduler before Manga; keep that order.
+            SpecialRepository(self.session).scheduling_lock()
         row = self._manga(manga_id)
         self._require_version(row, row_version)
         if target_status not in MANUAL_STATUS_VALUES:
@@ -436,12 +473,26 @@ class WebService:
                 raise InvalidRequest("当前状态不能进入强制删除队列")
             if not confirmation_manga_id or confirmation_manga_id.strip() != row.manga_id:
                 raise InvalidRequest("二次确认的档案 ID 与当前档案不一致")
-        if row.status == target_status:
+        if row.status == target_status and not manual_torrent:
             raise InvalidRequest("档案已经处于目标状态")
         if row.active_attempt_id is not None or row.lease_owner or row.lease_token:
             raise Conflict("档案仍有活动任务或租约，不能人工修改状态")
         if row.status == Status.SPECIAL_PROCESSING.value:
             raise Conflict("档案由活动的特殊工作流控制，不能使用通用状态修改")
+
+        if manual_torrent:
+            from ..special.core.service import ModuleService
+
+            if config_dir is None or self.app_config is None:
+                raise InvalidRequest("手动种子下载需要模块配置")
+            try:
+                ModuleService(self.session, actor=self.actor, config_dir=config_dir,
+                              app_config=self.app_config).create("manual_torrent", {
+                    "manga_id": manga_id, "row_version": row_version, "from_queue": True,
+                })
+            except ValueError as exc:
+                raise InvalidRequest(str(exc)) from exc
+            return row
 
         clean_reason = reason.strip() if reason and reason.strip() else None
         if (
@@ -898,6 +949,7 @@ def bulk_override_status(
     actor: str, reason: str | None = None, download_method: str | None = None,
     superseded_by_id: str | None = None,
     app_config: AppConfig | None = None,
+    config_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Commit each archive independently; failed items must leave no partial writes."""
     if target_status not in BULK_STATUS_VALUES:
@@ -918,23 +970,28 @@ def bulk_override_status(
             raise InvalidRequest("替代档案不能包含在本次选中的档案中")
     if target_status in {"download_blocked", "unavailable", "quarantined"} and not reason:
         raise InvalidRequest("这个状态必须填写操作原因")
-    if target_status == "download_pending" and download_method not in DOWNLOAD_METHOD_VALUES:
+    if target_status == "download_pending" and download_method not in (*DOWNLOAD_METHOD_VALUES, "manual_torrent"):
         raise InvalidRequest("必须选择有效的下载方式")
     batch_id = str(uuid.uuid4())
     results = []
     for manga_id, version in items:
         try:
             with database.session() as session:
+                if target_status == "download_pending" and download_method == "manual_torrent":
+                    from ..special.core.repository import SpecialRepository
+
+                    SpecialRepository(session).scheduling_lock()
                 service = WebService(session, actor=actor, app_config=app_config)
                 row = service._manga(manga_id)
                 service._require_version(row, version)
-                if row.status == target_status:
+                if row.status == target_status and download_method != "manual_torrent":
                     outcome, message = "skipped", "已处于目标状态，未修改"
                 else:
                     service.override_status(
                         manga_id, target_status=target_status, row_version=version,
                         reason=reason, download_method=download_method, batch_id=batch_id,
                         superseded_by_id=superseded_by_id,
+                        config_dir=config_dir,
                     )
                     outcome, message = "success", "状态已修改"
             # Only report success after the transaction has committed.

@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block title %}手动种子下载 #{{ workflow.id }} ▪ EH Archive{% endblock %}
+{% block content %}<div class="page-head"><div><a href="{{ module_url }}">← 手动种子下载</a><h1>工作流 #{{ workflow.id }}</h1><a href="/manga/{{ manga_id }}">返回档案 {{ manga_id }}</a></div></div>{% include "special/_manual_torrent_panel.html" %}{% endblock %}

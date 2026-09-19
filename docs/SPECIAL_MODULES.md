@@ -2,6 +2,36 @@
 
 本次实现采用独立工作流、模块契约和可选业务关联。`video_archive` 与 `lanraragi_compare` 共用任务队列、租约、事件和资源互斥。普通 Supervisor 的任务选择、暂停、退避与回收流程保持原实现。
 
+## 手动种子下载与普通告警放行
+
+`manual_torrent` 每个工作流只关联一个档案、提交一个种子。入口有两个：
+
+- 档案为 `manual_review`，且 `last_error_operation=torrent_download`，点击“进入手动种子下载”。
+- 在“进入下载队列”的下载方式中选择“手动选择种子”。批量状态操作也支持此选项，每个档案创建独立工作流。
+
+入口原子创建工作流并将档案设为 `special_processing`，不经过普通下载队列，不创建任何加载任务。
+必须手动点击“加载种子”才获取画廊信息及种子候选；重启和页面轮询都不会自动加载。
+再次加载会清除之前的选择及确认。过时、重采样、无 Seeder 的候选不可选；视频和过小候选需要确认。
+提交前重新取得当前候选，变化时重新选择。选中种子变为无 Seeder 时转 `direct` 下载。
+
+下载文件优先使用 `href`。仅明确返回 “The torrent file could not be found” 且存在合法的同种子
+`onclick` 地址时，允许在用户授权后尝试个性化链接；其他错误不会触发换链接。可提前授权，也可遇到错误后确认。
+不执行 HTML 内的 JavaScript，完整个性化地址不写入工作流快照或审计记录。
+
+提交 qBittorrent 前记录种子 info hash 和目标路径。成功后在一个事务中登记外部任务、设置
+`download_method=torrent` / `status=downloading` 并完成特殊工作流，之后复用普通 `torrent_check`。
+请求结果不明确时，手动重试先按 hash、分类和路径核对已有任务。也可“仅核实上次提交结果”；确认没有任务后才能重新加载或退出。
+过期租约需确认旧 Worker 已停止再解除。仍在排队或执行时禁止修改选择和退出。
+无提交副作用时可取消恢复原状态与错误，或“转直接下载”。模块不删除已有 qBittorrent 任务和文件。
+
+普通自动下载中的视频和过小告警集中展示，确认结果保存在 `manga.torrent_review` JSON 字段，
+不写入 Remark。确认与重新排队原子完成，可撤销授权；候选身份或预计大小变化后重新确认。
+旧 Remark 的 `skip video` 仍兼容。自动选中无 Seeder 版本直接转 `direct`，不允许放行无 Seeder。
+
+升级需要执行数据库迁移 `0019_torrent_review`，然后重启 Web 和 Supervisor。
+可选配置 `config/special/manual_torrent.toml` 见同名 sample；默认启用、并发 1。
+本模块仍服从 Supervisor 的特殊处理总开关。
+
 ## 使用 LANraragi 核对
 
 升级后打开 Web **特殊处理 → LANraragi 数据库核对 → 开始新的核对**。Supervisor 领取排队任务，详情页显示阶段、任务历史及报告入口。报告可分页浏览并下载完整 JSON。

@@ -1,0 +1,27 @@
+<div id="manual-torrent-panel" {% if busy %}hx-get="/partials/special-workflows/{{ workflow.id }}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+<section class="panel"><h2>{{ phase_labels.get(workflow.phase, workflow.phase) }}</h2>
+{% if workflow.error_code %}<p class="alert error">{{ workflow.error_code }}：{{ workflow.error_detail }}</p>{% endif %}
+{% if payload.get('message') %}<p class="alert warning">{{ payload.message }}</p>{% endif %}
+{% if workflow.status == 'active' and not busy %}
+<div class="panel-actions">
+{% for action, label in [('load', '重新加载种子' if payload.get('choices') else '加载种子'), ('retry', '重试提交并核对已有任务'), ('verify', '仅核实上次提交结果'), ('direct', '转直接下载'), ('cancel', '取消并返回原状态')] %}
+{% if (action != 'retry' or payload.get('selection')) and (action != 'verify' or payload.get('submission')) and (action in ['retry', 'verify'] or not payload.get('submission')) %}
+<form method="post" action="/special/workflows/{{ workflow.id }}/actions/{{ action }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ workflow.row_version }}"><button type="submit">{{ label }}</button></form>
+{% endif %}{% endfor %}</div>{% endif %}
+{% if busy %}<p>任务已排队或正在执行，请等待；候选选择和退出操作暂时锁定。</p>{% endif %}
+{% if workflow.phase == 'awaiting_load' and not busy %}<p>尚未访问种子页面。准备处理时点击“加载种子”。</p>{% endif %}
+</section>
+{% if payload.get('choices') %}<section class="panel table-panel"><h2>种子候选（单选）</h2><p>加载时间：{{ payload.loaded_at }}。重采样、过时和无 Seeder 的种子不可选。</p>
+<form method="post" action="/special/manual-torrent/{{ workflow.id }}/choose">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ workflow.row_version }}">
+<div class="table-wrap"><table><thead><tr><th>选择</th><th>名称</th><th>大小 / 预计比例</th><th>Seeder</th><th>发布时间</th><th>告警 / 排除原因</th></tr></thead><tbody>
+{% for item in payload.choices %}<tr><td><input type="radio" name="choice_id" value="{{ item.choice_id }}" required {% if item.blocked or busy or workflow.status != 'active' or payload.get('submission') %}disabled{% endif %} {% if payload.get('selection') and payload.selection.choice_id == item.choice_id %}checked{% endif %}></td><td>{{ item.label }}</td><td>{{ item.size }} / {{ item.size_percent }}%</td><td>{{ item.seeds }}</td><td>{{ item.posted_at }}</td><td>{% for reason in item.blocked %}<span class="badge warning">{{ reason }}</span>{% endfor %}{% for warning in item.warnings %}<span class="badge warning">{{ warning_labels[warning] }}</span>{% endfor %}</td></tr>{% endfor %}
+</tbody></table></div>
+{% if not busy and workflow.status == 'active' and not payload.get('submission') %}
+<p>确认所选种子的告警：</p>{% for code in ['video_torrent', 'torrent_size_too_small'] %}<label><input type="checkbox" name="accepted_warnings" value="{{ code }}">允许忽略：{{ warning_labels[code] }}</label>{% endfor %}
+<label><input type="checkbox" name="allow_personalized" value="yes">普通链接明确返回种子不存在时，允许尝试个性化链接（可能关联账号统计）</label>
+<button type="submit" class="primary">确认并下载这一个种子</button>{% endif %}</form></section>{% endif %}
+{% if expired_job %}<section class="panel"><h2>解除过期租约</h2><p>确认旧 Worker 已停止后解除租约，再核实提交结果或重试。</p><form method="post" action="/special/workflows/{{ workflow.id }}/actions/release-expired"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ workflow.row_version }}"><label>原因<input name="reason" required></label><label><input type="checkbox" name="confirmed" value="yes" required>旧 Worker 已停止</label><button>解除过期租约</button></form></section>{% endif %}
+<section class="panel"><h2>任务历史</h2><table><thead><tr><th>任务</th><th>操作</th><th>状态</th><th>错误</th></tr></thead><tbody>{% for job in jobs %}<tr><td>{{ job.id }}</td><td>{{ job.operation }}</td><td>{{ job.status }}</td><td>{{ job.error_detail or '' }}</td></tr>{% endfor %}</tbody></table></section>
+<section class="panel"><h2>操作记录</h2>{% for event in events %}<p>{{ event.created_at|datetime }} · {{ event.event_type }}</p>{% endfor %}</section>
+</div>

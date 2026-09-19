@@ -121,6 +121,8 @@ def load_modules():
     from .modules.lanraragi_compare.module import DEFINITION, dashboard, detail
     from .modules.lanraragi_metadata import module as metadata
     from .modules.lanraragi_metadata.routes import install_routes as metadata_routes
+    from .modules.manual_torrent import module as manual
+    from .modules.manual_torrent.routes import install_routes as manual_routes
     from .modules.video_archive.definition import VIDEO_ARCHIVE
     from .modules.video_archive.integration import VideoIntegration
 
@@ -145,6 +147,13 @@ def load_modules():
         },
     )
     registrations = (
+        ModuleRegistration(
+            manual.DEFINITION, manual.executor, manual.capability,
+            "手动加载候选，选择一个种子，确认后提交并交回普通下载流程。",
+            "special/manual_torrent.html", manual.dashboard, manual.detail,
+            "special/manual_torrent_detail.html", "special/_manual_torrent_panel.html",
+            manual_routes,
+        ),
         ModuleRegistration(
             metadata.DEFINITION, metadata.executor, metadata.capability,
             "预览并更新 LANraragi 标题、标签，复核并恢复元数据不一致的上传任务。",

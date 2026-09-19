@@ -68,6 +68,7 @@ MIGRATIONS = {
     "special/video_archive.toml": {0: establish_version},
     "special/lanraragi_compare.toml": {0: establish_version},
     "special/download_cleanup.toml": {0: establish_version},
+    "special/manual_torrent.toml": {0: establish_version},
 }
 
 CURRENT_VERSIONS = {filename: max(steps) + 1 for filename, steps in MIGRATIONS.items()}

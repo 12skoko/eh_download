@@ -4,6 +4,7 @@
 <div class="page-head detail-head"><div><a class="back" href="/manga">← 返回队列</a><p class="eyebrow mono detail-manga-id">{{ row.manga_id }}</p><h1>{{ row.name or row.real_name or row.manga_id }}</h1><p class="muted">{{ row.real_name }}</p></div><span class="badge large status-{{ row.status }}">{{ row.status|status_label }}</span></div>
 {% if notice %}<div class="alert success">操作已完成，页面显示的是数据库最新状态。</div>{% endif %}
 {% include "_direct_download_progress.html" %}
+{% include "manga/_torrent_review.html" %}
 
 {% if upload_blockers %}
 <section class="panel"><h2>上传等待旧档案删除</h2><p>以下档案全部标记为已删除后，上传调度才会放行。删除失败或进入人工复核时仍会等待。</p><ul>{% for old in upload_blockers %}<li><a href="/manga/{{ old.manga_id }}">{{ old.name or old.manga_id }}（{{ old.manga_id }}）</a> · {{ old.status|status_label }}{% if old.last_error_code %} · {{ old.last_error_code }}{% endif %}</li>{% endfor %}</ul></section>
@@ -25,7 +26,7 @@
 <section class="panel special-panel"><div class="section-head"><div><p class="eyebrow">特殊处理</p><h2>{{ special_workflow.kind }}</h2></div><span class="badge {{ special_workflow.status }}">{{ special_workflow.status }}</span></div><dl class="facts two"><div><dt>阶段</dt><dd>{{ special_workflow.phase|special_phase_label }}</dd></div><div><dt>更新时间</dt><dd>{{ special_workflow.updated_at|datetime }}</dd></div></dl><div class="panel-actions"><a class="button primary" href="/special/workflows/{{ special_workflow.id }}">打开特殊处理工作流</a></div></section>
 {% endif %}
 {% if not special_workflow and row.status == 'manual_review' and (special_entry or row.last_error_code|lower == 'video_torrent') %}
-<section class="panel special-panel"><div class="section-head"><div><p class="eyebrow">视频 Torrent</p><h2>检测到需要人工处理的种子</h2></div><span class="badge warning">需要人工选择</span></div><p>启用的扩展模块可以接管这个档案；依赖检查会在对应的一次性任务真正执行时进行。</p><div class="panel-actions">{% if special_entry %}<form method="post" action="/special/start/{{ row.manga_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><button class="primary" type="submit">进入 {{ special_entry.label }}</button></form>{% endif %}{% if row.last_error_code|lower == 'video_torrent' %}<form method="post" action="/manga/{{ row.manga_id }}/skip-video"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><button type="submit">继续普通流程并跳过视频</button></form>{% endif %}</div></section>
+<section class="panel special-panel"><div class="section-head"><div><p class="eyebrow">视频 Torrent</p><h2>检测到需要人工处理的种子</h2></div><span class="badge warning">需要人工选择</span></div><p>启用的扩展模块可以接管这个档案；依赖检查会在对应的一次性任务真正执行时进行。</p><div class="panel-actions">{% if special_entry %}<form method="post" action="/special/start/{{ row.manga_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><button class="primary" type="submit">进入 {{ special_entry.label }}</button></form>{% endif %}{% if row.last_error_code|lower == 'video_torrent' and not row.torrent_review %}<form method="post" action="/manga/{{ row.manga_id }}/skip-video"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><button type="submit">继续普通流程并跳过视频</button></form>{% endif %}</div></section>
 {% endif %}
 {% if row.last_error_code|lower in ['lrr_409', 'lrr_duplicate'] or row.rename_target_filename %}
 <section class="panel table-panel filename-match-panel">
@@ -105,7 +106,7 @@
         <p>{{ target.description }}</p>
         <dl class="transition-preview"><div><dt>当前状态</dt><dd>{{ row.status }} / {{ row.status|status_label }}</dd></div><div><dt>目标状态</dt><dd>{{ target.status }} / {{ target.status|status_label }}</dd></div></dl>
         {% if target.status in ['download_pending', 'downloaded'] %}
-        <label>下载方式（必填）<select name="download_method" required {% if target.status == 'downloaded' %}data-artifact-method{% endif %}><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}" data-artifact-directory="{{ artifact_directories.get(method, '') }}" {% if row.download_method == method %}selected{% endif %}>{{ method }}</option>{% endfor %}</select></label>
+        <label>下载方式（必填）<select name="download_method" required {% if target.status == 'downloaded' %}data-artifact-method{% endif %}><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}" data-artifact-directory="{{ artifact_directories.get(method, '') }}" {% if row.download_method == method %}selected{% endif %}>{{ method }}</option>{% endfor %}{% if target.status == 'download_pending' %}<option value="manual_torrent">手动选择种子（进入特殊模块，暂不加载）</option>{% endif %}</select></label>
         {% endif %}
         {% if target.status == 'downloaded' %}
         <label>文件名（必填）<input name="artifact_filename" value="{{ row.artifact_filename or '' }}" placeholder="服务器下载目录中的文件名" data-artifact-filename required></label>

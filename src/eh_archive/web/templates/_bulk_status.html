@@ -15,7 +15,7 @@
     </select></label>
     <p class="muted" data-bulk-description></p>
     <label data-bulk-replacement-label hidden>替代档案 ID（必填）<input name="superseded_by_id" placeholder="最新档案 ID，例如 123456/token" disabled><small class="muted">全部选中档案将关联到这个最新档案。</small></label>
-    <label data-bulk-method-label hidden>统一下载方式<select name="download_method" disabled><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}">{{ method }}</option>{% endfor %}</select></label>
+    <label data-bulk-method-label hidden>统一下载方式<select name="download_method" disabled><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}">{{ method }}</option>{% endfor %}<option value="manual_torrent">手动选择种子（每个档案独立进入，暂不加载）</option></select></label>
     <label><span data-bulk-reason-label>公共原因（可选）</span><textarea name="reason" rows="3" maxlength="4000"></textarea></label>
     <p data-bulk-message role="status"></p>
     <div class="dialog-actions"><button type="button" data-close-dialog>取消</button><button type="submit" class="primary">确认修改</button></div>

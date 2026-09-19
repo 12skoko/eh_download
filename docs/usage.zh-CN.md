@@ -483,7 +483,9 @@ download_pending
 
 旧配置 `collect_initial_delay_seconds`、`collect_interval_seconds`、`torrent_poll_seconds` 仍可读取，对应的 `[schedules.<模块名>]` 新配置优先。新增定时模块时，在 `tasks/registry.py` 注册执行函数与默认周期即可复用调度，不需要在 Supervisor 中添加专用分支。
 
-Supervisor 会按需运行 `screen`、`details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。首次选择种子前必须取得完整 MangaInfo。程序忽略 `Outdated Torrents` 和红色时间的过时种子以及明确的 `1280x/800x/1920x/2560x` 重采样；仅剩这些种子时根据 `fallback_method` 切换 direct/H@H/aria2，配置为 `none` 时则进入 `download_blocked`。非过时种子中出现视频标记时进入 `manual_review`，即使它同时是重采样；只有 remark 包含 `skip video` 时才把视频种子当作普通种子。小于预计大小 60% 的种子视为异常。其余候选用“同时更大且更新”淘汰旧版本；胜出版本没有 Seeder 或不同大小版本无法比较时进入 `manual_review`；剩余候选大小相同时依次按 Seeder 数和发布时间选择。
+Supervisor 会按需运行 `screen`、`details`、`torrent_download`、`direct_download`、`validate`、`prepare`、`upload`、`cleanup` 和 `delete`。首次选择种子前必须取得完整 MangaInfo。程序忽略 `Outdated Torrents` 和红色时间的过时种子以及明确的 `1280x/800x/1920x/2560x` 重采样；仅剩这些种子时根据 `fallback_method` 切换 direct/H@H/aria2，配置为 `none` 时则进入 `download_blocked`。非过时种子中出现视频标记时进入 `manual_review`，即使它同时是重采样；确认视频告警后把视频种子当作普通种子，也兼容 remark 中的 `skip video`。小于预计大小 60% 的种子视为异常。其余候选用“同时更大且更新”淘汰旧版本；胜出版本没有 Seeder 时转 `direct` 下载；不同大小版本无法比较时进入 `manual_review`；剩余候选大小相同时依次按 Seeder 数和发布时间选择。
+
+普通下载的“视频”和“种子过小”告警支持在详情页集中确认并重新排队，授权保存在结构化字段中，候选或预计大小变化后重新确认。普通链接明确返回种子不存在时，可授权尝试同一种子的个性化链接；其他无效响应不触发换链接。手动选种及异常恢复详见 [特殊模块说明](SPECIAL_MODULES.md#手动种子下载与普通告警放行)。
 
 qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的任务保留到 `torrent_check` 的下一轮定时运行再次检查，`stalledDL` 超过 `torrent_stall_seconds` 后会自动删除任务并切换 fallback。提交的新任务使用 manga ID 的数字部分作为 qBittorrent 显示名称，不改变种子内文件名。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小和 CRC，再为最终 ZIP 计算 LANraragi 所需的 SHA-1。
 

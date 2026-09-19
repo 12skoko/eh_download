@@ -138,6 +138,10 @@ def _validate(directory: Path) -> None:
             from ...special.modules.download_cleanup.config import capability
 
             capability(directory)
+        if (directory / "special/manual_torrent.toml").is_file():
+            from ...special.modules.manual_torrent.module import capability as manual_capability
+
+            manual_capability(directory)
     except ConfigValueError as exc:
         raise ConfigMigrationError(str(exc)) from None
     except (ValueError, TypeError, KeyError, AttributeError):

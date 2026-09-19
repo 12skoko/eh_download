@@ -1,0 +1,4 @@
+config_version = 1
+[manual_torrent]
+enabled = true
+max_concurrency = 1

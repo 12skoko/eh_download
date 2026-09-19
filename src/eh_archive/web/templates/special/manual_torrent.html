@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}手动种子下载 ▪ EH Archive{% endblock %}
+{% block content %}
+<div class="page-head"><div><a href="/special">← 特殊模块</a><h1>手动种子下载</h1><p>每个工作流只处理一个档案、一个种子。进入后点击“加载种子”才会访问种子页面。</p></div></div>
+<section class="panel"><p>可从档案的种子下载错误入口进入，或在“进入下载队列”中选择“手动选择种子”。支持批量创建独立工作流，候选不会自动加载。</p>
+{% if not module_health.available %}<p class="alert warning">{{ module_health.reason }}</p>{% endif %}</section>
+<section class="panel table-panel"><table><thead><tr><th>工作流</th><th>档案</th><th>状态</th><th>阶段</th></tr></thead><tbody>
+{% for item in workflows %}<tr><td><a href="/special/workflows/{{ item.id }}">#{{ item.id }}</a></td><td><a href="/manga/{{ item.manga_bindings[0].manga_id }}">{{ item.manga_bindings[0].manga_id }}</a></td><td>{{ item.status }}</td><td>{{ phase_labels.get(item.phase, item.phase) }}</td></tr>{% else %}<tr><td colspan="4">暂无工作流</td></tr>{% endfor %}
+</tbody></table><div class="panel-actions">{% if page > 1 %}<a href="?page={{ page - 1 }}">上一页</a>{% endif %}{% if page * 50 < total %}<a href="?page={{ page + 1 }}">下一页</a>{% endif %}</div></section>
+{% endblock %}

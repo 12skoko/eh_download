@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -22,6 +24,7 @@ class TorrentChoice:
     posted_at: datetime
     label: str
     page_order: int
+    personalized_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class TorrentOption:
     red_date: bool
     resampled: bool
     video: bool
+    personalized_url: str | None = None
 
     @property
     def suggested_role(self) -> str:
@@ -148,6 +152,24 @@ def _download_url(anchor: Any) -> str:
     return str(anchor.get("href", "")).strip()
 
 
+def _personalized_url(anchor: Any) -> str | None:
+    """Read the known assignment syntax; never evaluate page JavaScript."""
+    match = re.fullmatch(
+        r"\s*document\.location\s*=\s*(['\"])(https://[^'\"\s]+)\1\s*;\s*return\s+false\s*;?\s*",
+        str(anchor.get("onclick", "")),
+    )
+    if not match:
+        return None
+    public, private = urlsplit(_download_url(anchor)), urlsplit(match[2])
+    if (public.scheme != "https" or public.hostname not in {"exhentai.org", "e-hentai.org"}
+            or private.netloc != public.netloc or private.query or private.fragment
+            or private.username or private.password):
+        return None
+    plain = re.fullmatch(r"/torrent/(\d+)/([a-fA-F0-9]{40}\.torrent)", public.path)
+    tracked = re.fullmatch(r"/torrent/(\d+)/[A-Za-z0-9-]+/([a-fA-F0-9]{40}\.torrent)", private.path)
+    return match[2] if plain and tracked and plain.groups() == tracked.groups() else None
+
+
 def _parse_torrent_form(form: Any, page_order: int) -> tuple[TorrentChoice | None, bool]:
     posted_raw, posted_cell = _field_text(form, "Posted")
     outdated = any(
@@ -194,6 +216,7 @@ def _parse_torrent_form(form: Any, page_order: int) -> tuple[TorrentChoice | Non
             posted_at=posted_at,
             label=label,
             page_order=page_order,
+            personalized_url=_personalized_url(anchor),
         ),
         outdated,
     )
@@ -204,12 +227,15 @@ def parse_torrent_options(
     *,
     excluded_resolutions: tuple[str, ...] = ("1280x", "800x", "1920x", "2560x"),
     video_markers: tuple[str, ...] = ("mp4", "video"),
+    include_outdated: bool = True,
+    bind_download_url: bool = False,
 ) -> list[TorrentOption]:
     """Parse every torrent row while keeping private download URLs server-side."""
 
     soup = BeautifulSoup(html, "lxml")
     options: list[TorrentOption] = []
     outdated_section = False
+    skipped_outdated = False
     page_order = 0
     normalized_resolutions = tuple(value.casefold() for value in excluded_resolutions)
     normalized_video = tuple(value.casefold() for value in video_markers)
@@ -221,7 +247,17 @@ def parse_torrent_options(
         input_node = node.find("input", attrs={"name": "gtid"})
         if input_node is None:
             continue
+        if outdated_section and not include_outdated:
+            skipped_outdated = True
+            continue
         posted_raw, posted_cell = _field_text(node, "Posted")
+        red_date = any(
+            "color:red" in str(span.get("style", "")).replace(" ", "").casefold()
+            for span in posted_cell.find_all("span")
+        )
+        if red_date and not include_outdated:
+            skipped_outdated = True
+            continue
         size_raw, _ = _field_text(node, "Size")
         seeds_raw, _ = _field_text(node, "Seeds")
         anchor = next(
@@ -253,12 +289,10 @@ def parse_torrent_options(
                 "torrent row has an invalid URL, title, or seed count",
                 ErrorClass.SYSTEM,
             )
-        red_date = any(
-            "color:red" in str(span.get("style", "")).replace(" ", "").casefold()
-            for span in posted_cell.find_all("span")
-        )
         site_id = str(input_node.get("value", "")).strip()
         stable = f"{site_id}\x1f{label}\x1f{posted_raw}\x1f{size_raw}"
+        if bind_download_url:
+            stable += f"\x1f{url}"
         choice_id = hashlib.sha256(stable.encode("utf-8")).hexdigest()[:32]
         if not site_id:
             site_id = f"derived-{choice_id}"
@@ -278,10 +312,13 @@ def parse_torrent_options(
                 red_date=red_date,
                 resampled=any(value in normalized_label for value in normalized_resolutions),
                 video=any(value in normalized_label for value in normalized_video),
+                personalized_url=_personalized_url(anchor),
             )
         )
         page_order += 1
     if not options:
+        if skipped_outdated:
+            raise ArchiveError("only_outdated_torrents", "gallery only has outdated torrents", ErrorClass.ITEM)
         if "There are no torrents for this gallery" in html:
             raise ArchiveError("no_torrent", "gallery has no torrent", ErrorClass.ITEM)
         raise ArchiveError(
@@ -297,6 +334,7 @@ def select_torrent(
     *,
     estimated_size_raw: str,
     skip_video: bool = False,
+    skip_small: bool = False,
     excluded_resolutions: tuple[str, ...] = ("1280x", "800x", "1920x", "2560x"),
     video_markers: tuple[str, ...] = ("mp4", "video"),
 ) -> TorrentChoice:
@@ -364,7 +402,8 @@ def select_torrent(
         )
 
     expected_size = _parse_size(estimated_size_raw, field="estimated")
-    candidates = [choice for choice in candidates if choice.size_bytes * 5 >= expected_size * 3]
+    if not skip_small:
+        candidates = [choice for choice in candidates if choice.size_bytes * 5 >= expected_size * 3]
     if not candidates:
         raise ArchiveError(
             "torrent_size_too_small",
@@ -428,6 +467,7 @@ class TorrentService:
         skip_video: bool = False,
         excluded_resolutions: tuple[str, ...] = (),
         video_markers: tuple[str, ...] = (),
+        review: dict | None = None,
     ) -> tuple[str, TorrentChoice]:
         response = self.http.get(
             torrent_page_url,
@@ -441,24 +481,21 @@ class TorrentService:
             raise ArchiveError("gallery_unavailable", "gallery is unavailable", ErrorClass.ITEM)
         if "There are no torrents for this gallery" in response.text:
             raise ArchiveError("no_torrent", "gallery has no torrent", ErrorClass.ITEM)
-        choice = select_torrent(
+        from .review import choose_with_review, download_torrent
+
+        choice, decision = choose_with_review(
             response.text,
             estimated_size_raw=estimated_size_raw,
             skip_video=skip_video,
             excluded_resolutions=excluded_resolutions or ("1280x", "800x", "1920x", "2560x"),
             video_markers=video_markers or ("mp4", "video"),
+            review=review,
         )
-        torrent_response = self.http.get(
-            choice.url, headers=self.headers, cookies=self.cookies, proxies=self.proxies, timeout=30
+        content = download_torrent(
+            self.http, choice, decision=decision,
+            request_options={"headers": self.headers, "cookies": self.cookies,
+                             "proxies": self.proxies, "timeout": 30},
         )
-        torrent_response.raise_for_status()
-        content = torrent_response.content
-        if content.startswith(b"The torrent file could not be found") or not content.startswith(
-            b"d"
-        ):
-            raise ArchiveError(
-                "invalid_torrent", "torrent response is not a bencode dictionary", ErrorClass.ITEM
-            )
         idnum = safe_filename(manga_id.split("/", 1)[0])
         save_path = _join_external_path(self.torrent_root, idnum)
         add_options: dict[str, Any] = {

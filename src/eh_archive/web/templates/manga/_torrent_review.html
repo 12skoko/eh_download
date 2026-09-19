@@ -1,0 +1,12 @@
+{% set review = row.torrent_review or {} %}
+{% if row.status == 'manual_review' and row.last_error_operation == 'torrent_download' and not special_workflow %}
+<section class="panel"><h2>种子下载人工复核</h2>
+<form method="post" action="/special/manual-torrent/start/{{ row.manga_id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><button type="submit">进入手动种子下载</button><p>进入后不访问种子页面，点击“加载种子”才获取候选。</p></form>
+{% if review.get('scope') and review.get('warnings') %}
+<form method="post" action="/manga/{{ row.manga_id }}/torrent-warnings"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}">
+<h3>继续普通自动选种流程</h3>
+{% for warning in review.warnings %}<label><input type="checkbox" name="warnings" value="{{ warning }}" required {% if warning in review.get('accepted_warnings', []) %}checked{% endif %}>允许忽略：{{ torrent_warning_labels.get(warning, warning) }}</label>{% endfor %}
+{% if 'torrent_personalized_link_required' not in review.warnings %}<label><input type="checkbox" name="warnings" value="torrent_personalized_link_required">若普通链接明确返回种子不存在，允许尝试个性化链接（可能关联账号统计）</label>{% endif %}
+<button type="submit">确认告警并继续自动下载</button></form>{% endif %}</section>
+{% endif %}
+{% if review.get('accepted_warnings') %}<section class="panel"><h3>已保存的种子告警授权</h3><ul>{% for code in review.accepted_warnings %}<li>{{ torrent_warning_labels.get(code, code) }}</li>{% endfor %}</ul><p>授权仅适用于已核对的候选；候选或预计大小变化后会重新核对。</p><form method="post" action="/manga/{{ row.manga_id }}/torrent-warnings"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ row.row_version }}"><input type="hidden" name="revoke" value="yes"><button type="submit">撤销这些授权</button></form></section>{% endif %}

@@ -21,6 +21,7 @@ from ..db import Database
 from ..db.models import MangaRecord, SystemControl, SystemHealth
 from ..logging import configure_logging, get_logger
 from ..management.config_migrations import migrate_configuration
+from ..services.downloader.torrent.review import WARNING_LABELS as TORRENT_WARNING_LABELS
 from ..services.paths import safe_filename
 from ..special.remarks import PHASE_LABELS, user_remark
 from ..special.service import (
@@ -187,6 +188,7 @@ def create_app(
                 reason=payload.reason, download_method=payload.download_method,
                 superseded_by_id=payload.superseded_by_id,
                 actor=_actor(request), app_config=app_config,
+                config_dir=config_dir,
             )
         except WebServiceError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
@@ -861,6 +863,7 @@ def create_app(
                 notice=notice,
                 special_entry=entry,
                 special_workflow=workflow,
+                torrent_warning_labels=TORRENT_WARNING_LABELS,
                 artifact_directories=_manual_artifact_directories(app_config, manga_id),
             ),
         )
@@ -1002,9 +1005,21 @@ def create_app(
                 superseded_by_id=_optional_text(form.get("superseded_by_id")),
                 confirmation_manga_id=_optional_text(form.get("confirmation_manga_id")),
                 allow_web_only=True,
+                config_dir=config_dir,
             ),
             "status-updated",
             app_config=app_config,
+        )
+
+    @app.post("/manga/{manga_id:path}/torrent-warnings")
+    async def torrent_warnings_page(request: Request, manga_id: str):
+        form = await _validated_form(request)
+        return _page_update(
+            request, templates, database, manga_id,
+            lambda service: service.confirm_torrent_warnings(
+                manga_id, row_version=int(str(form.get("row_version", ""))),
+                warnings=list(form.getlist("warnings")), revoke=form.get("revoke") == "yes",
+            ), "torrent-warning-updated", app_config=app_config,
         )
 
     @app.post("/control/{component}")
@@ -1220,6 +1235,7 @@ def create_app(
                 artifact_filename=payload.artifact_filename,
                 archive_id=payload.archive_id,
                 superseded_by_id=payload.superseded_by_id,
+                config_dir=config_dir,
             ),
             app_config=app_config,
         )
