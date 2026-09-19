@@ -1,6 +1,23 @@
 (() => {
   let busy = false;
   const selected = scope => [...scope.querySelectorAll('[data-bulk-item]:checked')];
+  function updateFields(form) {
+    const target = form.elements.target_status;
+    const option = target.selectedOptions[0];
+    const needsMethod = target.value === 'download_pending';
+    form.querySelector('[data-bulk-method-label]').hidden = !needsMethod;
+    form.elements.download_method.disabled = !needsMethod;
+    form.elements.download_method.required = needsMethod;
+    const needsReplacement = target.value === 'outdated';
+    form.querySelector('[data-bulk-replacement-label]').hidden = !needsReplacement;
+    form.elements.superseded_by_id.disabled = !needsReplacement;
+    form.elements.superseded_by_id.required = needsReplacement;
+    const needsReason = option.dataset.requiresReason === 'yes';
+    form.elements.reason.required = needsReason;
+    form.querySelector('[data-bulk-reason-label]').textContent = needsReason
+      ? '公共原因（必填）' : '公共原因（可选）';
+    form.querySelector('[data-bulk-description]').textContent = option.dataset.description || '';
+  }
   function updateSelection(scope) {
     const count = selected(scope).length;
     const total = scope.querySelectorAll('[data-bulk-item]').length;
@@ -21,21 +38,7 @@
     }
     if (event.target.matches('[data-bulk-all], [data-bulk-item]')) updateSelection(scope);
     if (event.target.matches('[data-bulk-target]')) {
-      const form = event.target.form;
-      const option = event.target.selectedOptions[0];
-      const needsMethod = event.target.value === 'download_pending';
-      form.querySelector('[data-bulk-method-label]').hidden = !needsMethod;
-      form.elements.download_method.disabled = !needsMethod;
-      form.elements.download_method.required = needsMethod;
-      const needsReplacement = event.target.value === 'outdated';
-      form.querySelector('[data-bulk-replacement-label]').hidden = !needsReplacement;
-      form.elements.superseded_by_id.disabled = !needsReplacement;
-      form.elements.superseded_by_id.required = needsReplacement;
-      const needsReason = option.dataset.requiresReason === 'yes';
-      form.elements.reason.required = needsReason;
-      form.querySelector('[data-bulk-reason-label]').textContent = needsReason
-        ? '公共原因（必填）' : '公共原因（可选）';
-      form.querySelector('[data-bulk-description]').textContent = option.dataset.description || '';
+      updateFields(event.target.form);
     }
   });
   document.addEventListener('click', event => {
@@ -44,6 +47,7 @@
     const scope = opener.closest('[data-bulk-scope]');
     scope.querySelector('[data-bulk-dialog-count]').textContent = selected(scope).length;
     scope.querySelector('[data-bulk-message]').textContent = '';
+    updateFields(scope.querySelector('[data-bulk-form]'));
     scope.querySelector('dialog').showModal();
   });
   // Keep the selected page in place until the request and result refresh finish.
