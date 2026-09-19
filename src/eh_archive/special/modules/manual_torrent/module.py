@@ -14,7 +14,6 @@ from ....services.downloader.torrent import QBITTORRENT_CATEGORY, parse_torrent_
 from ....services.downloader.torrent.core import _join_external_path, _parse_size
 from ....services.downloader.torrent.review import (
     WARNING_LABELS,
-    TorrentReviewRequired,
     candidate_snapshot,
     download_torrent,
     torrent_info_hash,
@@ -146,25 +145,16 @@ def choose(service, workflow, inputs):
         ),
         None,
     )
-    if choice is None or choice["blocked"]:
-        raise SpecialInvalidRequest("请选择一个未过时、非重采样且有 Seeder 的种子")
-    warnings = inputs.get("accepted_warnings", [])
-    if (
-        not isinstance(warnings, list)
-        or any(w not in WARNING_LABELS for w in warnings)
-        or not set(choice["warnings"]).issubset(warnings)
-    ):
-        raise SpecialInvalidRequest("请确认所选种子的全部告警")
-    if inputs.get("allow_personalized") is True:
-        warnings = list(set(warnings) | {"torrent_personalized_link_required"})
-    warnings = sorted(
-        set(warnings) & (set(choice["warnings"]) | {"torrent_personalized_link_required"})
-    )
+    if choice is None:
+        raise SpecialInvalidRequest("请选择一个已加载的种子")
+    # Explicit manual selection replaces the automatic flow's warning review.
+    warnings = list(choice["warnings"])
     workflow.payload = {
         **workflow.payload,
         "selection": {
             "choice_id": choice["choice_id"],
             "accepted_warnings": warnings,
+            "allow_personalized": inputs.get("allow_personalized") is True,
         },
     }
     workflow.phase = "submit_queued"
@@ -428,6 +418,7 @@ class ManualTorrentExecutor:
         response.raise_for_status()
         options = parse_torrent_options(
             response.text,
+            include_outdated=True,
             bind_download_url=True,
             excluded_resolutions=self.crawl.excluded_resolutions,
             video_markers=self.crawl.video_markers,
@@ -440,34 +431,21 @@ class ManualTorrentExecutor:
         payload.pop("message", None)
         selection = payload["selection"]
         choice = next((c for c in options if c.choice_id == selection["choice_id"]), None)
-        snapshot = next(
-            (c for c in payload["choices"] if c["choice_id"] == selection["choice_id"]), None
-        )
-        if choice and choice.seeds == 0 and not payload.get("submission"):
-            payload["result"] = {"reason": "latest_torrent_no_seeder"}
-            return self.finish(payload, phase="completed", status="completed")
-        if (
-            not choice
-            or snapshot["blocked"]
-            or not set(snapshot["warnings"]).issubset(selection["accepted_warnings"])
-        ):
+        if not choice:
             if payload.get("submission"):
                 raise ArchiveError(
                     "torrent_selection_stale", "候选已变化，请先核实上次提交结果", ErrorClass.ITEM
                 )
             payload["selection"] = None
-            payload["message"] = "候选已变化，请重新选择并确认告警"
+            payload["message"] = "候选已变化，请重新选择"
             return self.finish(payload)
-        try:
-            content = download_torrent(
-                self.http,
-                choice,
-                decision=selection,
-                request_options={"role": "browse", "timeout": 30},
-            )
-        except TorrentReviewRequired:
-            payload["message"] = "普通链接不存在；请授权个性化链接后再次确认，或转直接下载"
-            return self.finish(payload)
+        content = download_torrent(
+            self.http,
+            choice,
+            decision=selection,
+            manual_fallback=selection.get("allow_personalized") is True,
+            request_options={"role": "browse", "timeout": 30},
+        )
         torrent_hash = torrent_info_hash(content)
         numeric = safe_filename(manga_id.split("/", 1)[0])
         path = _join_external_path(

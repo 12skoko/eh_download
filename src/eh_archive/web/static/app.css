@@ -241,6 +241,16 @@ tbody tr:hover { background: rgb(23 107 135 / 3.5%); }
 .transition-preview dd { margin: .2rem 0 0; font-family: "Cascadia Code", Consolas, monospace; overflow-wrap: anywhere; }
 .field-help { margin: -.5rem 0 0; color: var(--muted); font-size: .78rem; }
 .download-cleanup-form + .field-help { margin-top: .25rem; }
+.torrent-link-preference { margin-top: 1rem; }
+.torrent-manual-entry { display: grid; gap: 1rem; margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--line); }
+.torrent-manual-entry .panel-actions, .torrent-link-preference .panel-actions { margin-top: 0; }
+.torrent-action-help { margin: 0; color: var(--muted); font-size: .85rem; line-height: 1.6; }
+.manual-torrent-choices { min-width: 0; }
+.manual-torrent-group + .manual-torrent-group { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--line); }
+.manual-torrent-flags .badge { margin: .15rem .25rem .15rem 0; }
+.manual-torrent-flags .torrent-danger { color: var(--red); background: var(--red-soft); }
+.manual-torrent-flags .torrent-warning { color: var(--amber); background: var(--amber-soft); }
+.manual-torrent-submit { display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; margin-top: 1.25rem; }
 .artifact-path-preview { display: grid; gap: .35rem; padding: .75rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
 .artifact-path-preview > span { color: var(--muted); font-size: .72rem; font-weight: 650; }
 .artifact-path-preview output { color: var(--text); user-select: text; }

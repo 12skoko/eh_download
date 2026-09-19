@@ -39,7 +39,6 @@ def install_routes(app, database, templates, app_config, config_dir):
                     row_version=int(str(form.get("row_version", ""))),
                     inputs={
                         "choice_id": str(form.get("choice_id", "")),
-                        "accepted_warnings": list(form.getlist("accepted_warnings")),
                         "allow_personalized": form.get("allow_personalized") == "yes",
                     },
                 )

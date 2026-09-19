@@ -368,6 +368,35 @@ class WebService:
         )
         return row
 
+    def set_torrent_link_permission(self, manga_id, *, row_version, allow_personalized):
+        """Authorize the next automatic selection without changing the queue state."""
+        row = self._manga(manga_id)
+        self._require_version(row, row_version)
+        if row.status != "manual_review" or row.last_error_operation != "torrent_download":
+            raise InvalidRequest("当前档案不是种子下载人工复核")
+        if any((row.active_attempt_id, row.lease_owner, row.lease_token, row.lease_until,
+                row.external_download_id)):
+            raise Conflict("档案仍有活动任务或外部下载，不能修改链接授权")
+        if type(allow_personalized) is not bool:
+            raise InvalidRequest("链接授权必须明确选择允许或不允许")
+        review = dict(row.torrent_review or {})
+        # Remove any previous link acknowledgement; this is a new, bounded decision.
+        review["accepted_warnings"] = [
+            code for code in review.get("accepted_warnings", [])
+            if code != "torrent_personalized_link_required"
+        ]
+        if allow_personalized:
+            review["allow_personalized_next_attempt"] = True
+        else:
+            review.pop("allow_personalized_next_attempt", None)
+        row.torrent_review = review
+        row.row_version += 1
+        row.updated_at = utcnow()
+        self._event(row, "torrent_link_permission", detail={
+            "allow_personalized_next_attempt": allow_personalized,
+        })
+        return row
+
     def confirm_torrent_warnings(self, manga_id, *, row_version, warnings, revoke=False):
         from ..services.downloader.torrent.review import WARNING_LABELS
 
@@ -379,6 +408,7 @@ class WebService:
         review = dict(row.torrent_review or {})
         if revoke:
             review["accepted_warnings"] = []
+            review.pop("allow_personalized_next_attempt", None)
         else:
             if row.status != "manual_review" or row.last_error_operation != "torrent_download":
                 raise InvalidRequest("当前档案不是种子下载人工复核")

@@ -87,12 +87,18 @@ def choose_with_review(html, *, estimated_size_raw, skip_video=False, review=Non
         decision["accepted_warnings"] = [
             w for w in accepted if w != "torrent_personalized_link_required"
         ]
+    if previous.get("allow_personalized_next_attempt") is True:
+        # Bind the one-shot permission to this actual candidate; later candidates
+        # still need their own acknowledgement. This never bypasses other warnings.
+        decision["accepted_warnings"] = sorted(set(decision["accepted_warnings"]) | {
+            "torrent_personalized_link_required",
+        })
     if set(warnings) - set(accepted):
         raise TorrentReviewRequired(decision)
     return choice, decision
 
 
-def download_torrent(http, choice, *, decision, request_options=None):
+def download_torrent(http, choice, *, decision, request_options=None, manual_fallback=None):
     request_options = request_options or {}
 
     def fetch(url):
@@ -114,6 +120,21 @@ def download_torrent(http, choice, *, decision, request_options=None):
             raise ArchiveError(
                 "torrent_fetch_failed", "种子文件请求失败，请检查网络或登录状态", ErrorClass.ITEM
             ) from None
+
+    if manual_fallback is not None:
+        def fetch_validated(url):
+            content, missing = fetch(url)
+            if missing:
+                raise ArchiveError("torrent_file_not_found", "下载链接返回种子不存在", ErrorClass.ITEM)
+            torrent_info_hash(content)
+            return content
+
+        try:
+            return fetch_validated(choice.url)
+        except ArchiveError:
+            if not manual_fallback or not choice.personalized_url:
+                raise
+        return fetch_validated(choice.personalized_url)
 
     content, missing = fetch(choice.url)
     if missing:

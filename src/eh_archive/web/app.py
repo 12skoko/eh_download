@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import time
@@ -130,6 +131,7 @@ def create_app(
 
     app = FastAPI(title="EH Archive", version="6.0.0")
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+    templates.env.globals["css_version"] = hashlib.sha256((STATIC_DIR / "app.css").read_bytes()).hexdigest()[:12]
     templates.env.filters["datetime"] = _format_datetime
     templates.env.filters["collected_at"] = lambda value: _format_collected_at(value, app_config.timezone)
     templates.env.filters["filesize"] = _format_filesize
@@ -1009,6 +1011,17 @@ def create_app(
             ),
             "status-updated",
             app_config=app_config,
+        )
+
+    @app.post("/manga/{manga_id:path}/torrent-link-permission")
+    async def torrent_link_permission_page(request: Request, manga_id: str):
+        form = await _validated_form(request)
+        return _page_update(
+            request, templates, database, manga_id,
+            lambda service: service.set_torrent_link_permission(
+                manga_id, row_version=int(str(form.get("row_version", ""))),
+                allow_personalized=form.get("allow_personalized") == "yes",
+            ), "torrent-link-permission-saved", app_config=app_config,
         )
 
     @app.post("/manga/{manga_id:path}/torrent-warnings")

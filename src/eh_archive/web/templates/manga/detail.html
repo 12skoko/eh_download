@@ -4,7 +4,6 @@
 <div class="page-head detail-head"><div><a class="back" href="/manga">← 返回队列</a><p class="eyebrow mono detail-manga-id">{{ row.manga_id }}</p><h1>{{ row.name or row.real_name or row.manga_id }}</h1><p class="muted">{{ row.real_name }}</p></div><span class="badge large status-{{ row.status }}">{{ row.status|status_label }}</span></div>
 {% if notice %}<div class="alert success">操作已完成，页面显示的是数据库最新状态。</div>{% endif %}
 {% include "_direct_download_progress.html" %}
-{% include "manga/_torrent_review.html" %}
 
 {% if upload_blockers %}
 <section class="panel"><h2>上传等待旧档案删除</h2><p>以下档案全部标记为已删除后，上传调度才会放行。删除失败或进入人工复核时仍会等待。</p><ul>{% for old in upload_blockers %}<li><a href="/manga/{{ old.manga_id }}">{{ old.name or old.manga_id }}（{{ old.manga_id }}）</a> · {{ old.status|status_label }}{% if old.last_error_code %} · {{ old.last_error_code }}{% endif %}</li>{% endfor %}</ul></section>
@@ -22,6 +21,7 @@
   </article>
 </section>
 {% if row.last_error_code %}<section class="panel error-panel"><div class="section-head"><div><p class="eyebrow">最近故障</p><h2>{{ row.last_error_code }}</h2></div><span>{{ row.last_error_at|datetime }}</span></div><p>{{ row.last_error_detail }}</p><p class="mono">operation: {{ row.last_error_operation or '—' }}</p></section>{% endif %}
+{% include "manga/_torrent_review.html" %}
 {% if special_workflow %}
 <section class="panel special-panel"><div class="section-head"><div><p class="eyebrow">特殊处理</p><h2>{{ special_workflow.kind }}</h2></div><span class="badge {{ special_workflow.status }}">{{ special_workflow.status }}</span></div><dl class="facts two"><div><dt>阶段</dt><dd>{{ special_workflow.phase|special_phase_label }}</dd></div><div><dt>更新时间</dt><dd>{{ special_workflow.updated_at|datetime }}</dd></div></dl><div class="panel-actions"><a class="button primary" href="/special/workflows/{{ special_workflow.id }}">打开特殊处理工作流</a></div></section>
 {% endif %}

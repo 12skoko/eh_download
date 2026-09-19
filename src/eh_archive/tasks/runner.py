@@ -844,13 +844,22 @@ class TaskExecutor:
             cookies=self.secrets.cookies(self.app.browse_session),
             proxies=browse_network.get("proxies"),
         )
+        review = dict(record.torrent_review or {})
+        if review.get("allow_personalized_next_attempt") is True:
+            # Consume before the request in the committed, fenced transaction.
+            # A later review exception can retain the permission for the selected
+            # candidate, but an unrelated retry must not inherit this one-shot flag.
+            record.torrent_review = {
+                key: value for key, value in review.items()
+                if key != "allow_personalized_next_attempt"
+            }
         self._begin_external_effect(repository, claim)
         torrent_hash, _ = service.submit(
             record.manga_id,
             record.torrent_link,
             estimated_size_raw=info.estimated_size_raw,
             skip_video=bool(record.remark and "skip video" in record.remark.lower()),
-            review=record.torrent_review,
+            review=review,
             excluded_resolutions=self.crawl.excluded_resolutions,
             video_markers=self.crawl.video_markers,
         )
