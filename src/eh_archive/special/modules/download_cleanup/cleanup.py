@@ -101,9 +101,7 @@ def is_link(path: Path) -> bool:
     return path.is_symlink() or bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400)
 
 
-def scan_download_roots(
-    app: AppConfig, *, only_id: str | None = None
-) -> tuple[list[FileCandidate], list[Result]]:
+def scan_download_roots(app: AppConfig) -> tuple[list[FileCandidate], list[Result]]:
     candidates: list[FileCandidate] = []
     skipped: list[Result] = []
     scanners = {
@@ -129,8 +127,6 @@ def scan_download_roots(
             numeric_id = identify(entry)
             if numeric_id is None:
                 skipped.append(Result(source, None, str(entry), None, None, "name_not_recognized"))
-                continue
-            if only_id is not None and numeric_id != only_id:
                 continue
             candidates.append(
                 FileCandidate(
@@ -204,9 +200,8 @@ def reconcile(
     app: AppConfig,
     qbit: QBittorrentClient,
     apply: bool,
-    only_id: str | None = None,
 ) -> dict[str, Any]:
-    file_candidates, results = scan_download_roots(app, only_id=only_id)
+    file_candidates, results = scan_download_roots(app)
     torrent_items = qbit.list_managed()
     torrent_candidates: list[tuple[str, str, str]] = []
     for item in torrent_items:
@@ -216,8 +211,6 @@ def reconcile(
             results.append(Result("qbittorrent", None, name, None, None, "name_not_recognized"))
             continue
         numeric_id, torrent_hash = identity
-        if only_id is not None and numeric_id != only_id:
-            continue
         torrent_candidates.append((numeric_id, torrent_hash, f"{name} ({torrent_hash})"))
 
     candidate_ids = {item.numeric_id for item in file_candidates}
@@ -280,7 +273,6 @@ def reconcile(
     return {
         "mode": "apply" if apply else "dry-run",
         "status_scope": sorted(TERMINAL_STATUSES),
-        "only_id": only_id,
         "summary": dict(sorted(counts.items())),
         "results": [asdict(item) for item in results],
     }

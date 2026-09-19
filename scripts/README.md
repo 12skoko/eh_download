@@ -113,13 +113,6 @@ Preview all eligible and skipped items first:
 python scripts/cleanup_download_artifacts.py --config-dir config
 ```
 
-Test one numeric gallery ID before a full cleanup:
-
-```powershell
-python scripts/cleanup_download_artifacts.py --config-dir config --id 4127104
-python scripts/cleanup_download_artifacts.py --config-dir config --id 4127104 --apply
-```
-
 Apply the full cleanup only after reviewing the dry-run JSON report:
 
 ```powershell

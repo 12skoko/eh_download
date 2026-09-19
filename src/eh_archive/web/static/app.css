@@ -237,6 +237,7 @@ tbody tr:hover { background: rgb(23 107 135 / 3.5%); }
 .transition-preview dt { color: var(--muted); font-size: .72rem; }
 .transition-preview dd { margin: .2rem 0 0; font-family: "Cascadia Code", Consolas, monospace; overflow-wrap: anywhere; }
 .field-help { margin: -.5rem 0 0; color: var(--muted); font-size: .78rem; }
+.download-cleanup-form + .field-help { margin-top: .25rem; }
 .artifact-path-preview { display: grid; gap: .35rem; padding: .75rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); }
 .artifact-path-preview > span { color: var(--muted); font-size: .72rem; font-weight: 650; }
 .artifact-path-preview output { color: var(--text); user-select: text; }

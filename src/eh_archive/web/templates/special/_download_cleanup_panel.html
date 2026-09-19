@@ -1,6 +1,7 @@
+<div id="download-cleanup-panel"{% if active_cleanup_job %} hx-get="/partials/special-workflows/{{ workflow.id }}" hx-trigger="every 4s" hx-swap="outerHTML"{% endif %}>
 <section class="panel">
   <h2>{{ phase_labels.get(workflow.phase, workflow.phase) }}</h2>
-  <p>扫描范围：{{ payload.get('only_id') or '全部数字 ID' }} · {{ '后台任务排队或执行中' if active_cleanup_job else '当前无执行任务' }}</p>
+  <p>{{ '后台任务排队或执行中' if active_cleanup_job else '当前无执行任务' }}</p>
   {% if execution_reason %}<div class="alert warning">{{ execution_reason }}</div>{% endif %}
   {% if not module_health.available %}<div class="alert warning">{{ module_health.reason }}</div>{% endif %}
   {% if workflow.error_code %}<div class="alert warning">{{ workflow.error_detail }}。清理已执行过时，请新建扫描核对残留项。</div>{% endif %}
@@ -25,3 +26,4 @@
 {% if expired_job %}<section class="panel"><h2>解除过期租约</h2><p>确认旧 Worker 已停止后才能解除租约；已执行的删除无法撤销，之后请新建扫描核对残留项。</p><form method="post" action="/special/workflows/{{ workflow.id }}/actions/release-expired"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="row_version" value="{{ workflow.row_version }}"><label>原因<input name="reason" required></label><label><input type="checkbox" name="confirmed" value="yes" required>旧 Worker 已停止</label><button>解除过期租约</button></form></section>{% endif %}
 <section class="panel table-panel"><h2>任务历史</h2><div class="table-wrap"><table><thead><tr><th>任务</th><th>操作</th><th>状态</th><th>错误</th></tr></thead><tbody>{% for job in jobs %}<tr><td>#{{ job.id }}</td><td>{{ '扫描' if job.operation == 'scan' else '清理' }}</td><td>{{ job.status }}</td><td>{{ job.error_detail or '—' }}</td></tr>{% endfor %}</tbody></table></div></section>
 <section class="panel"><h2>事件</h2>{% for event in events %}<p>{{ event.created_at|datetime }} · {{ event.event_type }} · {{ event.error_code or '' }}</p>{% endfor %}{% if page > 1 %}<a href="?page={{ page - 1 }}">上一页</a>{% endif %}{% if jobs|length == 50 or events|length == 100 %}<a href="?page={{ page + 1 }}">下一页</a>{% endif %}</section>
+</div>

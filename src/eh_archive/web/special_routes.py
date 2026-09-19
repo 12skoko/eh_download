@@ -31,8 +31,6 @@ def install_special_routes(app, database, templates, app_config, config_dir):
         form = await _validated_form(request)
         try:
             inputs = json.loads(str(form.get("inputs", "{}")))
-            if kind == "download_cleanup" and "only_id" in form:
-                inputs = {"only_id": str(form.get("only_id", ""))}
             if not isinstance(inputs, dict):
                 raise SpecialInvalidRequest("输入必须是对象")
             with database.session() as session:

@@ -693,6 +693,7 @@ def create_app(
                 **detail,
                 notice=None,
                 module_health=module_health,
+                module_url=special_module_url(detail["workflow"].kind),
             ),
         )
 

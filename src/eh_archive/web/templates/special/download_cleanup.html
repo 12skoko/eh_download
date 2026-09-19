@@ -7,19 +7,18 @@
   <p>扫描 qBittorrent 中属于 eharchive 的种子，以及种子、直链、H@H、aria2 下载目录。只有数据库状态为 completed 或 deleted，且没有活动任务或租约的条目可以清理。</p>
   <p>先生成预览清单，再手动确认删除。清理不改变普通档案状态，也不删除 LANraragi 档案。</p>
   {% if module_health.available %}
-  <form method="post" action="{{ module.url }}/create" class="stack-form">
+  <form method="post" action="{{ module.url }}/create" class="stack-form download-cleanup-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>数字 ID（留空扫描全部）<input name="only_id" pattern="[0-9]*" inputmode="numeric" placeholder="例如 4127104"></label>
     <button class="primary" type="submit">开始扫描预览</button>
   </form>
   {% else %}<div class="alert warning">{{ module_health.reason }}</div>{% endif %}
   <p class="field-help">扫描和清理由 Supervisor 的特殊任务 Worker 执行；任务排队后可刷新查看进度。</p>
 </section>
 <section class="panel table-panel"><div class="section-head"><h2>清理历史（{{ total }}）</h2></div>
-  <div class="table-wrap"><table><thead><tr><th>工作流</th><th>范围</th><th>阶段</th><th>创建时间</th><th>结果</th></tr></thead><tbody>
+  <div class="table-wrap"><table><thead><tr><th>工作流</th><th>阶段</th><th>创建时间</th><th>结果</th></tr></thead><tbody>
   {% for item in workflows %}{% set s = (item.payload or {}).get('summary', {}) %}
-  <tr><td><a href="/special/workflows/{{ item.id }}">#{{ item.id }}</a></td><td>{{ item.payload.get('only_id') or '全部' }}</td><td>{{ phase_labels.get(item.phase, item.phase) }}</td><td>{{ item.created_at|datetime }}</td><td>待清理 {{ s.get('would_delete', 0) }} · 已删除 {{ s.get('deleted', 0) }} · 失败 {{ s.get('delete_failed', 0) + s.get('torrent_delete_failed', 0) }}</td></tr>
-  {% else %}<tr><td colspan="5" class="empty">暂无清理记录</td></tr>{% endfor %}
+  <tr><td><a href="/special/workflows/{{ item.id }}">#{{ item.id }}</a></td><td>{{ phase_labels.get(item.phase, item.phase) }}</td><td>{{ item.created_at|datetime }}</td><td>待清理 {{ s.get('would_delete', 0) }} · 已删除 {{ s.get('deleted', 0) }} · 失败 {{ s.get('delete_failed', 0) + s.get('torrent_delete_failed', 0) }}</td></tr>
+  {% else %}<tr><td colspan="4" class="empty">暂无清理记录</td></tr>{% endfor %}
   </tbody></table></div>
   <div class="pagination"><span>共 {{ total }} 条，每页 50 条</span>{% if page > 1 %}<a href="?page={{ page - 1 }}">上一页</a>{% endif %}<span>第 {{ page }} 页</span>{% if page * 50 < total %}<a href="?page={{ page + 1 }}">下一页</a>{% endif %}</div>
 </section>

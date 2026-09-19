@@ -55,16 +55,9 @@ SOURCE_LABELS = {
 
 
 def create(service, inputs):
-    if set(inputs) - {"only_id"}:
-        raise SpecialInvalidRequest("清理模块只接受数字 ID")
-    only_id = inputs.get("only_id")
-    if only_id is not None:
-        if not isinstance(only_id, str):
-            raise SpecialInvalidRequest("ID 必须为数字")
-        only_id = only_id.strip() or None
-    if only_id is not None and (not only_id.isascii() or not only_id.isdigit()):
-        raise SpecialInvalidRequest("ID 必须为数字")
-    workflow = service.repository.create(KIND, actor=service.actor, payload={"only_id": only_id})
+    if inputs:
+        raise SpecialInvalidRequest("清理模块不接受输入")
+    workflow = service.repository.create(KIND, actor=service.actor, payload={})
     service.repository.queue_job(
         workflow, "scan", trigger_source=service.trigger_source, requested_by=service.actor
     )
@@ -252,7 +245,6 @@ class CleanupExecutor:
                     database=self.database,
                     app=self.app,
                     qbit=qbit,
-                    only_id=payload.get("only_id"),
                     checkpoint=self.checkpoint,
                 )
                 report["connection_key"] = connection_key

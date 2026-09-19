@@ -85,9 +85,9 @@ def torrent_snapshot(item):
     }
 
 
-def build_preview(*, database, app, qbit, only_id=None, checkpoint=lambda: None):
+def build_preview(*, database, app, qbit, checkpoint=lambda: None):
     checkpoint()
-    report = reconcile(database=database, app=app, qbit=qbit, apply=False, only_id=only_id)
+    report = reconcile(database=database, app=app, qbit=qbit, apply=False)
     report["scope"] = scope(app)
     for row in report["results"]:
         if row["action"] != "would_delete":
@@ -218,7 +218,6 @@ def apply_preview(*, database, app, qbit, preview, checkpoint=lambda: None, on_r
                     record(row, "delete_failed", str(exc))
     return {
         "mode": "apply",
-        "only_id": preview.get("only_id"),
         "status_scope": preview["status_scope"],
         "summary": dict(Counter(row["action"] for row in results)),
         "results": results,

@@ -30,11 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--config-dir", default="config")
     parser.add_argument("--apply", action="store_true", help="perform deletions")
-    parser.add_argument("--id", dest="only_id", help="limit the scan to one numeric manga ID")
     parser.add_argument("--report", type=Path, help="write JSON to this path")
     args = parser.parse_args(argv)
-    if args.only_id is not None and not args.only_id.isdigit():
-        parser.error("--id must contain only digits")
 
     app, _, _, secrets = load_config(args.config_dir)
     options = dict(secrets.qbittorrent)
@@ -46,7 +43,6 @@ def main(argv: list[str] | None = None) -> int:
             app=app,
             qbit=QBittorrentClient(**options),
             apply=args.apply,
-            only_id=args.only_id,
         )
     finally:
         database.dispose()
