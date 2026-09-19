@@ -60,7 +60,7 @@ document.addEventListener("htmx:afterSwap", (event) => {
 document.addEventListener("htmx:beforeSwap", (event) => {
   // Do not let a poll that was already in flight replace an open run dialog.
   if (event.detail.target?.classList.contains("module-schedule")
-      && event.detail.target.querySelector("dialog[open]")
+      && event.detail.target.closest(".component-item")?.querySelector("dialog[open]")
       && event.detail.requestConfig?.verb === "get") {
     event.detail.shouldSwap = false;
     return;

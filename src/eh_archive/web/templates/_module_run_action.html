@@ -1,0 +1,15 @@
+<div id="module-run-action-{{ component }}"{% if schedule_oob %} hx-swap-oob="outerHTML"{% endif %}>
+  <button type="button" data-open-dialog="run-module-{{ component }}-dialog" {% if schedule.unavailable %}disabled title="{{ schedule.unavailable }}"{% endif %}>立即执行</button>
+  <dialog id="run-module-{{ component }}-dialog" class="status-dialog">
+    <form method="post" action="/control/{{ component }}/run" class="status-dialog-form" hx-post="/control/{{ component }}/run" hx-target="#module-schedule-{{ component }}" hx-swap="outerHTML" hx-sync="closest .component-item:replace" hx-disabled-elt="find button" hx-on::after-request="if(event.detail.successful) this.closest('dialog').close()">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="owner" value="{{ schedule.owner }}">
+      <input type="hidden" name="request_version" value="{{ schedule.request_version }}">
+      <input type="hidden" name="confirmed" value="yes">
+      <div class="dialog-head"><div><p class="eyebrow">手动运行</p><h2>执行{{ component|component_label }}？</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+      <p>确认后将请求 Supervisor 执行一次 {{ component }}，并从本次启动时间重新计算下次计划时间。</p>
+      <p>模块运行中不会重复启动；暂停、维护和冷却限制仍然生效。</p>
+      <div class="dialog-actions"><button type="button" data-close-dialog>取消</button><button type="submit" class="primary">确认执行</button></div>
+    </form>
+  </dialog>
+</div>

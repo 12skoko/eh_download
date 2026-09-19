@@ -177,13 +177,10 @@ input:where([type="checkbox"], [type="radio"]):focus-visible { outline: 2px soli
 .component-reason { min-width: 0; min-height: 38px; display: flex; align-items: center; gap: .5rem; padding: .5rem .65rem; border-radius: 7px; color: var(--amber); background: var(--amber-soft); overflow-wrap: anywhere; }
 .component-reason small { flex: 0 0 auto; margin: 0; color: inherit; font-size: .7rem; font-weight: 750; }
 .component-feedback { grid-column: 1 / -1; padding: .55rem .7rem; border-radius: 7px; color: var(--red); background: var(--red-soft); }
-.component-item { border-bottom: 1px solid var(--line); }
-.component-item:last-child { border-bottom: 0; }
-.component-item > .component-row { border-bottom: 0; }
-.module-schedule { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: 0 0 .75rem; }
-.module-schedule-detail { min-width: 0; }
-.module-schedule-detail small { display: block; color: var(--muted); margin: .2rem 0; overflow-wrap: anywhere; }
-.module-schedule > button { flex-shrink: 0; width: 84px; }
+.component-actions { display: grid; gap: .4rem; width: 84px; }
+.component-actions > form > button,
+.component-actions > div > button { width: 100%; }
+.module-schedule { overflow-wrap: anywhere; }
 
 .table-panel { padding: 0; overflow: hidden; }
 .table-panel > .section-head,

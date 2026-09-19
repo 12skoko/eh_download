@@ -135,7 +135,7 @@ def create_app(
     templates.env.globals["css_version"] = hashlib.sha256((STATIC_DIR / "app.css").read_bytes()).hexdigest()[:12]
     templates.env.filters["datetime"] = _format_datetime
     templates.env.filters["schedule_datetime"] = lambda value: (
-        value.astimezone(ZoneInfo(app_config.timezone)).strftime("%Y-%m-%d %H:%M:%S %Z")
+        value.astimezone(ZoneInfo(app_config.timezone)).strftime("%Y-%m-%d %H:%M:%S")
         if value else "—"
     )
     templates.env.filters["collected_at"] = lambda value: _format_collected_at(value, app_config.timezone)
@@ -326,7 +326,7 @@ def create_app(
             request=request, name="_module_schedule.html",
             context=_context(
                 request, component=component, schedule=module_schedule_data(component),
-                trigger_error=error,
+                trigger_error=error, schedule_oob=True,
             ),
         )
 
