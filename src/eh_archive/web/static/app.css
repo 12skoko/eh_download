@@ -156,6 +156,9 @@ input:where([type="checkbox"], [type="radio"]):focus-visible { outline: 2px soli
 
 .risk-confirmations { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .45rem .8rem; margin: 1rem 0; padding: .9rem; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); }
 .risk-confirmations p { grid-column: 1 / -1; margin: 0; }
+#special-workflow-panel .table-panel > form > .risk-confirmations { margin-inline: var(--panel-padding); }
+#special-workflow-panel .table-panel > form > button { margin: 0 var(--panel-padding) var(--panel-padding); }
+#special-workflow-panel .panel-actions + .alert { margin-top: 1rem; }
 .metric-card.status-quarantined, .metric-card.status-manual_review { border-top-color: var(--red); }
 .metric-card span { color: var(--muted); }
 .metric-card strong { font-size: 1.75rem; letter-spacing: -.03em; }
