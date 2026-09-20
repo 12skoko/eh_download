@@ -121,7 +121,7 @@
         {% if target.status == 'force_delete_pending' %}
         <label><span class="field-label-line">档案 ID 二次确认（必填）<span class="mono confirmation-manga-id">{{ row.manga_id }}</span></span><input name="confirmation_manga_id" placeholder="请输入上方档案 ID" autocomplete="off" required></label>
         {% endif %}
-        <label>操作原因{% if target.requires_reason %}（必填）{% else %}（可选）{% endif %}<textarea name="reason" rows="3" {% if target.requires_reason %}required{% endif %}>{% if target.status == 'force_delete_pending' %}outdated{% endif %}</textarea></label>
+        <label>操作原因{% if target.requires_reason %}（必填）{% else %}（可选）{% endif %}<textarea name="reason" rows="3" {% if target.requires_reason %}required{% endif %}>{% if target.status == 'force_delete_pending' %}outdated{% else %}{{ target.default_reason|default('') }}{% endif %}</textarea></label>
         {% if target.danger %}<div class="alert warning">这是高影响操作，请核对目标状态和必填信息后再确认。</div>{% endif %}
         <div class="dialog-actions"><button type="button" data-close-dialog>返回</button><button type="submit" class="primary">确认修改</button></div>
       </form>

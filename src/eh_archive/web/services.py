@@ -31,6 +31,7 @@ from ..special.remarks import PHASE_LABELS, replace_user_remark, user_remark
 from ..tasks.registry import MODULES
 
 CONTROL_COMPONENTS = ("supervisor", *SUPERVISOR_MODULES)
+DEFAULT_DOWNLOAD_BLOCKED_REASON = "账号无下载额度"
 DOWNLOAD_METHOD_LOCATIONS = {
     "torrent": "torrent_download",
     "direct": "direct_download",
@@ -114,7 +115,8 @@ MANUAL_STATUS_TARGETS = (
         "status": Status.DOWNLOAD_BLOCKED.value,
         "label": "下载受阻",
         "description": "停止自动下载领取；适用于当前部署没有可用下载方式的档案。",
-        "requires_reason": True,
+        "requires_reason": False,
+        "default_reason": DEFAULT_DOWNLOAD_BLOCKED_REASON,
     },
     {
         "status": Status.SKIPPED.value,
@@ -527,11 +529,12 @@ class WebService:
             return row
 
         clean_reason = reason.strip() if reason and reason.strip() else None
+        if target_status == Status.DOWNLOAD_BLOCKED.value and not clean_reason:
+            clean_reason = DEFAULT_DOWNLOAD_BLOCKED_REASON
         if (
             target_status
             in {
                 Status.UNAVAILABLE.value,
-                Status.DOWNLOAD_BLOCKED.value,
                 Status.QUARANTINED.value,
                 Status.FORCE_DELETE_PENDING.value,
                 Status.DELETED.value,
@@ -1000,7 +1003,7 @@ def bulk_override_status(
             raise InvalidRequest("标记过时必须填写替代档案 ID")
         if superseded_by_id in {identifier for identifier, _ in items}:
             raise InvalidRequest("替代档案不能包含在本次选中的档案中")
-    if target_status in {"download_blocked", "unavailable", "quarantined"} and not reason:
+    if target_status in {"unavailable", "quarantined"} and not reason:
         raise InvalidRequest("这个状态必须填写操作原因")
     if target_status == "download_pending" and download_method not in (*DOWNLOAD_METHOD_VALUES, "manual_torrent"):
         raise InvalidRequest("必须选择有效的下载方式")

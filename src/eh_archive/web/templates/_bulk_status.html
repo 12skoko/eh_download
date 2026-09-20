@@ -11,7 +11,7 @@
     <p>将修改 <strong data-bulk-dialog-count>0</strong> 条档案。活动任务和版本冲突会逐条报错，其他档案继续处理；已处于目标状态的档案跳过。</p>
     <label>目标状态<select name="target_status" required data-bulk-target>
       <option value="">请选择</option>
-      {% for target in bulk_status_targets %}<option value="{{ target.status }}" data-requires-reason="{{ 'yes' if target.requires_reason else 'no' }}" data-description="{{ target.description }}">{{ target.label }}</option>{% endfor %}
+      {% for target in bulk_status_targets %}<option value="{{ target.status }}" data-requires-reason="{{ 'yes' if target.requires_reason else 'no' }}" data-default-reason="{{ target.default_reason|default('') }}" data-description="{{ target.description }}">{{ target.label }}</option>{% endfor %}
     </select></label>
     <p class="muted" data-bulk-description></p>
     <label data-bulk-replacement-label hidden>替代档案 ID（必填）<input name="superseded_by_id" placeholder="最新档案 ID，例如 123456/token" disabled><small class="muted">全部选中档案将关联到这个最新档案。</small></label>

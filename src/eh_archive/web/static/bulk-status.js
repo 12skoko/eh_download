@@ -13,6 +13,12 @@
     form.elements.superseded_by_id.disabled = !needsReplacement;
     form.elements.superseded_by_id.required = needsReplacement;
     const needsReason = option.dataset.requiresReason === 'yes';
+    const defaultReason = option.dataset.defaultReason || '';
+    const reason = form.elements.reason;
+    if (!reason.value.trim() || reason.value === reason.dataset.defaultReason) {
+      reason.value = defaultReason;
+    }
+    reason.dataset.defaultReason = defaultReason;
     form.elements.reason.required = needsReason;
     form.querySelector('[data-bulk-reason-label]').textContent = needsReason
       ? '公共原因（必填）' : '公共原因（可选）';
