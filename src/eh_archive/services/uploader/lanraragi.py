@@ -305,7 +305,9 @@ class LANraragiApiGateway:
             return False
         actual_filename = str(payload.get("filename") or "")
         extension = str(payload.get("extension") or "").lstrip(".")
-        if extension and not actual_filename.casefold().endswith(f".{extension.casefold()}"):
+        # LANraragi separates the final extension from the filename; the stem
+        # may itself end in the same suffix (for example, archive.zip.zip).
+        if extension:
             actual_filename = f"{actual_filename}.{extension}"
         return (
             actual_id == archive_id
