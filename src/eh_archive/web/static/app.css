@@ -205,6 +205,9 @@ tbody tr:hover { background: rgb(23 107 135 / 3.5%); }
 .filter-panel { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin-bottom: 1rem; padding: 1rem; }
 .filter-panel label { min-width: 130px; }
 .filter-panel .grow { flex: 1 1 300px; }
+.advanced-search { flex: 1 1 100%; min-width: 0; }
+.advanced-search-fields { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .75rem; }
+.advanced-search p { margin-bottom: 0; font-size: .85rem; }
 .filter-panel .check { display: flex; flex-direction: row; align-items: center; min-width: auto; padding-bottom: .55rem; }
 .filter-panel .check input { width: auto; min-height: auto; }
 .status-filter { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: .4rem; padding-top: .7rem; border-top: 1px solid var(--line); }

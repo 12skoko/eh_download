@@ -10,6 +10,14 @@
   <label>错误<select name="has_error"><option value="">全部</option><option value="yes" {{ 'selected' if has_error == 'yes' }}>有错误</option><option value="no" {{ 'selected' if has_error == 'no' }}>无错误</option></select></label>
   <label>每页<select name="limit"><option {{ 'selected' if limit == 25 }}>25</option><option {{ 'selected' if limit == 50 }}>50</option><option {{ 'selected' if limit == 100 }}>100</option></select></label>
   <button class="primary" type="submit">筛选</button>
+  <details class="advanced-search" {% if uploader or tags %}open{% endif %}>
+    <summary>高级搜索</summary>
+    <div class="advanced-search-fields">
+      <label class="grow">上传者<input name="uploader" value="{{ uploader }}" placeholder="输入上传者名称" data-debounced-search></label>
+      <label class="grow">标签<input name="tags" value="{{ tags }}" placeholder="例如：language:chinese, parody:original" aria-describedby="tag-search-help" data-debounced-search></label>
+    </div>
+    <p id="tag-search-help" class="muted">上传者和标签均支持模糊匹配，不区分英文大小写。多个标签用逗号分隔，需同时匹配；可与上方筛选条件组合使用。</p>
+  </details>
   <div class="status-filter">
     {% for status, label in status_labels.items() %}<label><input type="checkbox" name="status" value="{{ status }}" {{ 'checked' if status in selected_statuses }}><span>{{ label }}</span></label>{% endfor %}
   </div>

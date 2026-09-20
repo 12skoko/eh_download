@@ -385,6 +385,8 @@ def create_app(
         request: Request,
         status: list[str] = status_query,
         q: str | None = None,
+        uploader: str | None = None,
+        tags: str | None = None,
         queue_source: str | None = None,
         has_error: str | None = None,
         limit: int = 50,
@@ -397,6 +399,8 @@ def create_app(
                     session,
                     statuses=status,
                     query_text=q,
+                    uploader=uploader,
+                    tags=tags,
                     queue_source=queue_source,
                     has_error=error_filter,
                     limit=limit,
@@ -407,6 +411,10 @@ def create_app(
         filter_params = []
         if q:
             filter_params.append(("q", q))
+        if uploader:
+            filter_params.append(("uploader", uploader))
+        if tags:
+            filter_params.append(("tags", tags))
         if queue_source:
             filter_params.append(("queue_source", queue_source))
         if has_error:
@@ -425,6 +433,8 @@ def create_app(
                 page=page,
                 selected_statuses=status,
                 q=q or "",
+                uploader=uploader or "",
+                tags=tags or "",
                 queue_source=queue_source or "",
                 has_error=has_error or "",
                 limit=limit,
@@ -1203,6 +1213,8 @@ def create_app(
     def api_list_manga(
         status: str | None = None,
         q: str | None = None,
+        uploader: str | None = None,
+        tags: str | None = None,
         limit: int = 100,
         page: int = 1,
     ):
@@ -1212,6 +1224,8 @@ def create_app(
                     session,
                     statuses=[status] if status else None,
                     query_text=q,
+                    uploader=uploader,
+                    tags=tags,
                     limit=limit,
                     page=page,
                 )

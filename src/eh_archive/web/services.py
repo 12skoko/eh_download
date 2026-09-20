@@ -1040,6 +1040,8 @@ def list_manga(
     *,
     statuses: list[str] | None = None,
     query_text: str | None = None,
+    uploader: str | None = None,
+    tags: str | None = None,
     queue_source: str | None = None,
     has_error: bool | None = None,
     limit: int = 50,
@@ -1062,6 +1064,15 @@ def list_manga(
         conditions.append(MangaRecord.last_error_at.is_(None))
     if query_text and query_text.strip():
         conditions.append(_manga_search_predicate(query_text))
+    if uploader and uploader.strip():
+        conditions.append(
+            MangaRecord.uploader.ilike(f"%{_escape_like(uploader.strip())}%", escape="\\")
+        )
+    for tag in (tags or "").replace("，", ",").split(","):
+        if tag.strip():
+            conditions.append(
+                MangaRecord.tags_raw.ilike(f"%{_escape_like(tag.strip())}%", escape="\\")
+            )
     total = session.scalar(select(func.count()).select_from(MangaRecord).where(*conditions)) or 0
     page = max(1, min(page, (total + limit - 1) // limit))
     query = (
