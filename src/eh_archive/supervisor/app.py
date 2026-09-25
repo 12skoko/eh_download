@@ -63,6 +63,7 @@ class Supervisor:
         self.owner = f"supervisor-{uuid.uuid4()}"
         self.children: dict[str, subprocess.Popen] = {}
         self.next_start_at: dict[str, float] = {}
+        self.eh_cooldowns: dict[str, tuple[float, datetime]] = {}
         self.stopping = False
         self.draining = False
         self.drain_heartbeat = True
@@ -433,8 +434,38 @@ class Supervisor:
             control.lease_owner = self.owner
             control.lease_until = utcnow() + timedelta(seconds=self.config.lease_seconds)
             self._set_control_state(control.state)
+            self._publish_cooldowns(session)
             for operation in INTERVAL_MODULES:
                 self._publish_interval(session, operation)
+
+    def _publish_cooldowns(self, session) -> None:
+        # Memory remains authoritative: a new Supervisor clears old snapshots.
+        cooldowns = getattr(self, "eh_cooldowns", {})
+        now = time.monotonic()
+        for operation in (*MODULES, "special_processing"):
+            row = session.get(SystemControl, operation, with_for_update=True)
+            if row is None:
+                row = SystemControl(component=operation, state="running")
+                session.add(row)
+            active = cooldowns.get(operation)
+            release = bool(
+                active and row.cooldown_release_requested
+                and row.cooldown_owner == self.owner and row.cooldown_until
+                and aware(row.cooldown_until) == active[1]
+            )
+            if active and (release or now >= active[0]):
+                if release:
+                    if operation == "special_processing":
+                        self.next_special_start_at = 0.0
+                    else:
+                        self.next_start_at[operation] = 0.0
+                    log.info("EH cooldown released: operation=%s", operation)
+                cooldowns.pop(operation, None)
+                active = None
+            row.cooldown_until = active[1] if active else None
+            row.cooldown_reason = "E-H 站点不可用" if active else None
+            row.cooldown_owner = self.owner
+            row.cooldown_release_requested = False
 
     def _set_control_state(self, state: str) -> None:
         previous = self.control_state
@@ -529,6 +560,11 @@ class Supervisor:
                         )
                         continue
                     cooldown_until = time.monotonic() + cooldown
+                    if not hasattr(self, "eh_cooldowns"):
+                        self.eh_cooldowns = {}
+                    self.eh_cooldowns[affected_operation] = (
+                        cooldown_until, utcnow() + timedelta(seconds=cooldown)
+                    )
                     if special_child:
                         self.next_special_start_at = max(
                             self.next_special_start_at,

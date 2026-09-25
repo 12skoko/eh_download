@@ -1,4 +1,5 @@
 <div id="module-run-action-{{ component }}"{% if schedule_oob %} hx-swap-oob="outerHTML"{% endif %}>
+  {% if schedule.interval %}
   <button type="button" data-open-dialog="run-module-{{ component }}-dialog" {% if schedule.unavailable %}disabled title="{{ schedule.unavailable }}"{% endif %}>立即执行</button>
   <dialog id="run-module-{{ component }}-dialog" class="status-dialog">
     <form method="post" action="/control/{{ component }}/run" class="status-dialog-form" hx-post="/control/{{ component }}/run" hx-target="#module-schedule-{{ component }}" hx-swap="outerHTML" hx-sync="closest .component-item:replace" hx-disabled-elt="find button" hx-on::after-request="if(event.detail.successful) this.closest('dialog').close()">
@@ -12,4 +13,20 @@
       <div class="dialog-actions"><button type="button" data-close-dialog>取消</button><button type="submit" class="primary">确认执行</button></div>
     </form>
   </dialog>
+  {% endif %}
+  {% if schedule.cooldown_until %}
+  <button type="button" data-open-dialog="release-cooldown-{{ component }}-dialog" {% if schedule.cooldown_pending %}disabled{% endif %}>解除冷却</button>
+  <dialog id="release-cooldown-{{ component }}-dialog" class="status-dialog">
+    <form method="post" action="/control/{{ component }}/release-cooldown" class="status-dialog-form" hx-post="/control/{{ component }}/release-cooldown" hx-target="#module-schedule-{{ component }}" hx-swap="outerHTML" hx-sync="closest .component-item:replace" hx-disabled-elt="find button" hx-on::after-request="if(event.detail.successful) this.closest('dialog').close()">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="owner" value="{{ schedule.cooldown_owner }}">
+      <input type="hidden" name="cooldown_version" value="{{ schedule.cooldown_version }}">
+      <input type="hidden" name="confirmed" value="yes">
+      <div class="dialog-head"><div><p class="eyebrow">解除冷却</p><h2>解除{{ component|component_label }}的冷却？</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+      <p>解除后将恢复正常调度。如果 E-H 仍不可用，可能再次进入冷却。</p>
+      <p>暂停、禁用和维护限制仍然生效，解除冷却不保证立即启动任务。</p>
+      <div class="dialog-actions"><button type="button" data-close-dialog>取消</button><button type="submit" class="primary">确认解除</button></div>
+    </form>
+  </dialog>
+  {% endif %}
 </div>

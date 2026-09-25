@@ -1,6 +1,7 @@
 """Shared presentation and validation for owner-bound interval controls."""
 
 from datetime import UTC, datetime
+import math
 from zoneinfo import ZoneInfo
 
 from ..db.models import EventLog, SystemControl
@@ -8,6 +9,55 @@ from ..tasks.registry import MODULES
 
 INTERVAL_MODULES = tuple(name for name, spec in MODULES.items() if spec.schedule == "interval")
 ACTIVE_REQUESTS = {"pending", "starting"}
+COOLDOWN_MODULES = (*MODULES, "special_processing")
+
+
+def module_view(component, row, supervisor, config, timezone, *, now=None):
+    now = now or datetime.now(UTC)
+    interval = component in INTERVAL_MODULES
+    view = schedule_view(row, supervisor, config, timezone, now=now) if interval else {}
+    online = bool(
+        supervisor and supervisor.lease_owner and supervisor.lease_until
+        and aware(supervisor.lease_until) > now and supervisor.heartbeat_at
+        and (now - aware(supervisor.heartbeat_at)).total_seconds()
+        <= max(config.poll_seconds * 6, 30)
+    )
+    until = aware(row.cooldown_until) if row and row.cooldown_until else None
+    active = bool(
+        online and row and row.cooldown_owner == supervisor.lease_owner
+        and until and until > now
+    )
+    seconds = max(0, math.ceil((until - now).total_seconds())) if active else 0
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    view.update(
+        interval=interval, cooldown_until=until if active else None,
+        cooldown_reason=row.cooldown_reason if active else None,
+        cooldown_remaining=f"{hours} 小时 {minutes} 分钟 {seconds} 秒" if active else None,
+        cooldown_version=until.isoformat() if active else "",
+        cooldown_owner=supervisor.lease_owner if online else "",
+        cooldown_pending=bool(active and row.cooldown_release_requested),
+    )
+    return view
+
+
+def request_cooldown_release(session, component, *, owner, version, actor, config, timezone):
+    if component not in COOLDOWN_MODULES:
+        raise ValueError("此模块不支持解除冷却")
+    supervisor = session.get(SystemControl, "supervisor", with_for_update=True)
+    row = session.get(SystemControl, component, with_for_update=True)
+    view = module_view(component, row, supervisor, config, timezone)
+    if not owner or owner != view["cooldown_owner"]:
+        raise ValueError("Supervisor 已变化或离线，请刷新后重试")
+    if not view["cooldown_until"] or version != view["cooldown_version"]:
+        raise ValueError("冷却已结束或已变化，请刷新后重试")
+    if view["cooldown_pending"]:
+        raise ValueError("解除请求已提交，等待 Supervisor 处理")
+    row.cooldown_release_requested = True
+    session.add(EventLog(
+        component="web", event_type="manual", operation="cooldown_release", actor=actor,
+        detail={"component": component, "supervisor_owner": owner, "cooldown_until": version},
+    ))
 
 
 def aware(value):

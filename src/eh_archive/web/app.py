@@ -36,7 +36,9 @@ from ..special.service import (
     special_module_health,
     special_workflow_detail,
 )
-from ..supervisor.scheduling import INTERVAL_MODULES, request_run, schedule_view
+from ..supervisor.scheduling import (
+    COOLDOWN_MODULES, INTERVAL_MODULES, module_view, request_cooldown_release, request_run,
+)
 from .auth import (
     SESSION_COOKIE,
     SESSION_MAX_AGE_SECONDS,
@@ -306,18 +308,18 @@ def create_app(
                 health_states=health_states,
                 supervisor_state=supervisor_state,
                 module_schedules={
-                    name: schedule_view(
-                        data["controls"].get(name), data["controls"].get("supervisor"),
+                    name: module_view(
+                        name, data["controls"].get(name), data["controls"].get("supervisor"),
                         supervisor_config, app_config.timezone,
-                    ) for name in INTERVAL_MODULES
+                    ) for name in COOLDOWN_MODULES
                 },
             ),
         )
 
     def module_schedule_data(component):
         with database.session() as session:
-            return schedule_view(
-                session.get(SystemControl, component), session.get(SystemControl, "supervisor"),
+            return module_view(
+                component, session.get(SystemControl, component), session.get(SystemControl, "supervisor"),
                 supervisor_config, app_config.timezone,
             )
 
@@ -332,9 +334,29 @@ def create_app(
 
     @app.get("/partials/module-schedule/{component}", response_class=HTMLResponse)
     def module_schedule_partial(request: Request, component: str):
-        if component not in INTERVAL_MODULES:
-            return _error_response(request, templates, InvalidRequest("此模块不支持定时调度"))
+        if component not in COOLDOWN_MODULES:
+            return _error_response(request, templates, InvalidRequest("未知模块"))
         return module_schedule_response(request, component)
+
+    @app.post("/control/{component}/release-cooldown")
+    async def release_cooldown_page(request: Request, component: str):
+        form = await _validated_form(request)
+        try:
+            if form.get("confirmed") != "yes":
+                raise ValueError("请先确认解除冷却")
+            with database.session() as session:
+                request_cooldown_release(
+                    session, component, owner=str(form.get("owner", "")),
+                    version=str(form.get("cooldown_version", "")), actor=_actor(request),
+                    config=supervisor_config, timezone=app_config.timezone,
+                )
+        except ValueError as exc:
+            if request.headers.get("HX-Request") == "true" and component in COOLDOWN_MODULES:
+                return module_schedule_response(request, component, str(exc))
+            return _error_response(request, templates, InvalidRequest(str(exc)))
+        if request.headers.get("HX-Request") == "true":
+            return module_schedule_response(request, component)
+        return _redirect_response(request, "/?notice=cooldown-release-requested")
 
     @app.post("/control/{component}/run")
     async def run_module_page(request: Request, component: str):
@@ -1133,7 +1155,7 @@ def create_app(
                         ),
                         component_error=str(error),
                         module_schedules={component: module_schedule_data(component)}
-                        if component in INTERVAL_MODULES else {},
+                        if component in COOLDOWN_MODULES else {},
                     ),
                 )
             return _error_response(request, templates, error)
@@ -1155,7 +1177,7 @@ def create_app(
                     ),
                     component_error=None,
                     module_schedules={component: module_schedule_data(component)}
-                    if component in INTERVAL_MODULES else {},
+                    if component in COOLDOWN_MODULES else {},
                 ),
             )
         return _redirect_response(request, "/?notice=control-updated")

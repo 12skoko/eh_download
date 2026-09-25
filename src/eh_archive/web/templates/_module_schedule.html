@@ -1,7 +1,15 @@
-<div id="module-schedule-{{ component }}" class="module-schedule" hx-get="/partials/module-schedule/{{ component }}" hx-trigger="every 3s [!document.querySelector('#run-module-{{ component }}-dialog[open]')]" hx-target="this" hx-swap="outerHTML" hx-sync="closest .component-item:drop">
+<div id="module-schedule-{{ component }}" class="module-schedule" hx-get="/partials/module-schedule/{{ component }}" hx-trigger="every 3s [!document.querySelector('#run-module-{{ component }}-dialog[open], #release-cooldown-{{ component }}-dialog[open]')]" hx-target="this" hx-swap="outerHTML" hx-sync="closest .component-item:drop">
+    {% if schedule.interval %}
     <small>下次计划启动：{% if schedule.next_run_at %}<time>{{ schedule.next_run_at|schedule_datetime }}</time>{% else %}{{ schedule.unavailable }}{% endif %}</small>
     {% if schedule.next_run_at and schedule.unavailable %}<small>{{ schedule.unavailable }}</small>{% endif %}
     {% if schedule.feedback %}<small role="status">{{ schedule.feedback }}</small>{% endif %}
+    {% endif %}
+    {% if schedule.cooldown_until %}
+    <small><strong>冷却中</strong> · {{ schedule.cooldown_reason }}</small>
+    <small>冷却结束：<time>{{ schedule.cooldown_until|schedule_datetime }}</time></small>
+    <small>剩余时间：{{ schedule.cooldown_remaining }}</small>
+    {% if schedule.cooldown_pending %}<small role="status">已提交解除请求，等待 Supervisor 处理</small>{% endif %}
+    {% endif %}
     {% if trigger_error %}<div class="component-feedback" role="alert">{{ trigger_error }}</div>{% endif %}
 </div>
 {% if schedule_oob %}{% include "_module_run_action.html" %}{% endif %}
