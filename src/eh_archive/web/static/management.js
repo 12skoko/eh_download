@@ -193,6 +193,10 @@
     document.getElementById("git-changes").hidden = !value.commits && !value.files;
   }
   if (fetchButton) {
+    const feedback = document.createElement("p");
+    feedback.setAttribute("role", "status");
+    feedback.hidden = true;
+    fetchButton.parentElement.append(feedback);
     const onUpdate = event => {
       if (!root.isConnected) document.removeEventListener("eh:update-status", onUpdate);
       else renderGit(event.detail);
@@ -201,10 +205,26 @@
     api("/api/system/git").then(value => window.ehUpdateStatus.publish(value))
       .catch(exc => showError(exc.message));
     fetchButton.addEventListener("click", async () => {
+      if (fetchButton.disabled) return;
+      const originalLabel = fetchButton.textContent;
       fetchButton.disabled = true;
-      try { window.ehUpdateStatus.publish(await api("/api/system/git/fetch", "POST")); }
-      catch (exc) { showError(exc.message); window.ehUpdateStatus.refresh(); }
-      finally { fetchButton.disabled = false; }
+      fetchButton.textContent = "正在检查…";
+      feedback.hidden = false;
+      feedback.textContent = "正在检查更新，请稍候…";
+      try {
+        const value = await api("/api/system/git/fetch", "POST");
+        window.ehUpdateStatus.publish(value);
+        feedback.textContent = value.available
+          ? (value.fast_forward ? "发现更新。" : "发现更新，但无法快进更新。")
+          : "已是最新。";
+      } catch (exc) {
+        feedback.textContent = "检查失败：" + (exc.name === "TimeoutError"
+          ? "请求超时，请稍后重试。" : exc.message || "请求未完成，请稍后重试。");
+        window.ehUpdateStatus.refresh();
+      } finally {
+        fetchButton.disabled = false;
+        fetchButton.textContent = originalLabel;
+      }
     });
   }
   async function poll() {
