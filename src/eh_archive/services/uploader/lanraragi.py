@@ -260,10 +260,12 @@ class LANraragiApiGateway:
         metadata: Mapping[str, str] | None = None,
     ) -> UploadOutcome:
         request_headers = {"Accept": "application/json", **self.headers}
+        # Long Unicode tags can exceed the server's URL limit and return HTML.
+        # LANraragi accepts these fields in a URL-encoded form body as well.
         response = self._request(
             "put",
             f"{self.base_url}/api/archives/{archive_id}/metadata",
-            params=dict(metadata) if metadata is not None else self.metadata_values(info),
+            data=dict(metadata) if metadata is not None else self.metadata_values(info),
             headers=request_headers,
             timeout=self.timeout,
             allow_redirects=False,
