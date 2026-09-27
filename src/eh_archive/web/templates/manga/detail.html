@@ -22,6 +22,14 @@
 </section>
 {% if row.last_error_code %}<section class="panel error-panel"><div class="section-head"><div><p class="eyebrow">最近故障</p><h2>{{ row.last_error_code }}</h2></div><span>{{ row.last_error_at|datetime }}</span></div><p>{{ row.last_error_detail }}</p><p class="mono">operation: {{ row.last_error_operation or '—' }}</p></section>{% endif %}
 {% include "manga/_torrent_review.html" %}
+{% if not special_workflow and row.status == 'manual_review' and row.last_error_operation == 'upload' and row.last_error_code and not row.superseded_by_id and not (row.active_attempt_id or row.lease_token or row.lease_owner or row.lease_until) %}
+<section class="panel special-panel">
+  <div class="section-head"><div><p class="eyebrow">上传故障恢复</p><h2>检查远端并修复元数据</h2></div></div>
+  <p>文件可能已经上传成功。先定位并核对 LANraragi 中的文件，再预览和修复元数据；已经一致时仅核验并恢复后续流程，不重新上传文件。</p>
+  <p class="field-help">主记录没有 LANraragi ID 时会尝试读取上传记录，也可在模块中手动填写远端 ID。找不到文件或身份不符时保留人工复核。</p>
+  <div class="panel-actions"><a class="button primary" href="/special/modules/lanraragi_metadata?manga_id={{ row.manga_id|urlencode }}">检查远端并修复元数据</a></div>
+</section>
+{% endif %}
 {% if special_workflow %}
 <section class="panel special-panel"><div class="section-head"><div><p class="eyebrow">特殊处理</p><h2>{{ special_workflow.kind }}</h2></div><span class="badge {{ special_workflow.status }}">{{ special_workflow.status }}</span></div><dl class="facts two"><div><dt>阶段</dt><dd>{{ special_workflow.phase|special_phase_label }}</dd></div><div><dt>更新时间</dt><dd>{{ special_workflow.updated_at|datetime }}</dd></div></dl><div class="panel-actions"><a class="button primary" href="/special/workflows/{{ special_workflow.id }}">打开特殊处理工作流</a></div></section>
 {% endif %}

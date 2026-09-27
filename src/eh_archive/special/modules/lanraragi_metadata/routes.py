@@ -29,6 +29,8 @@ def install_routes(app, database, templates, app_config, config_dir):
             inputs = {
                 "manga_ids": [v for v in re.split(r"[\s,，]+", str(form.get("manga_ids", ""))) if v]
             }
+            if str(form.get("archive_id", "")).strip():
+                inputs["archive_id"] = str(form["archive_id"]).strip()
             with database.session() as session:
                 workflow = ModuleService(
                     session, actor=_actor(request), config_dir=config_dir, app_config=app_config

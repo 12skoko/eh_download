@@ -156,7 +156,7 @@ def load_modules():
         ),
         ModuleRegistration(
             metadata.DEFINITION, metadata.executor, metadata.capability,
-            "更新标题、标签，复核并恢复元数据不一致的上传任务。",
+            "检查远端文件，更新标题和标签，核验并恢复上传出错的任务。",
             "special/lanraragi_metadata.html", metadata.dashboard, metadata.detail,
             "special/lanraragi_metadata_detail.html", "special/_lanraragi_metadata_panel.html",
             metadata_routes,

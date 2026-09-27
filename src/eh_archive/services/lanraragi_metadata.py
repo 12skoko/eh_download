@@ -59,7 +59,10 @@ class MetadataMaintenance:
             if source_ids(str(a.get("tags") or "")) == {candidate["manga_id"]}
         }
         if len(matches) != 1:
-            raise ValueError(f"按完整来源地址找到 {len(matches)} 个档案，无法唯一定位")
+            raise ValueError(
+                f"按完整来源地址找到 {len(matches)} 个档案，无法唯一定位；"
+                "请核对远端，可单独选择此档案并手动填写 LANraragi ID 重新预览"
+            )
         archive_id = matches.pop()
         if not ARCHIVE_ID.fullmatch(archive_id):
             raise ValueError("远端返回无效档案 ID")
@@ -67,6 +70,8 @@ class MetadataMaintenance:
 
     def read(self, candidate, archive_id):
         status, payload = self.gateway.metadata(archive_id)
+        if status == 404:
+            raise ValueError("远端未找到该档案；请核对 LANraragi ID，若文件确实不存在则需重试上传")
         if status != 200 or not payload:
             raise ValueError(f"读取 LANraragi 元数据失败（HTTP {status}）")
         if not candidate.get("filename") or candidate.get("size") is None:

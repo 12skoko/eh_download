@@ -21,7 +21,7 @@ def eligible(row):
             row.status == "completed"
             or (
                 row.status == "manual_review"
-                and row.last_error_code == "lrr_metadata_mismatch"
+                and bool(row.last_error_code)
                 and row.last_error_operation == "upload"
             )
         )
@@ -42,7 +42,7 @@ def snapshot(session, row):
     )
     archive_id = row.lrr_archive_id
     if not archive_id and attempt:
-        archive_id = (attempt.detail or {}).get("expected_archive_id")
+        archive_id = (attempt.detail or {}).get("expected_archive_id") or attempt.external_task_id
     return {
         "manga_id": row.manga_id,
         "archive_id": archive_id,

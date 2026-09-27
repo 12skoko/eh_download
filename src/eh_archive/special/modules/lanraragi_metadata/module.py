@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from ....config import load_config
 from ....db.models import MangaRecord, SpecialJob, SpecialWorkflow
 from ....db.repository import utcnow
-from ....services.lanraragi_metadata import MetadataMaintenance, fingerprint, manga_info
+from ....services.lanraragi_metadata import ARCHIVE_ID, MetadataMaintenance, fingerprint, manga_info
 from ....services.uploader.lanraragi import LANraragiApiGateway
 from ...core.contracts import OperationDefinition, WorkflowDefinition
 from ...core.execution import ExecutionContext
@@ -49,9 +49,11 @@ ACTION_LABELS = {
 
 
 def mismatch_conditions():
+    # Keep the existing API name while including every upload failure in review.
     return (
         MangaRecord.status == "manual_review",
-        MangaRecord.last_error_code == "lrr_metadata_mismatch",
+        MangaRecord.last_error_code.is_not(None),
+        MangaRecord.last_error_code != "",
         MangaRecord.last_error_operation == "upload",
     )
 
@@ -69,7 +71,7 @@ def pending_mismatch_ids(session):
 
 def create(service, inputs):
     config = load_metadata_config(service.config_dir)
-    if set(inputs) - {"manga_ids", "mismatch_only"}:
+    if set(inputs) - {"manga_ids", "mismatch_only", "archive_id"}:
         raise SpecialInvalidRequest("未知输入字段")
     ids = inputs.get("manga_ids", [])
     batch = inputs.get("mismatch_only", False)
@@ -79,7 +81,14 @@ def create(service, inputs):
         or any(not isinstance(i, str) or not i.strip() for i in ids)
         or bool(ids) == batch
     ):
-        raise SpecialInvalidRequest("请选择指定档案或元数据错误批量筛选")
+        raise SpecialInvalidRequest("请选择指定档案或上传错误批量筛选")
+    archive_id = inputs.get("archive_id")
+    if archive_id is not None:
+        if not isinstance(archive_id, str) or not ARCHIVE_ID.fullmatch(archive_id.strip()):
+            raise SpecialInvalidRequest("LANraragi 档案 ID 必须是 40 位十六进制字符")
+        if batch or len({i.strip() for i in ids}) != 1:
+            raise SpecialInvalidRequest("手动指定 LANraragi ID 时只能选择一个档案")
+        archive_id = archive_id.strip().lower()
     query = select(MangaRecord).order_by(MangaRecord.manga_id).with_for_update()
     if batch:
         query = query.where(*mismatch_conditions()).limit(config.batch_limit + 1)
@@ -106,7 +115,7 @@ def create(service, inputs):
         b = bind(service.session, workflow, row, entry={}, resume_status=row.status)
         try:
             original = snapshot(service.session, row)
-            b.context = {**b.context, "snapshot": original}
+            b.context = {**b.context, "snapshot": original, "archive_id_override": archive_id}
         except ValueError as exc:
             b.context = {**b.context, "error": str(exc)}
     service.repository.queue_job(
@@ -149,7 +158,10 @@ def retry(service, workflow, inputs):
             b.context = {"error": "档案状态已变化，请新建预览"}
         else:
             try:
-                b.context = {"snapshot": snapshot(service.session, row)}
+                b.context = {
+                    "snapshot": snapshot(service.session, row),
+                    "archive_id_override": b.context.get("archive_id_override"),
+                }
             except ValueError as exc:
                 b.context = {"error": str(exc)}
     workflow.phase = "queued"
@@ -337,6 +349,11 @@ class MetadataExecutor:
                         info = manga_info(row.info)
                         candidate = dict(b.context["snapshot"])
                     if self.claim.operation == "scan":
+                        manual_id = b.context.get("archive_id_override")
+                        if manual_id:
+                            if candidate["archive_id"] and candidate["archive_id"] != manual_id:
+                                raise ValueError("手动 ID 与已保存的远端 ID 不符，请核对上传记录")
+                            candidate["archive_id"] = manual_id
                         result = self.maintenance.preview(candidate, info)
                         with self.context.transaction() as repo:
                             workflow = repo.session.get(SpecialWorkflow, self.claim.workflow_id)

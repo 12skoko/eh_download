@@ -849,14 +849,14 @@ class ArchiveRepository:
 
         if not re.fullmatch(r"[0-9a-fA-F]{40}", archive_id):
             raise ValueError("invalid LANraragi ID")
-        if manga.status not in {"manual_review", "completed"} or any((
+        if manga.superseded_by_id or manga.status not in {"manual_review", "completed"} or any((
             manga.active_attempt_id, manga.lease_token, manga.lease_owner, manga.lease_until,
         )):
             raise ValueError("档案当前状态不允许确认远端元数据")
         previous = manga.status
         if previous == "manual_review":
-            if manga.last_error_code != "lrr_metadata_mismatch":
-                raise ValueError("只能恢复因元数据不一致进入人工复核的档案")
+            if manga.last_error_operation != "upload" or not manga.last_error_code:
+                raise ValueError("只能恢复因上传错误进入人工复核的档案")
             manga.status = transition_target(previous, "confirm_uploaded").value
             manga.status_updated_at = utcnow()
             manga.last_error_operation = manga.last_error_code = manga.last_error_detail = None
