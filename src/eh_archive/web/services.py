@@ -38,7 +38,9 @@ DOWNLOAD_METHOD_LOCATIONS = {
     "hah": "hah_download",
     "aria2": "aria2_download",
 }
-DUPLICATE_UPLOAD_ERROR_CODES = frozenset({"lrr_409", "lrr_duplicate"})
+DUPLICATE_UPLOAD_ERROR_CODES = frozenset(
+    {"lrr_409", "lrr_duplicate", "smb_final_conflict"}
+)
 
 STATUS_LABELS = {
     Status.DISCOVERED.value: "已发现",
