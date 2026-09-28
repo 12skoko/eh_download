@@ -111,7 +111,7 @@ def parse_metadata(tr_soup: Any) -> Manga:
     rating = 0
     if len(metadata_divs) > 2:
         match_rating = re.search(
-            r"background-position:\s*(-?\d+)px\s+(-?\d+)px", metadata_divs[2].get("style", "")
+            r"background-position:\s*-?(\d+)px\s+-?(\d+)px", metadata_divs[2].get("style", "")
         )
         if match_rating:
             rating = cal_rating(match_rating.group(1), match_rating.group(2))
