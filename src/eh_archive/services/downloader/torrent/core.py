@@ -25,6 +25,7 @@ class TorrentChoice:
     label: str
     page_order: int
     personalized_url: str | None = None
+    uploader: str = ""
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class TorrentOption:
     resampled: bool
     video: bool
     personalized_url: str | None = None
+    uploader: str = ""
 
     @property
     def suggested_role(self) -> str:
@@ -66,6 +68,7 @@ class TorrentOption:
             "choice_id": self.choice_id,
             "site_id": self.site_id,
             "label": self.label,
+            "uploader": self.uploader,
             "size": self.size,
             "size_bytes": self.size_bytes,
             "seeds": self.seeds,
@@ -119,7 +122,7 @@ def _parse_size(value: str, *, field: str) -> int:
     return int(number * multiplier)
 
 
-def _field_text(form: Any, name: str) -> tuple[str, Any]:
+def _field_text(form: Any, name: str, *, required: bool = True) -> tuple[str, Any]:
     expected = f"{name}:".casefold()
     marker = next(
         (
@@ -131,6 +134,8 @@ def _field_text(form: Any, name: str) -> tuple[str, Any]:
     )
     cell = marker.find_parent(("td", "th")) if marker is not None else None
     if marker is None or cell is None:
+        if not required:
+            return "", cell
         raise ArchiveError(
             "torrent_list_parse_error",
             f"torrent row is missing {name}",
@@ -139,7 +144,7 @@ def _field_text(form: Any, name: str) -> tuple[str, Any]:
     label = marker.get_text(" ", strip=True)
     text = cell.get_text(" ", strip=True)
     value = text[len(label) :].strip() if text.startswith(label) else ""
-    if not value:
+    if not value and required:
         raise ArchiveError(
             "torrent_list_parse_error",
             f"torrent row has an empty {name}",
@@ -217,6 +222,7 @@ def _parse_torrent_form(form: Any, page_order: int) -> tuple[TorrentChoice | Non
             label=label,
             page_order=page_order,
             personalized_url=_personalized_url(anchor),
+            uploader=_field_text(form, "Uploader", required=False)[0],
         ),
         outdated,
     )
@@ -313,6 +319,7 @@ def parse_torrent_options(
                 resampled=any(value in normalized_label for value in normalized_resolutions),
                 video=any(value in normalized_label for value in normalized_video),
                 personalized_url=_personalized_url(anchor),
+                uploader=_field_text(node, "Uploader", required=False)[0],
             )
         )
         page_order += 1
@@ -333,6 +340,7 @@ def select_torrent(
     html: str,
     *,
     estimated_size_raw: str,
+    gallery_uploader: str = "",
     skip_video: bool = False,
     skip_small: bool = False,
     excluded_resolutions: tuple[str, ...] = ("1280x", "800x", "1920x", "2560x"),
@@ -411,6 +419,15 @@ def select_torrent(
             ErrorClass.ITEM,
         )
 
+    # Uploader preference applies only after eligibility checks, and only to seeded torrents.
+    uploader = gallery_uploader.strip()
+    preferred = [
+        choice for choice in candidates
+        if uploader and choice.uploader.strip() == uploader and choice.seeds > 0
+    ]
+    if preferred:
+        candidates = preferred
+
     survivors = [
         candidate
         for candidate in candidates
@@ -464,6 +481,7 @@ class TorrentService:
         torrent_page_url: str,
         *,
         estimated_size_raw: str,
+        gallery_uploader: str = "",
         skip_video: bool = False,
         excluded_resolutions: tuple[str, ...] = (),
         video_markers: tuple[str, ...] = (),
@@ -486,6 +504,7 @@ class TorrentService:
         choice, decision = choose_with_review(
             response.text,
             estimated_size_raw=estimated_size_raw,
+            gallery_uploader=gallery_uploader,
             skip_video=skip_video,
             excluded_resolutions=excluded_resolutions or ("1280x", "800x", "1920x", "2560x"),
             video_markers=video_markers or ("mp4", "video"),

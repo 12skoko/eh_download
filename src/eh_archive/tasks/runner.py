@@ -858,6 +858,7 @@ class TaskExecutor:
             record.manga_id,
             record.torrent_link,
             estimated_size_raw=info.estimated_size_raw,
+            gallery_uploader=info.uploader,
             skip_video=bool(record.remark and "skip video" in record.remark.lower()),
             review=review,
             excluded_resolutions=self.crawl.excluded_resolutions,

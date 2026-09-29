@@ -42,13 +42,22 @@ def candidate_snapshot(option, estimated):
     return result
 
 
-def choose_with_review(html, *, estimated_size_raw, skip_video=False, review=None, **options):
+def choose_with_review(
+    html, *, estimated_size_raw, gallery_uploader="", skip_video=False, review=None, **options
+):
     candidates = parse_torrent_options(html, include_outdated=False, bind_download_url=True, **options)
     expected = _parse_size(estimated_size_raw, field="estimated")
-    # Dynamic seed counts do not invalidate acknowledgements; identities and sizes do.
+    # Seed counts may change; identities, sizes and uploader preference define the scope.
     scope = hashlib.sha256(
         json.dumps(
-            [expected, sorted((c.choice_id, c.outdated, c.resampled, c.video) for c in candidates)],
+            [
+                expected,
+                gallery_uploader.strip(),
+                sorted(
+                    (c.choice_id, c.uploader, c.outdated, c.resampled, c.video)
+                    for c in candidates
+                ),
+            ],
             sort_keys=True,
         ).encode()
     ).hexdigest()
@@ -67,11 +76,12 @@ def choose_with_review(html, *, estimated_size_raw, skip_video=False, review=Non
         "accepted_warnings": accepted,
         "choices": [candidate_snapshot(c, expected) for c in candidates],
     }
-    # Preserve the original ordering policy. Collect all soft warnings before raising.
+    # Collect all soft warnings before applying selection and uploader preference.
     try:
         choice = select_torrent(
             html,
             estimated_size_raw=estimated_size_raw,
+            gallery_uploader=gallery_uploader,
             skip_video=True,
             skip_small="torrent_size_too_small" in warnings,
             **options,
