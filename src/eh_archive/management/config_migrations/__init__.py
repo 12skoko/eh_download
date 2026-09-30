@@ -125,7 +125,7 @@ def _validate(directory: Path) -> None:
                     f"supervisor.toml: schedules.{module}.{field} 必须是有限的非负数字。"
                 )
     try:
-        app, _, _, _ = load_config(directory)
+        app, _, _, secrets = load_config(directory)
         if not 1 <= app.web_port <= 65535:
             raise ValueError("app.toml: web_port must be between 1 and 65535")
         if (directory / "special/video_archive.toml").is_file():
@@ -142,6 +142,10 @@ def _validate(directory: Path) -> None:
             from ...special.modules.manual_torrent.module import capability as manual_capability
 
             manual_capability(directory)
+        if (directory / "special/full_collect.toml").is_file():
+            from ...special.modules.full_collect.config import load_full_collect_config
+
+            load_full_collect_config(directory, app=app, secrets=secrets)
     except ConfigValueError as exc:
         raise ConfigMigrationError(str(exc)) from None
     except (ValueError, TypeError, KeyError, AttributeError):

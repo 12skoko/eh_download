@@ -228,3 +228,23 @@ SQLite 测试覆盖业务与 Web；真实 PostgreSQL 测试验证特殊模块增
 - 使用真实数据库渲染总览返回 HTTP 200。Web 启动入口将 Uvicorn 启动、请求和异常日志统一写入配置日志文件，重启 Web 后生效。
 - 本次 23 项业务/Web 日志测试及 6 项 PostgreSQL 测试通过；旧历史复制用例因源库已迁移不再执行。
 - 完整空库迁移链并未通过验证：隔离问题修正后发现旧 `0011_conflict_rename` 与当前元数据重复添加字段。当前测试明确覆盖 `0015`、`0016` 特殊模块迁移，不再宣称完整空库迁移链通过。
+
+## 可选协作停止与恢复契约
+
+WorkflowDefinition.lifecycle 可注册 LifecyclePolicy，默认 None，原模块行为不变。
+cooperative_stop 允许 ExecutionContext.stop_requested() 读取统一停止通知。
+recover 回调在短事务内接收工作流、有界任务摘要及 RecoveryContext，
+返回 OperationResult 或 None；不得在其中联网。None 保留现有排队期限。
+Supervisor 以当前 SystemControl 执行身份在领取前有界评估，通用框架
+处理旧凭据、任务资源与后续入队，模块负责业务意图和终点判断。
+
+fenced_operations 是显式安全承诺：外部操作只读，全部本地写入必须与
+检查点共用经过 claim 校验的事务。框架可先撤销旧提交资格再恢复，不能把
+租约过期解释为进程已停止。核心保留 payload._lifecycle 和
+job.progress._execution_control，不得由模块覆盖。未声明能力的任务仍走
+原人工恢复规则。ExecutionContext.transaction(timeout_seconds=...) 可在
+获取调度锁前设置 PostgreSQL 语句与锁等待预算。
+
+full_collect 通过 catalog 注册上述能力、执行器、动作与页面。批次续接沿用
+OperationResult.next_operation/delay_seconds，不在 Supervisor 或 worker 中
+增加全量名称、阶段、操作名或退出码分支。

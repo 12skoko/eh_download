@@ -29,6 +29,7 @@ CONFIG_FILENAMES = {
     "video_archive": "special/video_archive.toml",
     "lanraragi_compare": "special/lanraragi_compare.toml",
     "download_cleanup": "special/download_cleanup.toml",
+    "full_collect": "special/full_collect.toml",
     "secrets": "secrets.toml",
 }
 _CONFIG_WRITE_LOCK = threading.Lock()
@@ -104,6 +105,7 @@ class ConfigUpdateResult:
     changed_fields: tuple[str, ...]
     restart: str
     candidate: str | None = None
+    original_exists: bool = True
 
 
 APP_FIELDS = (
@@ -226,6 +228,9 @@ CRAWL_FIELDS = (
     FieldSpec(("collect_tags",), "采集标签", "lines", help="每行一个标签。"),
     FieldSpec(("name_keywords",), "名称关键词", "lines", help="每行一个关键词。"),
     FieldSpec(("tag_keywords",), "标签关键词", "lines", help="每行一个关键词。"),
+    FieldSpec(("screen_required_tags",), "EH 必需标签", "lines",
+              help="每行一个 namespace:name 精确标签；空列表保持原有筛选行为。"),
+    FieldSpec(("screen_required_tags_mode",), "必需标签匹配", "choice", options=("all", "any")),
     FieldSpec(("exclude_categories",), "排除分类", "lines", help="每行一个分类。"),
     FieldSpec(("video_markers",), "视频标记", "lines", help="每行一个标记。"),
     FieldSpec(("excluded_resolutions",), "排除分辨率", "lines", help="每行一个分辨率。"),
@@ -322,6 +327,8 @@ APP_FIELDS = tuple(
     FieldSpec(("sessions", "browse", "network"), "浏览网络"),
     FieldSpec(("sessions", "archive", "account"), "归档账号"),
     FieldSpec(("sessions", "archive", "network"), "归档网络"),
+    FieldSpec(("sessions", "full_collect", "account"), "全量采集账号", optional=True),
+    FieldSpec(("sessions", "full_collect", "network"), "全量采集代理池", optional=True),
 )
 APP_FIELDS = tuple(
     spec
@@ -335,11 +342,43 @@ VIDEO_ARCHIVE_FIELDS = tuple(
     for spec in VIDEO_ARCHIVE_FIELDS
 )
 
+FULL_COLLECT_FIELDS = (
+    FieldSpec(("enabled",), "启用全量采集", "bool", help="启用只允许调度，不自动创建历史或补齐轮次。"),
+    FieldSpec(("max_concurrency",), "模块最大并发", "int", minimum=1, maximum=1),
+    FieldSpec(("base_url",), "无筛选站点入口", optional=True),
+    FieldSpec(("start_mode",), "首次定位方式", "choice", options=("date", "database", "url")),
+    FieldSpec(("start_days_ago",), "首次起点距今天数", "int", minimum=0),
+    FieldSpec(("start_at",), "首次起点日期时间", optional=True,
+              help="可选带时区 ISO 日期时间；只影响新任务。"),
+    FieldSpec(("start_url",), "首次分页 URL", optional=True),
+    FieldSpec(("backfill_default_days_ago",), "手动补齐默认距今天数", "int", minimum=0),
+    FieldSpec(("boundary_overlap_pages",), "交界重叠页数", "int", minimum=1),
+    FieldSpec(("batch_max_pages",), "每批最多页数", "int", minimum=1),
+    *(
+        FieldSpec((name,), label + "（秒）", "float", minimum=0.001 if positive else 0)
+        for name, label, positive in (
+            ("batch_max_seconds", "批次时长预算", True),
+            ("request_timeout_seconds", "连接与读取超时", True),
+            ("page_write_timeout_seconds", "页面写入超时", True),
+            ("page_delay_min_seconds", "页面等待下限", False),
+            ("page_delay_max_seconds", "页面等待上限", False),
+            ("job_delay_min_seconds", "批次等待下限", False),
+            ("job_delay_max_seconds", "批次等待上限", False),
+            ("retry_delay_seconds", "请求重试间隔", False),
+            ("pool_failure_cooldown_seconds", "代理池失败冷却", True),
+            ("control_poll_seconds", "控制轮询间隔", True),
+        )
+    ),
+    FieldSpec(("max_consecutive_failures",), "连续失败批次上限", "int", minimum=1),
+    FieldSpec(("resume_after_restart",), "重启后继续原运行意图", "bool"),
+)
+
 _SECTION_META = {
     "app": ("应用配置", "Web 和 Supervisor", APP_FIELDS),
     "supervisor": ("调度配置", "Supervisor", SUPERVISOR_FIELDS),
     "crawl": ("采集配置", "next_worker", CRAWL_FIELDS),
     "secrets": ("账号与认证", "Web 和 Supervisor", SECRETS_FIELDS),
+    "full_collect": ("全量采集", "Supervisor", FULL_COLLECT_FIELDS),
     "video_archive": ("视频档案特殊处理", "Supervisor", VIDEO_ARCHIVE_FIELDS),
     "lanraragi_compare": (
         "LANraragi 核对",
@@ -406,6 +445,14 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
         return ("网页登录", False) if key.startswith("web_") else ("连接凭据", False)
     if section == "video_archive":
         return ("处理设置", False) if key in {"enabled", "work", "output"} else ("转换与限制", True)
+    if section == "full_collect":
+        return ("范围与启停", False) if key in {
+            "enabled", "max_concurrency", "base_url", "start_mode", "start_days_ago",
+            "start_at", "start_url", "backfill_default_days_ago", "resume_after_restart"
+        } else ("批次与等待", key in {
+            "request_timeout_seconds", "page_write_timeout_seconds", "control_poll_seconds",
+            "max_consecutive_failures", "pool_failure_cooldown_seconds", "retry_delay_seconds"
+        })
     return "模块设置", key == "timeout_seconds"
 
 
@@ -430,6 +477,8 @@ def field_policy(section: str, field: str) -> str:
         return "supervisor" if field in {"enabled", "work__max_concurrency"} else "next_worker"
     if section in {"download_cleanup", "lanraragi_compare"}:
         return "next_worker" if field == "timeout_seconds" else "supervisor"
+    if section == "full_collect":
+        return "supervisor" if field in {"enabled", "max_concurrency"} else "next_worker"
     if section == "secrets":
         if field.startswith("web_"):
             return "web"
@@ -500,7 +549,7 @@ def load_config_sections(config_dir: str | Path) -> tuple[ConfigSection, ...]:
         fields = []
         section_error = ""
         structural_errors = {}
-        if name in {"app", "supervisor", "crawl", "secrets"}:
+        if name in {"app", "supervisor", "crawl", "secrets", "full_collect"}:
             try:
                 validate_structure(CONFIG_FILENAMES[name], effective)
             except ConfigValueError as exc:
@@ -580,7 +629,8 @@ def update_config_section(
     _, _, specs = section_meta[section_name]
 
     with _CONFIG_WRITE_LOCK, configuration_lock(config_dir):
-        original = path.read_bytes() if path.exists() else b""
+        original_exists = path.exists()
+        original = path.read_bytes() if original_exists else b""
         if not revision or revision != _revision(original):
             raise ConfigurationConflict("配置文件已经被其他操作修改，请刷新页面后重试")
         try:
@@ -630,7 +680,7 @@ def update_config_section(
             raise ConfigurationError(f"有 {len(errors)} 项配置错误，尚未保存。", errors)
 
         if not changed:
-            return ConfigUpdateResult(filename, (), "next_worker")
+            return ConfigUpdateResult(filename, (), "next_worker", original_exists=original_exists)
         candidate = tomlkit.dumps(document)
         try:
             _validate_candidate(config_dir, filename, candidate)
@@ -641,12 +691,13 @@ def update_config_section(
                 if spec.path[-1] in str(exc) or spec.label in str(exc)
             }
             raise ConfigurationError(str(exc), matching) from None
-        if _revision(path.read_bytes() if path.exists() else b"") != revision:
+        if (path.exists() != original_exists
+                or _revision(path.read_bytes() if path.exists() else b"") != revision):
             raise ConfigurationConflict("配置文件已经被其他操作修改，请刷新页面后重试")
         if publish:
             _atomic_replace(path, candidate)
     return ConfigUpdateResult(
-        filename, tuple(changed), merged_policy(section_name, changed), candidate
+        filename, tuple(changed), merged_policy(section_name, changed), candidate, original_exists
     )
 
 
@@ -815,6 +866,10 @@ def _validate_candidate(config_dir: Path, filename: str, content: str) -> None:
                 from ..special.modules.download_cleanup.config import capability
 
                 capability(check_dir)
+            if (check_dir / CONFIG_FILENAMES["full_collect"]).is_file():
+                from ..special.modules.full_collect.config import load_full_collect_config
+
+                load_full_collect_config(check_dir, app=app, secrets=secrets)
     except ConfigValueError as exc:
         fields = {"__".join(exc.path): str(exc)} if filename == exc.filename else {}
         raise ConfigurationError(str(exc), fields) from None
@@ -825,6 +880,7 @@ def _validate_candidate(config_dir: Path, filename: str, content: str) -> None:
 def _atomic_replace(path: Path, content: str) -> None:
     temporary_name: str | None = None
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
         )

@@ -789,3 +789,34 @@ Web 的“系统”页面提供服务控制、更新检查、更新执行和操�
 更新结束后，原来运行的服务恢复运行，原来停止的保持停止。
 drain 可以取消，但没有强制停止并重启功能。迁移失败或 Web 无法启动时，
 通过 `eharchive operation show <操作ID>`、`journalctl` 和操作日志手工排查。
+
+## 全量采集与手动补齐
+
+在“特殊模块 → 全量采集”开始历史轮次。配置位于
+`config/special/full_collect.toml`，默认关闭；先填写无筛选站点入口、
+`app.toml [sessions.full_collect]` 的独立账号和代理池名称，
+凭据与固定代理入口放在 secrets.toml。配置页面提供全量采集选项。
+
+默认从一周前定位，每批最多 10 页，请求后随机等待 5～20 秒，批次间
+60～120 秒只保存排队记录，不占工作进程。日期和数据库模式会沿站点上一页链接
+核实冻结边界；手工 URL 必须包含分页游标。定位或分页无法验证时保留检查点，
+显示待修复，不能将错误页当作结束。
+
+新增档案为 filtered_out，remark 为 [full_collect] 全量收集建档；已有档案
+只刷新元数据，不改变状态、备注、优先级和下载上传信息。
+暂停后继续使用原 workflow。历史轮次暂停并安全退出后，在详情页预览、确认补齐；
+补齐完成不会自动恢复历史。近期未补齐区间会单独显示。
+
+CLI 同样通过已注册动作控制（row-version 使用当前详情中的版本）：
+
+```powershell
+eharchive --config-dir config special create full_collect
+eharchive --config-dir config special action 123 pause --row-version 7
+eharchive --config-dir config special action 123 resume --row-version 8
+eharchive --config-dir config special action 123 preview_backfill --row-version 9 --inputs '{"start_mode":"date","start_at":"2026-09-22T00:00:00+08:00"}'
+eharchive --config-dir config special action 123 confirm_backfill --row-version 10 --inputs '{"confirmed":true}'
+```
+
+筛选入口另有 crawl.toml 的 screen_required_tags 与 screen_required_tags_mode
+（all/any）。必需标签按 namespace:name 精确匹配，不能被名称或标签关键词绕过；
+空列表保持旧行为。具体标签需要按现有采集条件填写。全量 filtered_out 不会自动重新筛选。

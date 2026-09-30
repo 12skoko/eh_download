@@ -154,3 +154,25 @@ different replacement manga ID. The delete worker waits until that replacement
 has reached `download_pending` or a later normal pipeline state. A replacement
 that is still merely discovered, or has entered an exceptional terminal state,
 leaves the old archive in `outdated`; it does not cause automatic deletion.
+
+## Full collection operations
+
+The full_collect special module uses one history workflow and manually confirmed
+backfill workflows. Page metadata and the resume cursor share a claim-validated
+transaction. No database schema migration or separate checkpoint file is required.
+
+Use Pause/Resume in the workflow detail page. Supervisor drain/shutdown sends the
+optional generic cooperative-stop notification. A normal stop saves progress at a
+page boundary; an abnormal exit is recovered only after confirmation or explicit
+claim fencing. With resume_after_restart=false, existing queued batches are also
+held for manual resume. Paused, repair-required and completed rounds do not restart.
+
+Configure special_processing.max_concurrency=2 and full_collect.max_concurrency=1.
+The pool is shared, not reserved. Restart Supervisor after changing concurrency or
+module enablement. Batch delays persist as next_run_at and consume no running slot.
+
+Details report boundaries, current batch, checkpoint, counts, account/proxy names,
+cooldown, heartbeat and stop reasons. Workflow logs support job/level selection and
+bounded reading. Files continue under logs/special/full_collect using the existing
+per-job naming convention. This module does not rotate, delete or maintain logs.
+Archive counts measure processing, including boundary overlap, not unique coverage.

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 from ..tasks.registry import MODULES
 from .defaults import effective_values
@@ -50,6 +50,7 @@ class AppConfig:
     web_port: int = 8787
     browse_session: SessionRole = field(default_factory=SessionRole)
     archive_session: SessionRole = field(default_factory=SessionRole)
+    full_collect_session: SessionRole = field(default_factory=lambda: SessionRole("", ""))
     qbittorrent_url: str = "http://127.0.0.1:8080"
     # Per-torrent upload limit for the regular torrent_download worker, in
     # decimal kB/s. Zero means unlimited.
@@ -167,6 +168,8 @@ class CrawlConfig:
     collect_tags: tuple[str, ...] = ()
     name_keywords: tuple[str, ...] = ()
     tag_keywords: tuple[str, ...] = ()
+    screen_required_tags: tuple[str, ...] = ()
+    screen_required_tags_mode: str = "all"
     observation_days: int = 1
     collect_end_days: int = 6
     collect_end_offset: int = 3000
@@ -200,6 +203,8 @@ class SecretsConfig:
 
     def cookies(self, role: SessionRole) -> dict[str, str]:
         value = self.accounts.get(role.account, {})
+        if not isinstance(value, dict):
+            raise TypeError(f"accounts.{role.account} must be a table")
         cookies_str = value.get("cookies_str", "")
         if not isinstance(cookies_str, str):
             raise TypeError(f"accounts.{role.account}.cookies_str must be a string")
@@ -207,6 +212,41 @@ class SecretsConfig:
 
     def network(self, role: SessionRole) -> dict[str, Any]:
         return dict(self.networks.get(role.network, {}))
+
+    def proxy_pool(self, role: SessionRole) -> tuple[str, ...]:
+        """Validate a pool of fixed entries without selecting or rotating it."""
+        raw = self.networks.get(role.network)
+        if not isinstance(raw, dict):
+            raise TypeError("proxy_pool 必须引用已配置的网络")
+        pool = raw.get("proxy_pool")
+        if (not isinstance(pool, list) or not pool
+                or any(not isinstance(name, str) or not name.strip() for name in pool)
+                or len(set(pool)) != len(pool) or raw.get("proxies")):
+            raise ValueError("proxy_pool 必须为非空且不重复的固定入口名称列表")
+        for name in pool:
+            entry = self.networks.get(name)
+            if not isinstance(entry, dict) or "proxy_pool" in entry:
+                raise ValueError("proxy_pool 入口不存在或引用了另一个池")
+            proxies = entry.get("proxies")
+            if not isinstance(proxies, dict) or set(proxies) != {"http", "https"}:
+                raise ValueError("proxy_pool 每个入口必须配置 http 和 https 代理")
+            for value in proxies.values():
+                try:
+                    parsed = urlsplit(value) if isinstance(value, str) else None
+                    valid = (parsed is not None and parsed.scheme in {"http", "https"}
+                             and parsed.hostname and parsed.port is not None
+                             and parsed.path in {"", "/"} and not parsed.query
+                             and not parsed.fragment and not any(c.isspace() for c in value))
+                except ValueError:
+                    valid = False
+                if not valid:
+                    raise ValueError("proxy_pool 入口代理地址无效")
+        return tuple(pool)
+
+    def proxy_network(self, role: SessionRole, name: str) -> dict[str, Any]:
+        if name not in self.proxy_pool(role):
+            raise ValueError("所选代理入口不属于该会话的网络池")
+        return dict(self.networks[name])
 
 
 @dataclass(frozen=True)
@@ -289,7 +329,7 @@ def _parse_cookie_string(value: str, *, account: str = "default") -> dict[str, s
         name, separator, cookie_value = part.partition("=")
         name = name.strip()
         if not separator or not name:
-            raise ValueError(f"accounts.{account}.cookies_str contains an invalid item: {part!r}")
+            raise ValueError(f"accounts.{account}.cookies_str contains an invalid item")
         result[name] = cookie_value.strip()
     return result
 
@@ -576,6 +616,10 @@ def load_config(
         web_port=int(app_raw.get("web_port", 8787)),
         browse_session=_role(app_raw.get("sessions", {}), "browse"),
         archive_session=_role(app_raw.get("sessions", {}), "archive"),
+        full_collect_session=SessionRole(
+            str(app_raw.get("sessions", {}).get("full_collect", {}).get("account", "")).strip(),
+            str(app_raw.get("sessions", {}).get("full_collect", {}).get("network", "")).strip(),
+        ),
         qbittorrent_url=str(app_raw.get("qbittorrent_url", "http://127.0.0.1:8080")),
         torrent_upload_limit_kb_per_second=int(
             app_raw.get(
@@ -727,6 +771,12 @@ def load_config(
         collect_tags=_string_tuple(crawl_raw.get("collect_tags", []), "collect_tags"),
         name_keywords=tuple(crawl_raw.get("name_keywords", [])),
         tag_keywords=tuple(crawl_raw.get("tag_keywords", [])),
+        screen_required_tags=tuple(
+            ":".join(part.strip() for part in tag.casefold().split(":", 1))
+            for tag in _string_tuple(crawl_raw.get("screen_required_tags", []),
+                                     "screen_required_tags")
+        ),
+        screen_required_tags_mode=str(crawl_raw.get("screen_required_tags_mode", "all")),
         observation_days=int(crawl_raw.get("observation_days", 1)),
         collect_end_days=int(crawl_raw.get("collect_end_days", 6)),
         collect_end_offset=int(crawl_raw.get("collect_end_offset", 3000)),
@@ -739,6 +789,13 @@ def load_config(
             crawl_raw.get("tag_translation_url", CrawlConfig.tag_translation_url)
         ),
     )
+    if crawl.screen_required_tags_mode not in {"all", "any"}:
+        raise ValueError("screen_required_tags_mode 必须是 all 或 any")
+    for tag in crawl.screen_required_tags:
+        namespace, separator, name = tag.partition(":")
+        if (not separator or not namespace or not name or ":" in name or "," in tag
+                or not re.fullmatch(r"[a-z][a-z0-9_]*", namespace)):
+            raise ValueError("screen_required_tags 必须使用完整 namespace:name 标签")
     sessions = {
         str(k): _role(dict(secrets_raw.get("sessions", {})), str(k))
         for k in secrets_raw.get("sessions", {})

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 
@@ -52,6 +53,7 @@ class WorkflowDefinition:
     create: Callable[..., Any] | None = None
     actions: dict[str, Callable[..., Any]] = field(default_factory=dict)
     migrations: dict[int, Callable[[dict], dict]] = field(default_factory=dict)
+    lifecycle: LifecyclePolicy | None = None
 
 
 @dataclass(frozen=True)
@@ -61,4 +63,22 @@ class OperationResult:
     progress: dict | None = None
     status: str | None = None
     next_operation: str | None = None
-    delay_seconds: int = 0
+    delay_seconds: float = 0
+
+
+@dataclass(frozen=True)
+class RecoveryContext:
+    reason: str
+    owner: str
+    now: datetime
+    config_dir: Any
+    app_config: Any
+
+
+@dataclass(frozen=True)
+class LifecyclePolicy:
+    """Opt-in hooks; every fenced operation must guard all local writes by claim."""
+
+    cooperative_stop: bool = False
+    fenced_operations: frozenset[str] = frozenset()
+    recover: Callable[[Any, tuple[Any, ...], RecoveryContext], OperationResult | None] | None = None

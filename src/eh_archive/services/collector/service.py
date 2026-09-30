@@ -55,6 +55,90 @@ class CollectedPage:
     items: tuple[CollectedManga, ...]
 
 
+@dataclass(frozen=True)
+class ParsedCollectionPage:
+    """One validated listing page, with no persistence or scheduling effects."""
+
+    url: str
+    items: tuple[Manga, ...]
+    next_url: str | None
+    prev_url: str | None = None
+    first_page: bool = False
+
+
+def parse_collection_page(html: str, url: str) -> ParsedCollectionPage:
+    """Malformed rows or navigation must never advance a persistent cursor."""
+    from bs4 import BeautifulSoup
+
+    def invalid(message: str) -> ArchiveError:
+        return ArchiveError("collection_page_structure_invalid", message, ErrorClass.SYSTEM)
+
+    def navigation_link(node: Any, direction: str) -> str:
+        href = str(node.get("href", "")).strip()
+        if not href:
+            raise invalid(f"EH {direction}-page link is empty")
+        resolved = urljoin(url, href)
+        destination, origin = urlsplit(resolved), urlsplit(url)
+        if (
+            destination.scheme not in {"http", "https"}
+            or destination.netloc.casefold() != origin.netloc.casefold()
+            or destination.scheme != origin.scheme
+            or destination.username is not None
+            or destination.password is not None
+            or destination.fragment
+            or resolved == url
+        ):
+            raise invalid(f"EH {direction}-page link is invalid or leaves the listing origin")
+        return resolved
+
+    soup = BeautifulSoup(html, "lxml")
+    next_link = soup.find("a", id="unext")
+    terminal = soup.find("span", id="unext")
+    if (next_link is None) == (terminal is None):
+        raise invalid("EH listing must have one explicit next-page or terminal marker")
+    next_url = navigation_link(next_link, "next") if next_link is not None else None
+    previous_link = soup.find("a", id="uprev")
+    first_marker = soup.find("span", id="uprev")
+    if previous_link is not None and first_marker is not None:
+        raise invalid("EH listing has contradictory previous-page markers")
+    prev_url = navigation_link(previous_link, "previous") if previous_link is not None else None
+    table = soup.select_one("table.itg.glte")
+    items: list[Manga] = []
+    seen: set[str] = set()
+    if table is not None:
+        for row in table.find_all("tr"):
+            if row.find_parent("table") is not table:
+                continue
+            if row.find("th") is not None and row.find("td") is None:
+                continue
+            try:
+                manga = parse_metadata(row)
+            except ValueError as exc:
+                raise invalid("an EH listing row failed metadata parsing") from exc
+            if manga.manga_id in seen:
+                raise invalid("EH listing contains duplicate gallery identifiers")
+            seen.add(manga.manga_id)
+            items.append(manga)
+    if not items:
+        text = soup.get_text(" ", strip=True).casefold()
+        empty_marker = any(value in text for value in ("no hits found", "no galleries found"))
+        if terminal is None or not empty_marker:
+            raise invalid("empty EH listing lacks a confirmed no-results terminal marker")
+    return ParsedCollectionPage(
+        url=url, items=tuple(items), next_url=next_url,
+        prev_url=prev_url, first_page=first_marker is not None,
+    )
+
+
+def fetch_collection_page(
+    http_client: Any, url: str, *, role: str = "browse",
+    timeout: float = 30.0, **request_options: Any,
+) -> ParsedCollectionPage:
+    """Fetch once; the caller owns retry, pacing, transactions and continuation."""
+    html = http_client.get_text(url, role=role, timeout=timeout, **request_options)
+    return parse_collection_page(html, url)
+
+
 class Collector:
     def __init__(
         self,
@@ -193,7 +277,7 @@ class Collector:
             raise ValueError(f"next page URL has an invalid next parameter: {next_url}") from exc
 
 
-def _record(manga: Manga):
+def manga_record(manga: Manga):
     from ...db.models import MangaRecord
 
     return MangaRecord(
@@ -216,3 +300,7 @@ def _record(manga: Manga):
         defer_until=manga.defer_until,
         source_fetched_at=datetime.now(UTC),
     )
+
+
+# Preserve the existing collector's conversion hook and external compatibility.
+_record = manga_record

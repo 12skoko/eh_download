@@ -1,11 +1,16 @@
 """Execution facilities shared by modules without a business-object dependency."""
 
 import logging
+import math
 import threading
 from contextlib import contextmanager
 from pathlib import Path
 
+from sqlalchemy import text
+
+from ...db.models import SystemControl
 from .outputs import publish_json, register_output
+from .registry import get_workflow_definition
 from .repository import SpecialRepository
 
 
@@ -15,8 +20,16 @@ class ExecutionContext:
         self.config_dir, self.app_config = Path(config_dir), app_config
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, timeout_seconds=None):
         with self.database.session() as session:
+            if timeout_seconds is not None and session.bind.dialect.name == "postgresql":
+                if timeout_seconds <= 0:
+                    raise ValueError("transaction timeout must be positive")
+                session.execute(
+                    text("SELECT set_config('lock_timeout', :timeout, true), "
+                         "set_config('statement_timeout', :timeout, true)"),
+                    {"timeout": f"{math.ceil(timeout_seconds * 1000)}ms"},
+                )
             repository = SpecialRepository(session, timezone=self.app_config.timezone)
             if not repository._values(self.claim):
                 raise RuntimeError("stale special execution")
@@ -26,6 +39,21 @@ class ExecutionContext:
         with self.transaction() as repository:
             if not repository.update_progress(self.claim, progress, phase=phase):
                 raise RuntimeError("stale special progress")
+
+    def stop_requested(self):
+        """Return a stop reason; a revoked claim raises before further I/O."""
+        policy = get_workflow_definition(self.claim.kind).lifecycle
+        if policy is None or not policy.cooperative_stop:
+            return None
+        with self.transaction() as repository:
+            job, _ = repository._values(self.claim)
+            control = (job.progress or {}).get("_execution_control", {})
+            if control.get("stop_reason"):
+                return str(control["stop_reason"])
+            supervisor = repository.session.get(SystemControl, "supervisor")
+            if supervisor and supervisor.state == "draining":
+                return "supervisor_draining"
+        return None
 
     def publish(self, output_id, data, *, name="report.json"):
         entry = publish_json(

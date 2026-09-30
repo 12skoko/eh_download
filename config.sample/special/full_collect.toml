@@ -1,0 +1,26 @@
+config_version = 1
+# Enabling allows manual starts; it does not create a workflow automatically.
+enabled = false
+max_concurrency = 1
+base_url = ""
+start_mode = "date"
+start_days_ago = 7
+start_at = ""
+start_url = ""
+backfill_default_days_ago = 7
+boundary_overlap_pages = 1
+batch_max_pages = 10
+batch_max_seconds = 600
+# Applied to connection/read respectively; not a hard whole-request wall clock.
+request_timeout_seconds = 30
+page_write_timeout_seconds = 30
+page_delay_min_seconds = 5
+page_delay_max_seconds = 20
+# Persisted queued-job deadlines; no waiting worker between batches.
+job_delay_min_seconds = 60
+job_delay_max_seconds = 120
+retry_delay_seconds = 2
+pool_failure_cooldown_seconds = 3600
+max_consecutive_failures = 5
+resume_after_restart = true
+control_poll_seconds = 1

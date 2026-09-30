@@ -31,6 +31,8 @@ class ScreeningService:
             name_keywords=crawl.name_keywords,
             tag_keywords=crawl.tag_keywords,
             exclude_categories=crawl.exclude_categories,
+            required_tags=crawl.screen_required_tags,
+            required_tags_mode=crawl.screen_required_tags_mode,
         )
 
     def run_batch(self, limit: int = 100, *, actor: str = "screen") -> ScreeningBatchResult:

@@ -25,13 +25,45 @@ def _contains_key(text: str, keyword: str) -> bool:
     return bool(re.search(r"\b" + re.escape(keyword) + r"\b", text))
 
 
+def normalized_eh_tags(tags_raw: str) -> frozenset[str]:
+    """Read both namespace:a,b and namespace:a,namespace:b storage formats."""
+    result: set[str] = set()
+    namespace = ""
+    for token in tags_raw.split(","):
+        token = token.strip().casefold()
+        if ":" in token:
+            namespace, token = (part.strip() for part in token.split(":", 1))
+        if namespace and token:
+            result.add(f"{namespace}:{token}")
+    return frozenset(result)
+
+
 @dataclass(frozen=True)
 class ScreeningPolicy:
     name_keywords: tuple[str, ...] = ()
     tag_keywords: tuple[str, ...] = ()
     exclude_categories: tuple[str, ...] = ()
+    required_tags: tuple[str, ...] = ()
+    required_tags_mode: str = "all"
+
+    def __post_init__(self) -> None:
+        if self.required_tags_mode not in {"all", "any"}:
+            raise ValueError("required_tags_mode must be all or any")
+        normalized: list[str] = []
+        for value in self.required_tags:
+            namespace, separator, tag = value.strip().casefold().partition(":")
+            if not separator or not namespace.strip() or not tag.strip() or "," in value:
+                raise ValueError("required tags must be exact namespace:name values")
+            normalized.append(f"{namespace.strip()}:{tag.strip()}")
+        object.__setattr__(self, "required_tags", tuple(normalized))
 
     def evaluate(self, manga: Manga) -> EligibilityDecision:
+        if self.required_tags:
+            tags = normalized_eh_tags(manga.tags_raw)
+            matched = (tag in tags for tag in self.required_tags)
+            accepted = all(matched) if self.required_tags_mode == "all" else any(matched)
+            if not accepted:
+                return EligibilityDecision(ScreenAction.FILTER_OUT, "required_tag_missing")
         if manga.category in self.exclude_categories:
             return EligibilityDecision(ScreenAction.FILTER_OUT, "excluded_category")
 

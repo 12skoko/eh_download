@@ -128,3 +128,24 @@ Before production cutover:
 3. Start Web/Supervisor with `supervisor=paused`, then resume components one at a time.
 4. Keep the old MySQL database and program read-only until a complete cycle has
    been verified.
+
+## Full collection module
+
+The module ships disabled at config/special/full_collect.toml. Populate its HTTPS
+root base_url, an explicit app.toml sessions.full_collect account/network, and
+secrets.toml account cookies plus a proxy_pool referring to fixed http/https proxy
+entries. Empty or nested pools fail validation; no direct fallback is used.
+Configuration editing, synchronization and packaged samples include these fields.
+Credentials are never copied into workflow checkpoints or module files.
+
+The target special-task concurrency is 2, with full_collect limited to 1. Restart
+Web to load the new catalog/templates and Supervisor to load lifecycle capabilities
+and concurrency. No Alembic migration is needed. Enabling never starts collection;
+create a historical round explicitly in the module page, then check its first
+committed boundary. A site/schema/login error stops at waiting_repair.
+
+Date/GID seeking is treated as a hint. Navigation is validated from returned pages,
+including descending IDs, same-site links and explicit terminal markers. Before
+long-running deployment, validate the chosen account's visibility and list layout
+on the actual site. Local synthetic tests do not establish current site connectivity
+or prove that removed/private galleries are available.

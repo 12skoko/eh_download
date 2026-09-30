@@ -5,6 +5,9 @@ collect_end_offset = 3000
 collect_tags = []
 name_keywords = []
 tag_keywords = []
+# Exact namespace:name gate for EH discovered candidates; empty keeps old behavior.
+screen_required_tags = []
+screen_required_tags_mode = "all"
 exclude_categories = []
 video_markers = ["mp4", "video"]
 excluded_resolutions = ["1280x", "800x", "1920x", "2560x"]

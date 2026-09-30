@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}全量采集日志 #{{ workflow_id }}{% endblock %}
+{% block content %}
+<div class="page-head"><div><a class="back" href="/special/workflows/{{ workflow_id }}">← 轮次详情</a><h1>全量采集 #{{ workflow_id }} 日志</h1></div></div>
+<section class="panel"><form method="get"><label>Job ID（0 为整轮）<input name="job_id" type="number" min="0" value="{{ job_id }}"></label><label>级别 <select name="level">{% for value in ["", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] %}<option value="{{ value }}" {% if level == value %}selected{% endif %}>{{ value or "全部" }}</option>{% endfor %}</select></label><button>筛选</button></form>
+{% for item in files %}<p><a href="?{{ item.query }}">{{ item.filename }}</a></p>{% else %}<p>暂无仍存在的日志文件。</p>{% endfor %}
+{% if truncated %}<p>目录条目超过读取上限，可填写 Job ID 或使用日志浏览器定位。</p>{% endif %}
+{% if file_page > 1 %}<a href="?job_id={{ job_id }}&level={{ level }}&page={{ file_page-1 }}">上一页文件</a>{% endif %}{% if has_more %}<a href="?job_id={{ job_id }}&level={{ level }}&page={{ file_page+1 }}">下一页文件</a>{% endif %}
+</section>
+<section class="panel"><h2>{{ selected.filename if selected else "日志内容" }}</h2>
+{% if previous %}<a href="?{{ previous }}">读取更早内容</a>{% endif %}
+{% for row in rows %}<pre>{{ row.get("time", "") }} {{ row.get("level", "") }} {{ row.get("message", "") }}{% if row.get("exception") %}
+{{ row.exception }}{% endif %}</pre>{% else %}<p>当前读取窗口没有匹配记录。</p>{% endfor %}</section>
+{% endblock %}

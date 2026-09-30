@@ -27,6 +27,7 @@ def stage(config, operation: Path, section: str, values, revision: str) -> dict:
         {
             "filename": result.filename,
             "original_revision": revision,
+            "original_exists": result.original_exists,
             "new_revision": _revision(result.candidate.encode()) if result.candidate else revision,
             "changed_fields": list(result.changed_fields),
             "scope": result.restart,
@@ -59,8 +60,9 @@ def _publish(config, operation: Path) -> dict:
     if metadata["filename"] not in CONFIG_FILENAMES.values():
         raise ManagementError("Invalid configuration filename", "invalid_request")
     path = config.config_dir / metadata["filename"]
-    original = path.read_bytes()
-    if _revision(original) != metadata["original_revision"]:
+    original = path.read_bytes() if path.is_file() else b""
+    if (_revision(original) != metadata["original_revision"]
+            or path.is_file() != metadata.get("original_exists", True)):
         raise ConfigurationConflict("Configuration changed after this operation was submitted")
     if not metadata["changed_fields"]:
         return metadata
@@ -86,13 +88,20 @@ def _restore(config, operation: Path) -> None:
     if not metadata["applied"] or metadata["restored"]:
         return
     path = config.config_dir / metadata["filename"]
-    if _revision(path.read_bytes()) not in {
-        metadata["new_revision"],
-        metadata["original_revision"],
-    }:
+    exists = path.is_file()
+    original_exists = metadata.get("original_exists", True)
+    revision = _revision(path.read_bytes()) if exists else None
+    allowed = (
+        exists and revision in {metadata["new_revision"], metadata["original_revision"]}
+        if original_exists else not exists or revision == metadata["new_revision"]
+    )
+    if not allowed:
         raise ManagementError(
             "Configuration changed externally; refusing rollback", "rollback_conflict"
         )
-    atomic_write(path, Path(metadata["backup"]).read_bytes())
+    if metadata.get("original_exists", True):
+        atomic_write(path, Path(metadata["backup"]).read_bytes())
+    else:
+        path.unlink(missing_ok=True)
     metadata["restored"] = True
     write_json(operation / "configuration.json", metadata)

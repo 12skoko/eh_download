@@ -30,7 +30,7 @@ interval_seconds = 60
 enabled = true
 poll_seconds = 5
 default_job_lease_seconds = 900
-max_concurrency = 1
+max_concurrency = 2
 
 [modules]
 collect = true

@@ -118,6 +118,8 @@ def load_modules():
     if _loaded:
         return
     from .modules.download_cleanup import module as cleanup
+    from .modules.full_collect import module as full
+    from .modules.full_collect.routes import install_routes as full_routes
     from .modules.lanraragi_compare.module import DEFINITION, dashboard, detail
     from .modules.lanraragi_metadata import module as metadata
     from .modules.lanraragi_metadata.routes import install_routes as metadata_routes
@@ -147,6 +149,13 @@ def load_modules():
         },
     )
     registrations = (
+        ModuleRegistration(
+            full.DEFINITION, full.executor, full.capability,
+            "逐页建档、断点续跑与手动补齐，新增档案进入 filtered_out。",
+            "special/full_collect.html", full.dashboard, full.detail,
+            "special/full_collect_detail.html", "special/_full_collect_panel.html",
+            full_routes,
+        ),
         ModuleRegistration(
             manual.DEFINITION, manual.executor, manual.capability,
             "手动选择种子，确认后交回普通下载流程。",

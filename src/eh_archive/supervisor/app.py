@@ -31,6 +31,7 @@ from ..logging import (
 )
 from ..management.config_migrations import migrate_configuration
 from ..special import SpecialRepository
+from ..special.core.lifecycle import recover_workflows, request_cooperative_stop
 from ..special.handlers import enabled_module_capabilities
 from ..tasks.registry import MODULES
 from .scheduling import ACTIVE_REQUESTS, INTERVAL_MODULES, aware
@@ -79,6 +80,9 @@ class Supervisor:
         }
         self.last_health_check = 0.0
         self.next_special_start_at = 0.0
+        self._special_recovery_cursor = 0
+        self._special_exited: set[int] = set()
+        self._special_stop_deadlines: dict[str, float] = {}
         self.health_checks_enabled = True
         self.maintenance_active = False
         self.maintenance_idle_logged = False
@@ -110,6 +114,7 @@ class Supervisor:
         if maintenance_blocked:
             return
         if self.draining:
+            self._request_special_stop("supervisor_draining")
             self._reap_children()
             if self.drain_heartbeat and not heartbeat_done:
                 self._heartbeat()
@@ -121,6 +126,7 @@ class Supervisor:
         if self.draining:
             return
         if self.control_state == "draining":
+            self._request_special_stop("supervisor_draining")
             self._log_graceful_drain_wait()
             return
         if self.control_state == "paused":
@@ -364,12 +370,16 @@ class Supervisor:
         finally:
             if self.stopping:
                 deadline = time.monotonic() + self.config.shutdown_grace_seconds
-                for child in self.children.values():
-                    if child.poll() is None:
+                cooperative = self._request_special_stop("supervisor_stopping")
+                for operation, child in self.children.items():
+                    if child.poll() is None and operation not in cooperative:
                         child.terminate()
                 while self.children and time.monotonic() < deadline:
                     self._reap_children()
                     time.sleep(0.1)
+                for child in self.children.values():
+                    if child.poll() is None:
+                        child.terminate()
             self._release_lease()
         if self.draining:
             log.critical(
@@ -526,6 +536,11 @@ class Supervisor:
                 )
                 self.children.pop(operation, None)
                 special_child = operation.startswith("special:")
+                if special_child:
+                    if not hasattr(self, "_special_exited"):
+                        self._special_exited = set()
+                    self._special_exited.add(int(operation.split(":", 1)[1]))
+                    getattr(self, "_special_stop_deadlines", {}).pop(operation, None)
                 if operation in TASK_OPERATIONS:
                     self.next_start_at[operation] = (
                         time.monotonic() + self.config.module_restart_delay_seconds
@@ -674,6 +689,35 @@ class Supervisor:
         log.info("submodule started: operation=%s pid=%s", operation, child.pid)
         return child
 
+    def _request_special_stop(self, reason: str) -> set[str]:
+        job_ids = [
+            int(key.split(":", 1)[1]) for key, child in self.children.items()
+            if key.startswith("special:") and child.poll() is None
+        ]
+        if not job_ids:
+            return set()
+        try:
+            with self.database.session() as session:
+                notified = request_cooperative_stop(
+                    session, owner=self.owner, job_ids=job_ids, reason=reason
+                )
+        except Exception:
+            log.exception("failed to notify special executors of Supervisor stop")
+            return set()
+        if not hasattr(self, "_special_stop_deadlines"):
+            self._special_stop_deadlines = {}
+        keys = {f"special:{job_id}" for job_id in notified}
+        now = time.monotonic()
+        for key in keys:
+            deadline = self._special_stop_deadlines.setdefault(
+                key, now + self.config.shutdown_grace_seconds
+            )
+            child = self.children.get(key)
+            if child is not None and child.poll() is None and now >= deadline:
+                log.warning("cooperative stop grace elapsed: operation=%s", key)
+                child.terminate()
+        return keys
+
     def _maybe_special_jobs(self) -> None:
         enabled_kinds = getattr(self, "special_enabled_kinds", ())
         if not enabled_kinds or self._paused("special_processing"):
@@ -681,6 +725,19 @@ class Supervisor:
         now = time.monotonic()
         if now < self.next_special_start_at:
             return
+        with self.database.session() as session:
+            cursor = recover_workflows(
+                session, owner=self.owner, enabled_kinds=enabled_kinds,
+                config_dir=self.config_dir, app_config=self.app,
+                exited_job_ids=getattr(self, "_special_exited", ()),
+                after_id=getattr(self, "_special_recovery_cursor", 0),
+            )
+        self._special_recovery_cursor = cursor or 0
+        if cursor is not None:
+            self.next_special_start_at = now + self.config.special_processing_poll_seconds
+            return
+        if hasattr(self, "_special_exited"):
+            self._special_exited.clear()
         running = sum(
             1
             for key, child in self.children.items()
@@ -697,6 +754,7 @@ class Supervisor:
                     enabled_kinds=enabled_kinds,
                     max_concurrency=self.special_concurrency_limit,
                     module_limits=getattr(self, "special_module_limits", {}),
+                    require_supervisor_owner=True,
                 )
             if claim is None:
                 break

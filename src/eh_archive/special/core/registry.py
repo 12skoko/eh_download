@@ -21,6 +21,10 @@ def register(definition: WorkflowDefinition) -> None:
             or (operation.timeout_seconds is not None and operation.timeout_seconds <= 0)
         ):
             raise ValueError("invalid execution policy")
+    if definition.lifecycle:
+        for name in definition.lifecycle.fenced_operations:
+            if name not in definition.operations or definition.operations[name].effect != "readonly":
+                raise ValueError("fenced recovery requires an explicitly read-only operation")
     WORKFLOW_REGISTRY[definition.kind] = definition
 
 

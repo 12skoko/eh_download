@@ -7,7 +7,7 @@ from datetime import UTC, timedelta
 from sqlalchemy import cast, func, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 
-from ...db.models import EventLog, SpecialJob, SpecialWorkflow
+from ...db.models import EventLog, SpecialJob, SpecialWorkflow, SystemControl
 from ...db.repository import utcnow
 from .contracts import OperationResult
 from .registry import get_operation, get_workflow_definition
@@ -167,9 +167,17 @@ class SpecialRepository:
         return self.session.scalar(self._queued(enabled_kinds).limit(1)) is not None
 
     def claim_next(
-        self, *, owner, lease_seconds, enabled_kinds, max_concurrency=1, module_limits=None
+        self, *, owner, lease_seconds, enabled_kinds, max_concurrency=1, module_limits=None,
+        require_supervisor_owner=False,
     ):
         self.scheduling_lock()
+        if require_supervisor_owner:
+            control = self.session.get(SystemControl, "supervisor", with_for_update=True)
+            if (
+                control is None or control.lease_owner != owner or not control.lease_until
+                or aware(control.lease_until) <= utcnow() or control.state != "running"
+            ):
+                return None
         running = list(
             self.session.execute(
                 select(SpecialJob.workflow_id, SpecialWorkflow.kind)
@@ -225,6 +233,13 @@ class SpecialRepository:
                 job.lease_token = None
                 continue
             job.status, job.lease_owner = "running", owner
+            if definition.lifecycle is not None:
+                workflow.payload = {
+                    **(workflow.payload or {}),
+                    "_lifecycle": {
+                        **(workflow.payload or {}).get("_lifecycle", {}), "owner": owner,
+                    },
+                }
             job.lease_until = utcnow() + timedelta(seconds=op.lease_seconds or lease_seconds)
             job.started_at, job.error_code, job.error_detail = utcnow(), None, None
             if op.affects_workflow:
@@ -271,6 +286,10 @@ class SpecialRepository:
         workflow = self.session.get(SpecialWorkflow, workflow_id)
         definition = get_workflow_definition(workflow.kind)
         op = get_operation(workflow.kind, job.operation)
+        if definition.lifecycle and job.operation in definition.lifecycle.fenced_operations:
+            control = self.session.get(SystemControl, "supervisor")
+            if control and control.lease_owner and control.lease_owner != lease_owner:
+                return None
         if (
             op.timeout_seconds
             and job.started_at
@@ -333,13 +352,24 @@ class SpecialRepository:
             workflow.payload = {
                 **payload,
                 **(
+                    {"_lifecycle": workflow.payload["_lifecycle"]}
+                    if "_lifecycle" in (workflow.payload or {}) else {}
+                ),
+                **(
                     {"outputs": workflow.payload["outputs"]}
                     if "outputs" in (workflow.payload or {})
                     else {}
                 ),
             }
         if progress is not None:
-            job.progress = workflow.progress = dict(progress)
+            job.progress = {
+                **progress,
+                **(
+                    {"_execution_control": job.progress["_execution_control"]}
+                    if "_execution_control" in (job.progress or {}) else {}
+                ),
+            }
+            workflow.progress = dict(progress)
         if phase is not None and get_operation(workflow.kind, job.operation).affects_workflow:
             workflow.phase = phase
         self._changed(workflow, job, "updated")
@@ -417,7 +447,13 @@ class SpecialRepository:
         if op.affects_workflow:
             workflow.phase = phase or definition.failure_phases.get(error_code, op.failure_phase)
         if payload is not None:
-            workflow.payload = dict(payload)
+            workflow.payload = {
+                **payload,
+                **(
+                    {"_lifecycle": workflow.payload["_lifecycle"]}
+                    if "_lifecycle" in (workflow.payload or {}) else {}
+                ),
+            }
         workflow.progress = {"message": "failed"}
         self._changed(workflow, job, "failed")
         self.release_resources(workflow, job=job)

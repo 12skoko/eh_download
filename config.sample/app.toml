@@ -52,6 +52,11 @@ network = "direct"
 account = "default"
 network = "direct"
 
+[sessions.full_collect]
+# Supply an independent configured account and a fixed-entry proxy pool.
+account = ""
+network = ""
+
 [roots]
 # Every value must be an absolute directory on the machine that runs EH Archive.
 torrent_download = "D:/eharchive-data/torrent_download"

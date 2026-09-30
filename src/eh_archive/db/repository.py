@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, desc, exists, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..domain.models import MangaInfo
@@ -296,6 +297,34 @@ class ArchiveRepository:
                 detail={"created": False},
             )
         return current
+
+    def upsert_manga_metadata(self, record: MangaRecord) -> tuple[MangaRecord, bool]:
+        """Refresh only metadata, retaining the caller's page transaction."""
+        query = (
+            select(MangaRecord)
+            .where(MangaRecord.manga_id == record.manga_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        current = self.session.scalar(query)
+        if current is None:
+            try:
+                with self.session.begin_nested():
+                    self.session.add(record)
+                    self.session.flush()
+                return record, True
+            except IntegrityError:
+                current = self.session.scalar(query)
+                if current is None:
+                    raise
+        for field in (
+            "name", "real_name", "link", "torrent_link", "posted_at",
+            "category", "tags_raw", "pages", "rating", "uploader", "source_fetched_at",
+        ):
+            setattr(current, field, getattr(record, field))
+        current.updated_at = utcnow()
+        self.session.flush()
+        return current, False
 
     def upsert_info(self, info: MangaInfo, *, actor: str = "details") -> MangaInfoRecord:
         record = self.session.get(MangaInfoRecord, info.manga_id)
