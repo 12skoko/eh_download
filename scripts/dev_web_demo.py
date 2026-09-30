@@ -640,7 +640,7 @@ web_port = 8787
     workspace_root.mkdir(parents=True, exist_ok=True)
     module_config = special_dir / "video_archive.toml"
     module_config.write_text(
-        "enabled = true\nauto_start = false\n"
+        "config_version = 2\nenabled = true\n"
         '[download]\ncategory = "eharchive-demo-video"\n'
         f'[work]\nworkspace_root = "{workspace_root.as_posix()}"\nmax_concurrency = 1\n'
         f'[ffmpeg]\nexecutable = "{(module_root / "ffmpeg-placeholder").as_posix()}"\n'

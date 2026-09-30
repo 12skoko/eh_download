@@ -29,9 +29,12 @@ CONFIG_FILENAMES = {
     "video_archive": "special/video_archive.toml",
     "lanraragi_compare": "special/lanraragi_compare.toml",
     "download_cleanup": "special/download_cleanup.toml",
+    "manual_torrent": "special/manual_torrent.toml",
+    "lanraragi_metadata": "special/lanraragi_metadata.toml",
     "full_collect": "special/full_collect.toml",
     "secrets": "secrets.toml",
 }
+_NAMED_TABLE_SECTIONS = {"download_cleanup", "lanraragi_compare", "manual_torrent"}
 _CONFIG_WRITE_LOCK = threading.Lock()
 _DELETE = object()
 
@@ -240,7 +243,6 @@ CRAWL_FIELDS = (
 
 VIDEO_ARCHIVE_FIELDS = (
     FieldSpec(("enabled",), "启用视频档案特殊模块", "bool"),
-    FieldSpec(("auto_start",), "自动进入（固定禁用）", "bool", editable=False),
     FieldSpec(("download", "category"), "专用 qBittorrent 分类"),
     FieldSpec(("work", "workspace_root"), "转换工作根目录"),
     FieldSpec(("work", "max_concurrency"), "模块最大并发", "int", minimum=1),
@@ -394,6 +396,27 @@ _SECTION_META = {
         "Supervisor",
         (FieldSpec(("enabled",), "启用下载残留清理", "bool"),),
     ),
+    "manual_torrent": (
+        "手动种子下载",
+        "Supervisor",
+        (
+            FieldSpec(("enabled",), "启用手动种子下载", "bool"),
+            FieldSpec(("max_concurrency",), "最大并发", "int", minimum=1),
+        ),
+    ),
+    "lanraragi_metadata": (
+        "LANraragi 元数据更新",
+        "Supervisor",
+        (
+            FieldSpec(("enabled",), "启用元数据更新", "bool"),
+            FieldSpec(("max_concurrency",), "最大并发", "int", minimum=1),
+            FieldSpec(
+                ("timeout_seconds",), "请求超时（秒）", "float", minimum=0, maximum=120,
+                help="必须大于 0，且不超过 120 秒。",
+            ),
+            FieldSpec(("batch_limit",), "单次档案上限", "int", minimum=1, maximum=5000),
+        ),
+    ),
 }
 
 POLICY_LABELS = {
@@ -444,7 +467,11 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
     if section == "secrets":
         return ("网页登录", False) if key.startswith("web_") else ("连接凭据", False)
     if section == "video_archive":
-        return ("处理设置", False) if key in {"enabled", "work", "output"} else ("转换与限制", True)
+        if key in {"enabled", "work", "output"}:
+            return "处理设置", key != "enabled"
+        return "转换与限制", path != ("ffmpeg", "max_workers")
+    if section == "lanraragi_compare":
+        return "模块设置", key in {"max_concurrency", "timeout_seconds"}
     if section == "full_collect":
         return ("范围与启停", False) if key in {
             "enabled", "max_concurrency", "base_url", "start_mode", "start_days_ago",
@@ -479,6 +506,8 @@ def field_policy(section: str, field: str) -> str:
         return "next_worker" if field == "timeout_seconds" else "supervisor"
     if section == "full_collect":
         return "supervisor" if field in {"enabled", "max_concurrency"} else "next_worker"
+    if section in {"manual_torrent", "lanraragi_metadata"}:
+        return "supervisor" if field in {"enabled", "max_concurrency"} else "next_worker"
     if section == "secrets":
         if field.startswith("web_"):
             return "web"
@@ -510,17 +539,17 @@ def _section_document(config_dir: Path, name: str):
         raise ConfigurationError(
             f"{CONFIG_FILENAMES[name]} 的 TOML 格式或编码错误，请修正原文件。"
         ) from None
-    # Two special modules support both legacy flat and named-table layouts.
+    # These special modules support both flat and named-table layouts.
     table = (
         document.get(name, document)
-        if name in {"download_cleanup", "lanraragi_compare"}
+        if name in _NAMED_TABLE_SECTIONS
         else document
     )
     if not isinstance(table, Mapping):
         raise ConfigurationError(f"{CONFIG_FILENAMES[name]} 必须使用配置表。")
     defaults = sample_values(CONFIG_FILENAMES[name])
     defaults = defaults.get(name, defaults)
-    if name in {"download_cleanup", "lanraragi_compare"}:
+    if name in _NAMED_TABLE_SECTIONS:
         from ..config.defaults import merge_values
 
         effective = merge_values(defaults, table.unwrap())
@@ -535,7 +564,10 @@ def load_config_sections(config_dir: str | Path) -> tuple[ConfigSection, ...]:
     for name, (title, restart, specs) in _SECTION_META.items():
         path = config_dir / CONFIG_FILENAMES[name]
         if (
-            name in {"video_archive", "lanraragi_compare", "download_cleanup"}
+            name in {
+                "video_archive", "lanraragi_compare", "download_cleanup",
+                "manual_torrent", "lanraragi_metadata",
+            }
             and not path.is_file()
         ):
             continue
@@ -549,7 +581,7 @@ def load_config_sections(config_dir: str | Path) -> tuple[ConfigSection, ...]:
         fields = []
         section_error = ""
         structural_errors = {}
-        if name in {"app", "supervisor", "crawl", "secrets", "full_collect"}:
+        if name in {"app", "supervisor", "crawl", "secrets", "full_collect", "lanraragi_metadata"}:
             try:
                 validate_structure(CONFIG_FILENAMES[name], effective)
             except ConfigValueError as exc:
@@ -645,7 +677,7 @@ def update_config_section(
         errors: dict[str, str] = {}
         table = (
             document.get(section_name, document)
-            if section_name in {"download_cleanup", "lanraragi_compare"}
+            if section_name in _NAMED_TABLE_SECTIONS
             else document
         )
         _, _, _, _, effective = _section_document(config_dir, section_name)
@@ -866,6 +898,14 @@ def _validate_candidate(config_dir: Path, filename: str, content: str) -> None:
                 from ..special.modules.download_cleanup.config import capability
 
                 capability(check_dir)
+            if (check_dir / CONFIG_FILENAMES["manual_torrent"]).is_file():
+                from ..special.modules.manual_torrent.module import capability as manual_capability
+
+                manual_capability(check_dir)
+            if (check_dir / CONFIG_FILENAMES["lanraragi_metadata"]).is_file():
+                from ..special.modules.lanraragi_metadata.config import load_metadata_config
+
+                load_metadata_config(check_dir)
             if (check_dir / CONFIG_FILENAMES["full_collect"]).is_file():
                 from ..special.modules.full_collect.config import load_full_collect_config
 

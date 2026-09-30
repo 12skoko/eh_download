@@ -42,6 +42,11 @@ def effective_values(filename: str, overrides: dict) -> dict:
     for key in {"crawl.toml": ("urls",), "app.toml": ()}.get(filename, ()):
         if key in overrides:
             defaults.pop(key, None)
+    if filename == "special/video_archive.toml":
+        # Read old files before startup migration removes this retired setting.
+        version = overrides.get("config_version", 0)
+        if type(version) is int and version < 2:
+            overrides = {key: value for key, value in overrides.items() if key != "auto_start"}
     if filename == "supervisor.toml":
         # CLI tasks do not migrate files. Ignore the retired table when reading
         # an old file (including update-time db commands); startup migration

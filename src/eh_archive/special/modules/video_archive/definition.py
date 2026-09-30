@@ -20,7 +20,6 @@ class VideoWorkflowDefinition(WorkflowDefinition):
     cancel_status: str = "manual_review"
     entry_error_codes: frozenset[str] = frozenset()
     entry_remark_tokens: frozenset[str] = frozenset()
-    auto_start: bool = False
 
 
 VIDEO_ARCHIVE_PHASES = frozenset(

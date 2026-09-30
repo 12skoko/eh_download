@@ -59,13 +59,18 @@ def supervisor_v2_to_v3(document):
     document.pop("max_concurrency", None)
 
 
+def video_archive_v1_to_v2(document):
+    """Remove the unused automatic-entry setting; entry remains manual."""
+    document.pop("auto_start", None)
+
+
 # Keys are source versions; each function advances exactly one version.
 MIGRATIONS = {
     "app.toml": {0: establish_version, 1: app_v1_to_v2},
     "supervisor.toml": {0: establish_version, 1: supervisor_v1_to_v2, 2: supervisor_v2_to_v3},
     "crawl.toml": {0: establish_version},
     "secrets.toml": {0: establish_version},
-    "special/video_archive.toml": {0: establish_version},
+    "special/video_archive.toml": {0: establish_version, 1: video_archive_v1_to_v2},
     "special/lanraragi_compare.toml": {0: establish_version},
     "special/download_cleanup.toml": {0: establish_version},
     "special/manual_torrent.toml": {0: establish_version},

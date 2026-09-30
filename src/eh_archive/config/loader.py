@@ -273,7 +273,7 @@ class VideoFfmpegConfig:
 
 @dataclass(frozen=True)
 class VideoOutputConfig:
-    include_original_mp4: bool = False
+    include_original_mp4: bool = True
     layout: str = "legacy_folders"
 
 
@@ -287,7 +287,6 @@ class VideoSafetyConfig:
 @dataclass(frozen=True)
 class VideoArchiveConfig:
     enabled: bool
-    auto_start: bool
     download: VideoDownloadConfig
     work: VideoWorkConfig
     ffmpeg: VideoFfmpegConfig
@@ -461,7 +460,7 @@ def load_video_archive_config(directory: str | Path = "config") -> VideoArchiveC
     raw = effective_values("special/video_archive.toml", _read_toml(path))
     unknown = sorted(
         set(raw)
-        - {"config_version", "enabled", "auto_start", "download", "work", "ffmpeg", "output", "safety"}
+        - {"config_version", "enabled", "download", "work", "ffmpeg", "output", "safety"}
     )
     if unknown:
         raise ValueError("unsupported video_archive config sections: " + ", ".join(unknown))
@@ -514,12 +513,8 @@ def load_video_archive_config(directory: str | Path = "config") -> VideoArchiveC
     if layout != "legacy_folders":
         raise ValueError("output.layout currently only supports legacy_folders")
     enabled = _bool_value(raw.get("enabled"), "video_archive.enabled", default=True)
-    auto_start = _bool_value(raw.get("auto_start"), "video_archive.auto_start", default=False)
-    if auto_start:
-        raise ValueError("video_archive.auto_start must remain false")
     config = VideoArchiveConfig(
         enabled=enabled,
-        auto_start=False,
         download=VideoDownloadConfig(category),
         work=VideoWorkConfig(
             workspace_root,
@@ -538,7 +533,7 @@ def load_video_archive_config(directory: str | Path = "config") -> VideoArchiveC
             _bool_value(
                 output_raw.get("include_original_mp4"),
                 "video_archive.output.include_original_mp4",
-                default=False,
+                default=True,
             ),
             layout,
         ),

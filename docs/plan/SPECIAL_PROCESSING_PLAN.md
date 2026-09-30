@@ -182,7 +182,6 @@ Web 在一个数据库事务中完成：
 未来某个模块如果确实需要自动进入，必须同时满足：
 
 - 模块在 registry 中显式声明支持自动入口；
-- 模块配置明确启用 `auto_start`，默认值必须为 `false`；
 - 当前 Manga 状态位于模块允许的自动入口白名单；
 - 模块不需要用户选择；
 - 模块不执行删除、高风险覆盖或不可恢复修改；
@@ -1053,8 +1052,8 @@ special_processing = true
 `config/special/video_archive.toml` 保存视频模块自己的非敏感执行参数：
 
 ```toml
+config_version = 2
 enabled = true
-auto_start = false
 
 [download]
 category = "eharchive-video-special"
@@ -1071,7 +1070,7 @@ compression_level = 6
 file_timeout_seconds = 3600
 
 [output]
-include_original_mp4 = false
+include_original_mp4 = true
 layout = "legacy_folders"
 ```
 
@@ -1120,8 +1119,7 @@ worker 每次启动时重新加载：
 - `enabled=false` 时不能创建新的该 kind workflow，也不能领取新的该 kind job；
 - 已存在 workflow 不删除、不改状态，Web 仍可只读查看并提供受控退出；
 - 模块重新启用后可以继续排队恢复；
-- `auto_start` 属于每个 kind 的显式能力开关，默认必须为 `false`；
-- 视频模块无论配置如何都不启用自动入口，`auto_start=false` 作为固定约束；
+- 视频模块仅支持人工入口，不提供自动进入的配置开关；
 - Web 配置页面只开放 allowlist 中的非敏感字段；
 - ffmpeg 路径、并发和质量可以开放；
 - category、工作根目录和输出布局修改应显示明显警告；

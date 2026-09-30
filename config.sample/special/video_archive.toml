@@ -1,7 +1,5 @@
-config_version = 1
+config_version = 2
 enabled = true
-# This module always requires an explicit user action. true is rejected.
-auto_start = false
 
 [download]
 category = "eharchive-video-special"
@@ -20,7 +18,7 @@ file_timeout_seconds = 3600
 max_output_bytes = 8589934592
 
 [output]
-include_original_mp4 = false
+include_original_mp4 = true
 layout = "legacy_folders"
 [safety]
 max_members = 100000
