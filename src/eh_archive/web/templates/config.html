@@ -25,7 +25,11 @@
           {% set visible_fields = section.fields | selectattr('advanced', 'equalto', advanced) | list %}
           {% if visible_fields %}
           {% if advanced %}<details class="config-advanced" {% if visible_fields | selectattr('error') | list %}open{% endif %}><summary>高级设置 <small>连接、限制与低频选项 · {{ visible_fields | length }} 项</small></summary>{% else %}<div class="config-ordinary"><h3>普通设置</h3>{% endif %}
-          {% for group, fields in visible_fields | groupby('group') %}
+          {% set grouped_fields = visible_fields | groupby('group') %}
+          {% if section.name == 'full_collect' %}
+            {% set grouped_fields = (grouped_fields | selectattr('grouper', 'equalto', '范围与启停') | list) + (grouped_fields | rejectattr('grouper', 'equalto', '范围与启停') | list) %}
+          {% endif %}
+          {% for group, fields in grouped_fields %}
           <fieldset class="config-group"><legend>{{ group }}</legend><div class="config-field-grid">
             {% for field in fields %}{% include '_config_field.html' %}{% endfor %}
           </div></fieldset>

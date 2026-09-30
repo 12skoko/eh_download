@@ -228,8 +228,9 @@ class SecretsConfig:
             if not isinstance(entry, dict) or "proxy_pool" in entry:
                 raise ValueError("proxy_pool 入口不存在或引用了另一个池")
             proxies = entry.get("proxies")
-            if not isinstance(proxies, dict) or set(proxies) != {"http", "https"}:
-                raise ValueError("proxy_pool 每个入口必须配置 http 和 https 代理")
+            if (not isinstance(proxies, dict) or "https" not in proxies
+                    or set(proxies) - {"http", "https"}):
+                raise ValueError("proxy_pool 每个入口必须配置 https 代理，http 可选，不支持其他协议字段")
             for value in proxies.values():
                 try:
                     parsed = urlsplit(value) if isinstance(value, str) else None

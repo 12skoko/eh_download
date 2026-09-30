@@ -9,6 +9,7 @@ import tempfile
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any
@@ -472,6 +473,10 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
         return "转换与限制", path != ("ffmpeg", "max_workers")
     if section == "lanraragi_compare":
         return "模块设置", key in {"max_concurrency", "timeout_seconds"}
+    if section == "lanraragi_metadata":
+        return "模块设置", key in {"max_concurrency", "batch_limit", "timeout_seconds"}
+    if section == "manual_torrent":
+        return "模块设置", key == "max_concurrency"
     if section == "full_collect":
         return ("范围与启停", False) if key in {
             "enabled", "max_concurrency", "base_url", "start_mode", "start_days_ago",
@@ -727,7 +732,7 @@ def update_config_section(
                 or _revision(path.read_bytes() if path.exists() else b"") != revision):
             raise ConfigurationConflict("配置文件已经被其他操作修改，请刷新页面后重试")
         if publish:
-            _atomic_replace(path, candidate)
+            _atomic_replace(path, candidate, config_dir=config_dir)
     return ConfigUpdateResult(
         filename, tuple(changed), merged_policy(section_name, changed), candidate, original_exists
     )
@@ -917,7 +922,7 @@ def _validate_candidate(config_dir: Path, filename: str, content: str) -> None:
         raise ConfigurationError(f"配置校验失败：{exc}") from None
 
 
-def _atomic_replace(path: Path, content: str) -> None:
+def _atomic_replace(path: Path, content: str, *, config_dir: Path) -> None:
     temporary_name: str | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -930,7 +935,14 @@ def _atomic_replace(path: Path, content: str) -> None:
             os.fsync(handle.fileno())
         if path.exists():
             os.chmod(temporary_name, path.stat().st_mode)
-            shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+            backup = (
+                config_dir / "backups"
+                / ("web-config-" + datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f"))
+            )
+            backup.mkdir(parents=True, mode=0o700, exist_ok=False)
+            destination = backup / path.relative_to(config_dir)
+            destination.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            shutil.copy2(path, destination)
         os.replace(temporary_name, path)
         temporary_name = None
     except OSError as exc:

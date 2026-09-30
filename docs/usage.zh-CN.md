@@ -662,7 +662,7 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
 
 直接下载任务每两秒把已下载字节数、总字节数、速度和更新时间写入当前 `job_attempt`。总览的“当前任务”和档案详情会通过 HTMX 只刷新进度组件，不会刷新或滚动整个页面；下载服务器未返回总大小时只显示已下载量和速度，不显示百分比与预计剩余时间。
 
-配置页面不会读取或展示 `secrets.toml`、数据库连接字符串，也不允许修改 Web 监听地址和服务器路径。可编辑字段以类型化表单保存；保存前会重新校验完整配置、检查页面版本以防并发覆盖，并在原文件旁保留一份 `.bak` 备份。配置保存不会从网页自动重启进程，页面会标明需要重启 Web、Supervisor 或两者；审计事件只记录文件名和修改字段，不记录配置值。
+配置页面不会读取或展示 `secrets.toml`、数据库连接字符串，也不允许修改 Web 监听地址和服务器路径。可编辑字段以类型化表单保存；保存前会重新校验完整配置、检查页面版本以防并发覆盖，并将原文件备份到 `config/backups/web-config-<UTC时间戳>/`，保留相对路径和多次历史。备份失败时不会覆盖原配置；新建文件没有旧内容，不生成备份。配置保存不会从网页自动重启进程，页面会标明需要重启 Web、Supervisor 或两者；审计事件只记录文件名和修改字段，不记录配置值。
 
 维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为普通人工目标状态。`download_pending` 必须指定 `download_method`；`download_blocked` 会清空 `download_method` 和外部下载 ID，并且必须填写原因；`downloaded` 还必须填写文件名，Web 会根据下载方式自动登记 `artifact_location`，但不会在此处检查文件是否存在，后续由 `validate` 模块统一校验；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定数据库中存在且不是当前档案自身的替代档案，不限制替代档案当时的状态；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。`force_delete_pending` 只允许从 `uploaded`、`completed`、`outdated` 或 `manual_review` 进入，必须填写原因并再次输入当前档案 ID；界面默认把原因写为 `outdated`，不要求已有 LANraragi archive ID。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
 
@@ -787,7 +787,7 @@ Web 的“系统”页面提供服务控制、更新检查、更新执行和操�
 首次采用默认值合并时，app 配置迁移会保留旧版隐含的时区、日志目录等值，避免升级改变现有行为。
 
 保存前统一校验类型、字段名称、取值及关联约束。错误显示在字段和页面顶部，且不写入文件。
-保存会检查文件修订值，防止覆盖外部编辑；原文件保留一份 `.bak`，不提供备份管理界面。
+保存会检查文件修订值，防止覆盖外部编辑；原文件备份到配置目录下的 `backups/web-config-<UTC时间戳>/`，不提供备份管理界面。
 已有的特殊模块配置文件也各自展示；缺少的特殊配置不会因为打开页面而创建。
 修改日志目录后，锁仍固定使用 `/run/eharchive/deployment.lock`。
 
