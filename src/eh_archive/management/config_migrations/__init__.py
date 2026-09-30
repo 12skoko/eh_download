@@ -15,6 +15,7 @@ import tomlkit
 from tomlkit.exceptions import ParseError
 
 from ...config import load_config, load_video_archive_config
+from ...config.defaults import sample_directory
 from ...config.validation import ConfigValueError
 from ..state import atomic_write
 from .steps import CURRENT_VERSIONS, MIGRATIONS
@@ -66,12 +67,21 @@ def _prepare(directory: Path) -> tuple[dict[str, bytes], dict[str, bytes]]:
     originals, candidates = {}, {}
     for filename, expected in CURRENT_VERSIONS.items():
         path = directory / filename
-        # Optional/missing files retain the existing loader's semantics.
-        if not path.is_file():
-            continue
-        original = path.read_bytes()
+        if path.is_file():
+            original = content = path.read_bytes()
+            originals[filename] = original
+        else:
+            if path.exists() or path.is_symlink():
+                raise ConfigMigrationError(f"{filename}: 配置目标不是普通文件，文件未修改。")
+            original = None
+            try:
+                content = (sample_directory() / filename).read_bytes()
+            except OSError:
+                raise ConfigMigrationError(
+                    f"{filename}: 配置模板缺失或无法读取，文件未修改。"
+                ) from None
         try:
-            document = tomlkit.parse(original.decode("utf-8"))
+            document = tomlkit.parse(content.decode("utf-8"))
         except ParseError as exc:
             raise ConfigMigrationError(
                 f"{filename}: TOML 语法错误（第 {exc.line} 行，第 {exc.col} 列），文件未修改。"
@@ -87,9 +97,12 @@ def _prepare(directory: Path) -> tuple[dict[str, bytes], dict[str, bytes]]:
             raise ConfigMigrationError(
                 f"{filename}: 配置版本 {version} 高于程序支持的 {expected}，请升级程序。"
             )
-        originals[filename] = original
+        if original is None and version != expected:
+            raise ConfigMigrationError(
+                f"{filename}: 配置模板版本必须为 {expected}，文件未修改。"
+            )
         if version == expected:
-            candidates[filename] = original
+            candidates[filename] = content
             continue
         while version < expected:
             step = MIGRATIONS[filename].get(version)
@@ -142,6 +155,10 @@ def _validate(directory: Path) -> None:
             from ...special.modules.manual_torrent.module import capability as manual_capability
 
             manual_capability(directory)
+        if (directory / "special/lanraragi_metadata.toml").is_file():
+            from ...special.modules.lanraragi_metadata.config import load_metadata_config
+
+            load_metadata_config(directory)
         if (directory / "special/full_collect.toml").is_file():
             from ...special.modules.full_collect.config import load_full_collect_config
 
@@ -157,7 +174,7 @@ def _validate(directory: Path) -> None:
 
 @contextmanager
 def prepared_configuration(directory: Path):
-    """Read-only preview for update validation; never changes live files."""
+    """Preview migrations and missing-file creation without changing live files."""
     originals, candidates = _prepare(directory)
     with tempfile.TemporaryDirectory(prefix="eharchive-config-check-") as temporary:
         check_dir = Path(temporary)
@@ -169,37 +186,82 @@ def prepared_configuration(directory: Path):
         yield check_dir, originals, candidates
 
 
+def _create_configuration(path: Path, content: bytes) -> None:
+    """Publish a complete new file atomically, without replacing a concurrent creation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            if os.name == "nt":
+                # Windows rename rejects an existing destination; POSIX rename does not.
+                os.rename(temporary, path)
+            else:
+                os.link(temporary, path)
+        except FileExistsError:
+            raise ConfigMigrationError(
+                f"{path.name}: 配置在迁移期间被创建，请重新启动。"
+            ) from None
+        if os.name == "posix":
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
 def migrate_configuration(directory: str | Path = "config") -> list[str]:
-    """Prepare and validate everything before backing up and replacing any file."""
+    """Validate all migrations and creations before backing up and publishing files."""
     directory = Path(directory).resolve()
     if not directory.is_dir():
         raise ConfigMigrationError(f"配置目录不存在：{directory}")
     with configuration_lock(directory), prepared_configuration(directory) as prepared:
         _, originals, candidates = prepared
-        changed = [name for name in originals if originals[name] != candidates[name]]
+        changed = [name for name in candidates if originals.get(name) != candidates[name]]
         if not changed:
             return []
         # Detect edits made by an editor while migration was being prepared.
-        for name, content in originals.items():
-            if (directory / name).read_bytes() != content:
+        for name in candidates:
+            path = directory / name
+            if name in originals:
+                modified = not path.is_file() or path.read_bytes() != originals[name]
+            else:
+                modified = path.exists() or path.is_symlink()
+            if modified:
                 raise ConfigMigrationError(f"{name}: 配置在迁移期间被修改，请重新启动。")
-        backup = (
-            directory
-            / "backups"
-            / ("config-migration-" + datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f"))
-        )
-        backup.mkdir(parents=True, mode=0o700, exist_ok=False)
-        for name in changed:
-            destination = backup / name
-            destination.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-            shutil.copy2(directory / name, destination)
+        replaced = [name for name in changed if name in originals]
+        backup = None
+        if replaced:
+            backup = (
+                directory
+                / "backups"
+                / ("config-migration-" + datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f"))
+            )
+            backup.mkdir(parents=True, mode=0o700, exist_ok=False)
+            for name in replaced:
+                destination = backup / name
+                destination.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+                shutil.copy2(directory / name, destination)
         # Each file is replaced atomically. On an I/O failure, retain backups;
         # the per-file versions make an interrupted run safe to resume.
         try:
             for name in changed:
-                atomic_write(directory / name, candidates[name])
+                if name in originals:
+                    atomic_write(directory / name, candidates[name])
+                else:
+                    _create_configuration(directory / name, candidates[name])
         except OSError:
+            recovery = (
+                f"原文件备份位于 {backup}。"
+                if backup is not None
+                else "本次仅新建文件，没有原文件需要备份。"
+            )
             raise ConfigMigrationError(
-                f"配置写入失败，可能有部分文件已迁移；原文件备份位于 {backup}。"
+                "配置写入失败，可能有部分文件已迁移或创建；" + recovery
             ) from None
         return changed

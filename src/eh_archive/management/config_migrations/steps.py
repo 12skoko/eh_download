@@ -69,6 +69,7 @@ MIGRATIONS = {
     "special/lanraragi_compare.toml": {0: establish_version},
     "special/download_cleanup.toml": {0: establish_version},
     "special/manual_torrent.toml": {0: establish_version},
+    "special/lanraragi_metadata.toml": {0: establish_version},
     "special/full_collect.toml": {0: establish_version},
 }
 

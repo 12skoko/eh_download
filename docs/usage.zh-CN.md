@@ -131,12 +131,17 @@ python3.11 -m venv .venv
 普通 CLI 任务和 Worker 不执行迁移，升级后应先启动 Web 或 Supervisor。
 
 目前 `supervisor.toml` 的结构版本为 3，`app.toml` 为 2，`crawl.toml`、
-`secrets.toml` 及已有的三个 `special/*.toml` 配置为 1。`migration.toml` 是旧数据库导入工具
-配置，不在本次运行配置迁移范围内。缺失的特殊模块配置不会自动创建。
+`secrets.toml` 及已登记的六个 `special/*.toml` 配置为 1（包括 `lanraragi_metadata.toml`）。
+`migration.toml` 是旧数据库导入工具配置，不在运行配置迁移范围内。
+已登记的运行配置文件缺失时，启动迁移从对应的 `config.sample/` 模板准备新文件，
+校验通过后自动创建并保留模板的当前版本号；配置目录本身仍须预先存在。
+新文件采用模板设置，示例路径与凭据需要按实际环境填写，模板校验失败时不会发布配置。
 
 迁移先在临时目录转换并使用配置加载器校验，通过后将受影响的原文件备份到
-`config/backups/config-migration-<时间>/`，再逐个原子替换真实文件并记录新版本。
-语法、版本或配置校验失败时，不改写任何真实配置；磁盘写入中断可能留下部分已完成文件，
+`config/backups/config-migration-<时间>/`，再逐个原子替换或创建真实文件并记录新版本；
+新建文件没有原文件需要备份，仅创建缺失文件时不生成空备份目录。
+准备期间被外部创建的文件不会被覆盖。
+语法、版本或配置校验失败时，不改写或创建任何真实配置；磁盘写入中断可能留下部分已完成文件，
 修复后再次启动会按每个文件的版本继续处理。两个服务同时启动使用同一个文件锁，不会重复迁移。
 
 首个结构转换将 `collect_initial_delay_seconds`、`collect_interval_seconds` 和
@@ -144,7 +149,8 @@ python3.11 -m venv .venv
 `schedules.collect.interval_seconds` 和 `schedules.torrent_check.interval_seconds`。
 显式填写的新字段优先，值冲突时输出提示但不输出配置值。其他用户字段和值保留，不按示例删除。
 
-Web 更新流程只在临时目录预先校验迁移结果，不再按模板重写用户配置；真正迁移由服务启动执行。
+Web 更新流程只在临时目录预先校验迁移及新建结果；实际迁移和创建由服务启动执行。
+已有且版本相同的文件不会按模板补齐字段或重写。
 迁移步骤和各文件支持版本集中在 `eh_archive.management.config_migrations.steps`。
 以后字段改名或移动时，在对应文件的迁移序列末尾追加一步，并更新示例中的版本号；已发布的
 历史步骤应保持固定，不依赖今后可能变化的模块注册信息。不要手工提高用户文件版本号来跳过迁移。
