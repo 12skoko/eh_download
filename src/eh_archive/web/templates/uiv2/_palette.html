@@ -1,0 +1,28 @@
+{% from "uiv2/_macros.html" import icon with context %}
+<dialog class="modal palette" id="palette" aria-label="全局搜索">
+  <div class="palette-input">
+    {{ icon('search') }}
+    <input type="search" name="q" placeholder="输入档案 ID、标题、文件名，或页面名称" autocomplete="off" spellcheck="false"
+           hx-get="/uiv2/search" hx-trigger="input changed delay:250ms, search" hx-target="#palette-results" hx-swap="innerHTML" hx-sync="this:replace" data-palette-input>
+    <span class="kbd">Esc</span>
+  </div>
+  <div class="palette-body" data-palette-list>
+    <div id="palette-results"></div>
+    <div class="palette-group">页面</div>
+    {% for href, label, name, words in [
+      ('/uiv2/', '概览', 'layout-dashboard', 'overview dashboard 总览 首页 流水线'),
+      ('/uiv2/inbox', '待处理 · 人工复核', 'inbox', 'review manual 复核'),
+      ('/uiv2/inbox?status=quarantined', '待处理 · 已隔离', 'shield-alert', 'quarantine 隔离'),
+      ('/uiv2/archives', '档案', 'library', 'manga queue 队列 archives'),
+      ('/uiv2/archives?has_error=yes', '档案 · 有错误', 'circle-alert', 'error 错误'),
+      ('/uiv2/workflows', '工作流', 'workflow', 'special 特殊模块'),
+      ('/uiv2/events', '事件', 'activity', 'events 错误 审计'),
+      ('/uiv2/logs', '日志', 'scroll-text', 'logs'),
+      ('/uiv2/settings', '配置', 'sliders-horizontal', 'config settings toml'),
+      ('/uiv2/system', '系统', 'server', 'system 服务 更新 git'),
+    ] %}
+    <a class="palette-item" href="{{ href }}" data-palette-page data-words="{{ label }} {{ words }}" hx-boost="{{ 'false' if href.startswith('/uiv2/logs') or href.startswith('/uiv2/settings') or href.startswith('/uiv2/system') else 'true' }}">{{ icon(name) }}<span>{{ label }}</span></a>
+    {% endfor %}
+  </div>
+  <div class="palette-foot"><span class="kbd">↑</span><span class="kbd">↓</span> 选择 · <span class="kbd">Enter</span> 打开</div>
+</dialog>

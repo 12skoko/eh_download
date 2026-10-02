@@ -1,0 +1,25 @@
+{% from "uiv2/_macros.html" import csrf, form_error, icon, empty, run_pill, when, manga_link with context %}
+{% macro action(label, url, cls='', confirmation=none) %}
+<form method="post" action="{{ url }}" hx-post="{{ url }}" hx-swap="none" hx-disabled-elt="find button" class="form-stack">
+  {{ csrf() }}<input type="hidden" name="row_version" value="{{ workflow.row_version }}">
+  {% if confirmation %}<label class="confirm-box"><input type="checkbox" name="confirmed" value="yes" required>{{ confirmation }}</label>{% endif %}
+  <button class="btn {{ cls }}" type="submit">{{ label }}</button>{{ form_error() }}
+</form>
+{% endmacro %}
+{% macro summary(values, labels={}) %}
+{% if values %}<div class="metrics">{% for key, count in values.items() %}<div><span>{{ labels.get(key, key) }}</span><strong>{{ count }}</strong></div>{% endfor %}</div>{% endif %}
+{% endmacro %}
+{% macro outputs() %}
+<div class="form-stack">{% for output in payload.get('outputs', []) %}<div class="btn-group"><a class="btn btn-primary" href="/uiv2/workflow/{{ workflow.id }}/outputs/{{ output.id }}">{{ icon('file-search') }}{{ '查看预览报告' if output.id == 'preview' else '查看结果报告' }}</a><a class="btn" href="/uiv2/workflow/{{ workflow.id }}/outputs/{{ output.id }}/download" hx-boost="false" download>{{ icon('download') }}下载 JSON · {{ output.size_bytes|filesize }}</a></div>{% else %}<p class="muted small">任务完成后可在此浏览和下载报告。</p>{% endfor %}</div>
+{% endmacro %}
+{% macro history(rows, full=false) %}
+<div class="table-wrap"><table class="table workflow-history"><thead><tr><th>工作流</th><th>状态 / 阶段</th><th>档案 / 摘要</th><th>更新时间</th></tr></thead><tbody>
+{% for item in rows %}{% set p = item.payload or {} %}<tr><td><a class="mono" href="/uiv2/workflows/{{ item.kind }}/{{ item.id }}">#{{ item.id }}</a>{% if full %}<div class="xs muted">{{ v2_kind_labels.get(item.kind, item.kind) }}</div>{% endif %}</td><td>{{ run_pill(item.status) }}<div class="small muted mt8">{{ item.phase|v2_phase(item.kind) }}</div></td><td class="break">
+{% if item.kind in ['video_archive','manual_torrent'] %}{% for binding in item.manga_bindings %}<div>{{ manga_link(binding.manga_id, cls='mono') }}{% if manga_statuses is defined %} · {{ manga_statuses.get(binding.manga_id, '—')|status_label }}{% endif %}</div>{% endfor %}{% else %}<span class="muted">系统工作流</span>{% endif %}
+{% if item.kind == 'full_collect' %}{% set c=p.get('counts', {}) %}<div class="xs muted">{{ '历史采集' if p.get('round_type') == 'history' else '手动补齐' }} · {{ c.get('pages', 0) }} 页 · 新增 {{ c.get('created', 0) }} / 更新 {{ c.get('updated', 0) }} · {{ p.get('last_page', {}).get('oldest_at', '尚未落库') }}</div>{% endif %}
+{% if item.kind == 'lanraragi_metadata' %}<div class="xs muted">{{ p.get('count', 0) }} 个档案</div>{% endif %}
+{% if item.kind == 'video_archive' %}<div class="xs muted">源文件清理：{% set cleanup=p.get('source_cleanup') or {} %}{{ cleanup.get('status', '—') if cleanup is mapping else cleanup }}</div>{% endif %}
+{% if p.get('summary') %}{% set s=p.summary %}<div class="xs muted">{% if item.kind == 'lanraragi_compare' %}数据库独有 {{ s.get('database_only','—') }} · LANraragi 独有 {{ s.get('lanraragi_only','—') }}{% elif item.kind == 'download_cleanup' %}待清理 {{ s.get('would_delete',0) }} · 已删除 {{ s.get('deleted',0) }} · 失败 {{ s.get('delete_failed',0) + s.get('torrent_delete_failed',0) }}{% elif item.kind == 'lanraragi_metadata' %}需要更新 {{ s.get('update',0) }} · 一致 {{ s.get('verify',0) }}{% endif %}</div>{% endif %}
+</td><td class="nowrap">{{ when(item.updated_at) }}<div class="xs faint">创建 {{ item.created_at|datetime }}</div></td></tr>{% else %}<tr><td colspan="4">{{ empty('暂无工作流', 'workflow') }}</td></tr>{% endfor %}
+</tbody></table></div>
+{% endmacro %}

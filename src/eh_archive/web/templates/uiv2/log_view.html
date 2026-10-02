@@ -1,0 +1,6 @@
+{% extends 'uiv2/base.html' %}
+{% from 'uiv2/_macros.html' import icon with context %}
+{% set nav='logs' %}
+{% block title %}{{ filename }}{% endblock %}
+{% block crumbs %}<a href="/uiv2/logs?{{ directory_query }}" hx-boost="false">日志</a>{{ icon('chevron-right') }}<span class="current mono">{{ filename }}</span>{% endblock %}
+{% block main %}<div class="page"><div class="page-head"><div class="grow min0"><h1 class="break">{{ filename }}</h1><p>分窗口读取，自动刷新每 5 秒一次。</p></div><a class="btn" href="/api/logs/download?file={{ file_query }}" hx-boost="false" download>{{ icon('download') }}下载</a></div><section class="card" id="log-viewer" data-file="{{ filename }}"><div class="card-head"><button class="btn btn-sm" type="button" data-earlier>更早内容</button><button class="btn btn-sm" type="button" data-latest>最新内容</button><label class="check"><input type="checkbox" data-auto checked>自动刷新</label><label class="check"><input type="checkbox" data-follow checked>跟随末尾</label></div><div class="card-body xs muted" data-log-status role="status">正在读取…</div><pre class="log-view" data-log-content tabindex="0"></pre></section></div><script src="/static/logs.js" defer></script>{% endblock %}

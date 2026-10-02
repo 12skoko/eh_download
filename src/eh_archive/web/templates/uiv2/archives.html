@@ -1,0 +1,65 @@
+{% extends "uiv2/base.html" %}
+{% from "uiv2/_macros.html" import icon with context %}
+{% set nav = 'archives' %}
+{% block title %}档案{% endblock %}
+{% block crumbs %}<span class="current">档案</span>{% endblock %}
+{% block main %}
+<div class="workspace page-flush" data-workspace data-list="archive-results">
+  <section class="listcol" aria-label="档案列表">
+    <form id="archive-filter" class="list-toolbar" method="get" action="/uiv2/archives"
+          hx-get="/uiv2/archives" hx-target="#archive-results" hx-swap="outerHTML" hx-push-url="true" hx-sync="this:replace" data-auto-filter>
+      <div class="input-icon">{{ icon('search', 'icon-sm') }}<input class="input" type="search" name="q" value="{{ q }}" placeholder="标题、原始标题、文件名或 manga ID" data-debounce aria-label="搜索档案"></div>
+
+      <button type="button" class="filter-chip" popovertarget="pop-status" data-chip="status">{{ icon('list-filter', 'icon-sm') }}状态 <span class="val" data-chip-value></span></button>
+      <div popover id="pop-status" class="pop filter-pop wide" data-counts-url="/uiv2/archives/status-counts">
+        <div class="pop-head"><strong class="small">按状态筛选</strong><span class="xs muted">可多选 · 立即生效 · 数量在打开时统计</span><span class="grow"></span><button type="button" class="btn btn-sm btn-ghost" data-clear="status">清除</button></div>
+        <div class="status-grid">
+          {% for group, statuses in v2_status_groups %}
+          <div><div class="xs faint group-title">{{ group }}</div>
+            {% for status in statuses %}<label class="check row-check status-tone" data-tone="{{ status|v2_tone }}"><input type="checkbox" name="status" value="{{ status }}" data-label="{{ status|status_label }}" {{ 'checked' if status in selected_statuses }}><span class="grow">{{ status|status_label }}</span><span class="xs mono" data-count-for="{{ status }}"></span></label>{% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button type="button" class="filter-chip" popovertarget="pop-source" data-chip="queue_source">来源 <span class="val" data-chip-value></span></button>
+      <div popover id="pop-source" class="pop filter-pop">
+        <div class="menu">
+          {% for value, label in [('', '全部来源'), ('automatic', '自动'), ('manual', '人工')] %}
+          <label class="menu-radio"><input type="radio" name="queue_source" value="{{ value }}" data-label="{{ label }}" {{ 'checked' if queue_source == value }}>{{ label }}</label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button type="button" class="filter-chip" popovertarget="pop-error" data-chip="has_error">错误 <span class="val" data-chip-value></span></button>
+      <div popover id="pop-error" class="pop filter-pop">
+        <div class="menu">
+          {% for value, label in [('', '全部'), ('yes', '有错误'), ('no', '无错误')] %}
+          <label class="menu-radio"><input type="radio" name="has_error" value="{{ value }}" data-label="{{ label }}" {{ 'checked' if has_error == value }}>{{ label }}</label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button type="button" class="filter-chip" popovertarget="pop-uploader" data-chip="uploader">上传者 <span class="val" data-chip-value></span></button>
+      <div popover id="pop-uploader" class="pop filter-pop">
+        <div class="field"><label for="f-uploader">上传者（模糊匹配）</label><input class="input" id="f-uploader" name="uploader" value="{{ uploader }}" placeholder="输入上传者名称" data-debounce></div>
+        <div class="pop-actions"><button type="button" class="btn btn-sm btn-ghost" data-clear="uploader">清除</button></div>
+      </div>
+
+      <button type="button" class="filter-chip" popovertarget="pop-tags" data-chip="tags">标签 <span class="val" data-chip-value></span></button>
+      <div popover id="pop-tags" class="pop filter-pop">
+        <div class="field"><label for="f-tags">标签</label><input class="input" id="f-tags" name="tags" value="{{ tags }}" placeholder="例如：language:chinese, parody:original" data-debounce aria-describedby="tag-help">
+          <span class="help" id="tag-help">上传者和标签均支持模糊匹配，不区分英文大小写。多个标签用逗号分隔，需同时匹配；可与其他筛选组合使用。</span></div>
+        <div class="pop-actions"><button type="button" class="btn btn-sm btn-ghost" data-clear="tags">清除</button></div>
+      </div>
+
+      <noscript><button class="btn btn-primary" type="submit">筛选</button></noscript>
+    </form>
+    {% include "uiv2/_archive_results.html" %}
+  </section>
+  <section class="pane" data-pane hidden aria-label="档案详情">
+    <div id="pane-body" class="pane-scroll"></div>
+  </section>
+</div>
+{% include "uiv2/_bulk.html" %}
+{% endblock %}

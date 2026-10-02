@@ -1,0 +1,6 @@
+{% set backfill = backfill|default(workflow is defined) %}
+<div class="form-grid">
+  <div class="field"><label for="collect-start-mode">起点方式</label><select class="select" id="collect-start-mode" name="start_mode">{% if not backfill|default(false) %}<option value="">使用配置默认值</option>{% endif %}<option value="date">日期</option><option value="database">数据库旧记录定位</option><option value="url">手工分页 URL</option></select></div>
+  <div class="field"><label for="collect-start-at">目标时间（可留空）</label><input class="input mono" id="collect-start-at" name="start_at" placeholder="2026-09-22T00:00:00+08:00"><span class="help">填写时须包含时区，留空采用一周前。</span></div>
+  <div class="field"><label for="collect-start-url">分页 URL</label><input class="input" id="collect-start-url" name="start_url" type="url" placeholder="仅 URL 模式填写"></div>
+</div>

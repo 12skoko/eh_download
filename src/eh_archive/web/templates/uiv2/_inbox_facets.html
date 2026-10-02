@@ -1,0 +1,27 @@
+{% set base_qs = 'status=' ~ selected_status ~ '&q=' ~ (q|urlencode) %}
+<aside class="facets" id="inbox-facets" aria-label="筛选" {% if oob_facets %}hx-swap-oob="outerHTML"{% endif %}>
+  <nav class="seg seg-full" aria-label="类型">
+    {% for status in ['manual_review', 'quarantined'] %}
+    <a href="/uiv2/inbox?status={{ status }}" {% if selected_status == status %}aria-current="page"{% endif %}>{{ status|status_label }} <span class="count">{{ totals.get(status, 0) }}</span></a>
+    {% endfor %}
+  </nav>
+  <div class="facet-title">发生环节</div>
+  {% set ec_qs = '&missing_error=true' if missing_error else '&error_code=' ~ (error_code|urlencode) if error_code else '' %}
+  <a class="facet" href="/uiv2/inbox?{{ base_qs }}{{ ec_qs }}" hx-get="/uiv2/inbox?{{ base_qs }}{{ ec_qs }}" hx-target="#inbox-list" hx-swap="outerHTML" hx-push-url="true" {% if not operation %}aria-current="true"{% endif %}>全部环节</a>
+  {% for item in review_operations %}
+  {% set url = '/uiv2/inbox?' ~ base_qs ~ '&operation=' ~ (item|urlencode) ~ ec_qs %}
+  <a class="facet" href="{{ url }}" hx-get="{{ url }}" hx-target="#inbox-list" hx-swap="outerHTML" hx-push-url="true" {% if operation == item %}aria-current="true"{% endif %}>{{ item|component_label }}<span class="n mono">{{ item }}</span></a>
+  {% endfor %}
+  <div class="facet-title">错误类型</div>
+  {% set op_qs = '&operation=' ~ (operation|urlencode) %}
+  <a class="facet" href="/uiv2/inbox?{{ base_qs }}{{ op_qs }}" hx-get="/uiv2/inbox?{{ base_qs }}{{ op_qs }}" hx-target="#inbox-list" hx-swap="outerHTML" hx-push-url="true" {% if not error_code and not missing_error %}aria-current="true"{% endif %}>全部错误<span class="n">{{ error_facets|sum(attribute='count') }}</span></a>
+  {% for facet in error_facets %}
+  {% set is_missing = facet.error_code is none %}
+  {% set label = '未记录原因' if is_missing else facet.error_code %}
+  {% set error_qs = '&missing_error=true' if is_missing else '&error_code=' ~ (facet.error_code|urlencode) %}
+  {% set url = '/uiv2/inbox?' ~ base_qs ~ op_qs ~ error_qs %}
+  <a class="facet" href="{{ url }}" hx-get="{{ url }}" hx-target="#inbox-list" hx-swap="outerHTML" hx-push-url="true" {% if (is_missing and missing_error) or (not is_missing and not missing_error and error_code == facet.error_code) %}aria-current="true"{% endif %}><span class="code-lbl truncate" title="{{ label }}">{{ label }}</span><span class="n">{{ facet.count }}</span></a>
+  {% else %}
+  <div class="xs faint facet-note">没有待处理记录</div>
+  {% endfor %}
+</aside>

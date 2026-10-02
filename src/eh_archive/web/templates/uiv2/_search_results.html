@@ -1,0 +1,14 @@
+{% from "uiv2/_macros.html" import icon, status_pill with context %}
+{% if q %}
+<div class="palette-group">档案</div>
+{% for row in rows %}
+<a class="palette-item" href="{{ row.manga_id|v2_manga_url }}" hx-boost="true">
+  {{ icon('file-archive') }}
+  <span class="grow min0"><span class="truncate block">{{ row.name or row.real_name or row.manga_id }}</span><span class="id">{{ row.manga_id }}</span></span>
+  {{ status_pill(row.status) }}
+</a>
+{% else %}
+<div class="palette-empty">没有匹配“{{ q }}”的档案</div>
+{% endfor %}
+{% if rows|length == 8 %}<a class="palette-item" href="/uiv2/archives?q={{ q|urlencode }}">{{ icon('list-filter') }}<span>在档案列表中查看全部结果</span></a>{% endif %}
+{% endif %}

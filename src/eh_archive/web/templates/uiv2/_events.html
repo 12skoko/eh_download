@@ -1,0 +1,2 @@
+{% from 'uiv2/_macros.html' import event_item, pager, empty with context %}
+<section id="event-results" class="card"><div class="card-head"><h2>审计轨迹</h2><span class="meta">{{ page.total }} 条</span></div><div class="card-body"><ul class="timeline">{% for event in page.rows %}{{ event_item(event,true) }}{% else %}{{ empty('没有符合条件的事件','activity') }}{% endfor %}</ul></div>{{ pager(page, '/uiv2/events?' ~ filter_qs, 'event-results') }}</section>

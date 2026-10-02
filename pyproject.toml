@@ -43,7 +43,7 @@ eharchive-supervisor = "eh_archive.supervisor.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"eh_archive.web" = ["templates/*.html", "templates/**/*.html", "static/*"]
+"eh_archive.web" = ["templates/*.html", "templates/**/*.html", "static/*", "static/uiv2/*", "static/uiv2/fonts/*"]
 
 [tool.setuptools.data-files]
 "share/eh_archive/config.sample" = ["config.sample/app.toml", "config.sample/supervisor.toml", "config.sample/crawl.toml", "config.sample/secrets.toml"]

@@ -1,0 +1,70 @@
+{% from "uiv2/_macros.html" import icon, csrf with context %}
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token }}">
+<title>{% block title %}EH Archive{% endblock %} · EH Archive</title>
+<script>
+  (() => {
+    const mode = localStorage.getItem("uiv2-theme") || "auto";
+    const dark = mode === "dark" || (mode === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    document.documentElement.dataset.themeMode = mode;
+  })();
+</script>
+<link rel="stylesheet" href="/static/uiv2/uiv2.css?v={{ v2_asset }}">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/uiv2/uiv2.js?v={{ v2_asset }}" defer></script>
+<script src="/static/uiv2/uiv2-pages.js?v={{ v2_asset }}" defer></script>
+<script src="/static/uiv2/uiv2-ops.js?v={{ v2_asset }}" defer></script>
+</head>
+<body hx-boost="true">
+{% set nav = nav|default('') %}
+<div class="app" data-app>
+  <aside class="sidebar" id="sidebar" aria-label="主导航">
+    <a class="brand" href="/uiv2/"><span class="seal" aria-hidden="true">档</span><span class="brand-text"><strong>EH Archive</strong><small>归档控制台</small></span></a>
+    <nav class="nav-group">
+      <a class="nav-item" href="/uiv2/" {% if nav == 'overview' %}aria-current="page"{% endif %}>{{ icon('layout-dashboard') }}<span class="nav-text">概览</span></a>
+      <a class="nav-item" href="/uiv2/inbox" {% if nav == 'inbox' %}aria-current="page"{% endif %}>{{ icon('inbox') }}<span class="nav-text">待处理</span>{% if v2_inbox_count %}<span class="nav-count" title="人工复核与已隔离">{{ v2_inbox_count }}</span>{% endif %}</a>
+      <a class="nav-item" href="/uiv2/archives" {% if nav == 'archives' %}aria-current="page"{% endif %}>{{ icon('library') }}<span class="nav-text">档案</span></a>
+      <a class="nav-item" href="/uiv2/workflows" {% if nav == 'workflows' %}aria-current="page"{% endif %}>{{ icon('workflow') }}<span class="nav-text">工作流</span></a>
+    </nav>
+    <div class="nav-label">观测</div>
+    <nav class="nav-group">
+      <a class="nav-item" href="/uiv2/events" {% if nav == 'events' %}aria-current="page"{% endif %}>{{ icon('activity') }}<span class="nav-text">事件</span></a>
+      <a class="nav-item" href="/uiv2/logs" hx-boost="false" {% if nav == 'logs' %}aria-current="page"{% endif %}>{{ icon('scroll-text') }}<span class="nav-text">日志</span></a>
+    </nav>
+    <div class="nav-label">运维</div>
+    <nav class="nav-group">
+      <a class="nav-item" href="/uiv2/settings" hx-boost="false" {% if nav == 'settings' %}aria-current="page"{% endif %}>{{ icon('sliders-horizontal') }}<span class="nav-text">配置</span></a>
+      <a class="nav-item" href="/uiv2/system" hx-boost="false" {% if nav == 'system' %}aria-current="page"{% endif %}>{{ icon('server') }}<span class="nav-text">系统</span><span class="nav-dot" data-update-dot hidden role="img" aria-label="有新更新" title="有新更新"></span></a>
+    </nav>
+    <div class="sidebar-foot">
+      <a class="nav-item" href="{{ v2_old_url }}" hx-boost="false" title="打开旧版界面中的对应页面">{{ icon('undo-2') }}<span class="nav-text">旧版界面</span></a>
+      <button type="button" class="nav-item nav-button" data-theme-toggle>{{ icon('monitor', 'theme-auto') }}{{ icon('sun', 'theme-light') }}{{ icon('moon', 'theme-dark') }}<span class="nav-text" data-theme-label>主题：跟随系统</span></button>
+      <form method="post" action="/uiv2/logout" class="nav-form">{{ csrf() }}
+        <button type="submit" class="nav-item nav-button" title="退出登录">{{ icon('log-out') }}<span class="nav-text">{{ identity.username }} · 退出</span></button>
+      </form>
+    </div>
+  </aside>
+  <div class="nav-scrim" data-nav-close></div>
+  <header class="topbar">
+    <button type="button" class="btn btn-ghost btn-icon nav-toggle" data-nav-toggle aria-label="打开导航" aria-controls="sidebar">{{ icon('menu') }}</button>
+    <nav class="crumbs" aria-label="位置">{% block crumbs %}{% endblock %}</nav>
+    <button class="search-trigger" type="button" data-open-palette>{{ icon('search', 'icon-sm') }}<span>搜索档案 ID、标题，或跳转页面…</span><span class="kbd">Ctrl K</span></button>
+    {% set supervisor = v2_supervisor %}{% set supervisor_state = v2_supervisor_state %}{% set scope = 'overview' if nav == 'overview' else 'pill' %}
+    {% include "uiv2/_sup_pill.html" %}
+  </header>
+  <main class="main" id="main" tabindex="-1">
+    {% if v2_database_error %}<div class="page"><div class="note" data-tone="danger">{{ icon('database') }}<div><strong>数据库暂时不可用</strong><div class="xs">页面中依赖数据库的内容无法显示，请稍后刷新。</div></div></div></div>{% endif %}
+    {% block main %}{% endblock %}
+  </main>
+</div>
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+{% if v2_toast %}<template data-initial-toast data-tone="ok">{{ v2_toast }}</template>{% endif %}
+{% include "uiv2/_palette.html" %}
+{% block overlay %}{% endblock %}
+</body>
+</html>

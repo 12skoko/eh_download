@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, case, desc, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
@@ -303,7 +303,7 @@ class RunningModuleTask:
 
 @dataclass(frozen=True)
 class ReviewFacet:
-    error_code: str
+    error_code: str | None
     count: int
 
 
@@ -1097,6 +1097,7 @@ def list_review_manga(
     status: str,
     query_text: str | None = None,
     error_code: str | None = None,
+    missing_error: bool = False,
     operation: str | None = None,
     limit: int = 50,
     page: int = 1,
@@ -1107,7 +1108,9 @@ def list_review_manga(
     conditions = [MangaRecord.status == status]
     if query_text and query_text.strip():
         conditions.append(_manga_search_predicate(query_text))
-    if error_code:
+    if missing_error:
+        conditions.append(_missing_review_error())
+    elif error_code:
         conditions.append(MangaRecord.last_error_code == error_code.strip())
     if operation:
         conditions.append(MangaRecord.last_error_operation == operation.strip())
@@ -1124,12 +1127,20 @@ def list_review_manga(
     return MangaPage(rows=rows, page=page, limit=limit, total=total)
 
 
+def _missing_review_error():
+    return or_(
+        MangaRecord.last_error_code.is_(None),
+        func.trim(MangaRecord.last_error_code) == "",
+    )
+
+
 def review_facets(
     session: Session,
     *,
     status: str,
     query_text: str | None = None,
     operation: str | None = None,
+    include_missing: bool = False,
 ) -> tuple[list[ReviewFacet], list[str]]:
     if status not in {Status.MANUAL_REVIEW.value, Status.QUARANTINED.value}:
         raise InvalidRequest("无效人工复核状态")
@@ -1139,13 +1150,18 @@ def review_facets(
     if operation:
         conditions.append(MangaRecord.last_error_operation == operation.strip())
 
+    code_column = MangaRecord.last_error_code
+    if include_missing:
+        code_column = case((_missing_review_error(), None), else_=code_column)
+    else:
+        conditions.append(code_column.is_not(None))
     facets = [
-        ReviewFacet(str(code), int(count))
+        ReviewFacet(str(code) if code is not None else None, int(count))
         for code, count in session.execute(
-            select(MangaRecord.last_error_code, func.count())
-            .where(*conditions, MangaRecord.last_error_code.is_not(None))
-            .group_by(MangaRecord.last_error_code)
-            .order_by(desc(func.count()), MangaRecord.last_error_code)
+            select(code_column, func.count())
+            .where(*conditions)
+            .group_by(code_column)
+            .order_by(desc(func.count()), code_column)
         )
     ]
     operations = list(

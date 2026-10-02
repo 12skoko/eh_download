@@ -205,7 +205,9 @@ def create_app(
     @app.middleware("http")
     async def authenticate(request, call_next):
         path = request.url.path
-        public = path == "/login" or path == "/health/live" or path.startswith("/static/")
+        public = (
+            path in {"/login", "/uiv2/login", "/health/live"} or path.startswith("/static/")
+        )
         if public or not auth_enabled:
             request.state.identity = WebIdentity("local", "local", int(time.time()) + 3600)
             request.state.auth_via_bearer = False
@@ -223,7 +225,17 @@ def create_app(
             if path.startswith("/api/") or path == "/health":
                 return JSONResponse({"detail": "authentication required"}, status_code=401)
             next_path = request.url.path + ("?" + request.url.query if request.url.query else "")
-            return RedirectResponse(f"/login?next={quote(next_path, safe='/?=&')}", status_code=303)
+            v2 = path == "/uiv2" or path.startswith("/uiv2/")
+            login_path = "/uiv2/login" if v2 else "/login"
+            if v2 and request.headers.get("HX-Request") == "true":
+                # A v2 fragment request must not swap the login page into a panel.
+                return JSONResponse(
+                    {"detail": "authentication required"}, status_code=401,
+                    headers={"HX-Redirect": f"{login_path}?next={quote(next_path, safe='/?=&')}"},
+                )
+            return RedirectResponse(
+                f"{login_path}?next={quote(next_path, safe='/?=&')}", status_code=303
+            )
         request.state.identity = identity
         request.state.auth_via_bearer = via_bearer
         if (
@@ -1378,6 +1390,14 @@ def create_app(
     from .logs import register as register_logs
 
     register_logs(app, templates, _context, app_config.log_dir)
+    from .uiv2 import install_uiv2
+
+    install_uiv2(
+        app, templates=templates, database=database, app_config=app_config,
+        supervisor_config=supervisor_config, secrets_config=secrets_config, signer=signer,
+        auth_enabled=auth_enabled, config_dir=config_dir,
+        management_path=Path(management_config),
+    )
     return app
 
 

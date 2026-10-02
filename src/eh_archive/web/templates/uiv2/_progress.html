@@ -1,0 +1,39 @@
+{% from "uiv2/_macros.html" import icon, csrf, form_error, modal_head with context %}
+<div id="direct-progress" class="progress-slot" {% if progress_poll %}hx-get="/uiv2/partials/progress/{{ row.manga_id }}?mode={{ mode }}" hx-trigger="every 2s [uiv2CanPoll()]" hx-swap="outerHTML"{% endif %}>
+  {% if active_attempt and active_attempt.operation == 'direct_download' %}
+  {% set progress = active_attempt|attempt_progress %}
+  <div class="resolve" data-tone="run">
+    <div class="resolve-head">{{ icon('download') }}
+      <div class="grow"><h3>{{ '正在取消直接下载' if row.status == 'cancel_requested' else '直接下载进行中' }}</h3>
+        <div class="sub"><span>attempt #{{ active_attempt.id }}</span><span>· 进度更新 {{ active_attempt.progress_updated_at|datetime }}</span></div></div>
+      {% if row.download_method == 'direct' and row.status == 'downloading' %}
+      <button type="button" class="btn btn-sm btn-warn-quiet" data-open-dialog="cancel-direct-dialog">{{ icon('octagon-x', 'icon-sm') }}取消下载并转人工复核</button>
+      {% endif %}
+    </div>
+    <div class="resolve-body">
+      <div class="progress" {% if progress.percent is none %}data-indeterminate{% endif %}><span style="width:{{ progress.percent or 0 }}%"></span></div>
+      <div class="progress-meta">
+        <strong>{% if progress.percent is not none %}{{ '%.1f'|format(progress.percent) }}%{% else %}正在下载{% endif %}</strong>
+        <span>{{ progress.downloaded|filesize }}{% if progress.total is not none %} / {{ progress.total|filesize }}{% endif %}</span>
+        <span>{% if progress.speed %}{{ progress.speed|filesize }}/s{% else %}正在计算速度{% endif %}</span>
+        <span>{% if progress.eta is not none %}预计剩余 {{ progress.eta|duration }}{% else %}剩余时间未知{% endif %}</span>
+      </div>
+      {% if row.status == 'cancel_requested' %}<p class="small">正在停止下载，停止后将转为人工复核。网络读取阻塞时需要等待超时。</p>{% endif %}
+    </div>
+  </div>
+  {% if row.download_method == 'direct' and row.status == 'downloading' %}
+  <dialog class="modal" id="cancel-direct-dialog">
+    <form hx-post="/uiv2/archives/{{ row.manga_id }}/actions/cancel" hx-target="#dossier" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
+      {{ csrf() }}<input type="hidden" name="row_version" value="{{ row.row_version }}"><input type="hidden" name="reason" value="用户主动取消直接下载"><input type="hidden" name="mode" value="{{ mode }}">
+      {{ modal_head('确认取消下载', '直接下载', 'octagon-x', 'warn') }}
+      <div class="modal-body"><p>确定取消当前下载吗？已下载的临时文件将被清理，任务停止后转为人工复核，不会自动重试。</p>{{ form_error() }}</div>
+      <div class="modal-foot"><button type="button" class="btn" data-close-dialog autofocus>返回</button><button type="submit" class="btn btn-danger">确认取消下载</button></div>
+    </form>
+  </dialog>
+  {% endif %}
+  {% elif row.status == 'manual_review' and row.last_error_code == 'direct_download_cancelled' %}
+  <div class="note" data-tone="info">{{ icon('info') }}<div class="grow">下载已取消，已转为人工复核。</div><button type="button" class="btn btn-sm" hx-get="/uiv2/partials/dossier/{{ row.manga_id }}?mode={{ mode }}" hx-target="#dossier" hx-swap="outerHTML">{{ icon('refresh-cw', 'icon-sm') }}刷新档案详情</button></div>
+  {% elif progress_poll %}
+  <div class="note" data-tone="info">{{ icon('hourglass') }}<div><strong>直接下载</strong><div class="xs">等待下载任务启动</div></div></div>
+  {% endif %}
+</div>
