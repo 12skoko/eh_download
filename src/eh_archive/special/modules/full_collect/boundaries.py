@@ -18,8 +18,9 @@ def listing_url(base, **cursor):
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     for name in ("next", "prev", "seek"):
         query.pop(name, None)
+    query.pop("inline_set", None)
     # An account's hidden-language/uploader/tag preferences must not narrow scope.
-    query.update(f_cats="0", f_sfl="on", f_sfu="on", f_sft="on", inline_set="dm_e")
+    query.update(f_cats="0", f_sfl="on", f_sfu="on", f_sft="on")
     query.update({name: str(value) for name, value in cursor.items()})
     return validate_listing_url(urlunsplit((parts.scheme, parts.netloc, "/", urlencode(query), "")))
 
