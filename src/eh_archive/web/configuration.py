@@ -355,6 +355,10 @@ FULL_COLLECT_FIELDS = (
     FieldSpec(("max_concurrency",), "模块最大并发", "int", minimum=1, maximum=1),
     FieldSpec(("base_url",), "新建轮次默认站点入口", optional=True,
               help="仅预填新建工作流；已有轮次使用创建时选择的站点。"),
+    FieldSpec(("archive_enabled",), "保存全量采集页面", "bool",
+              help="按 workflow_id/job_id 保存 gzip HTML，每个 job 一个 manifest.json。下个批次生效。"),
+    FieldSpec(("archive_dir",), "全量页面归档目录",
+              help="相对路径以程序工作目录为基准；已有轮次沿用首次归档目录。归档需手动清理。"),
     FieldSpec(("batch_max_pages",), "每批最多页数", "int", minimum=1),
     *(
         FieldSpec((name,), label + "（秒）", "float", minimum=0.001 if positive else 0)
@@ -479,6 +483,8 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
     if section == "manual_torrent":
         return "模块设置", key == "max_concurrency"
     if section == "full_collect":
+        if key in {"archive_enabled", "archive_dir"}:
+            return "页面归档", False
         return ("范围与启停", False) if key in {
             "enabled", "max_concurrency", "base_url", "resume_after_restart"
         } else ("批次与等待", key in {

@@ -4,6 +4,12 @@ enabled = false
 max_concurrency = 1
 # Default site for new workflows; IDs are always entered at creation.
 base_url = ""
+# Save received listing HTML before parsing, under <workflow_id>/<job_id>/.
+# Each job contains .html.gz pages and one manifest.json; write failures only warn.
+# Relative paths use the working directory. A workflow keeps its first archive root.
+# Retained until manually removed; enabling takes effect for the next batch.
+archive_enabled = false
+archive_dir = "data/full_collect_pages"
 batch_max_pages = 10
 batch_max_seconds = 600
 # Applied to connection/read respectively; not a hard whole-request wall clock.

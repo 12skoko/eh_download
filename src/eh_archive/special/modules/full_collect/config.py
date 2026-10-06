@@ -29,6 +29,8 @@ class FullCollectConfig:
     max_consecutive_failures: int = 5
     resume_after_restart: bool = True
     control_poll_seconds: float = 1
+    archive_enabled: bool = False
+    archive_dir: str = "data/full_collect_pages"
 
 
 def parse_start_at(value: str) -> datetime | None:
@@ -109,9 +111,13 @@ def load_full_collect_config(directory, *, app=None, secrets=None) -> FullCollec
     if set(raw) - {field.name for field in fields(FullCollectConfig)}:
         raise ValueError("full_collect 配置包含未知字段")
     config = FullCollectConfig(**raw)
-    for name in ("enabled", "resume_after_restart"):
+    for name in ("enabled", "resume_after_restart", "archive_enabled"):
         if type(getattr(config, name)) is not bool:
             raise ValueError(f"full_collect.{name} 必须为布尔值")
+    if not isinstance(config.archive_dir, str) or not config.archive_dir.strip():
+        raise ValueError("full_collect.archive_dir 必须是非空目录路径")
+    if "\x00" in config.archive_dir:
+        raise ValueError("full_collect.archive_dir 不能包含空字符")
     for name in (
         "max_concurrency",
         "batch_max_pages",

@@ -1,5 +1,6 @@
 """Bounded page batches. All metadata and cursors are committed under one claim."""
 
+import gzip
 import logging
 import random
 import time
@@ -7,6 +8,7 @@ import traceback
 from dataclasses import replace
 from datetime import UTC, timedelta
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -19,9 +21,11 @@ from ....db.models import SpecialJob, SpecialWorkflow
 from ....db.repository import ArchiveRepository, utcnow
 from ....domain.errors import ArchiveError
 from ....integrations.http import RoleSession
+from ....services.collector.archive import BatchPageArchive
 from ....services.collector.service import manga_record, parse_collection_page
 from ...core.contracts import OperationResult
 from ...core.execution import ExecutionContext
+from ...core.repository import aware
 from .boundaries import deadline, id_range, listing_url, page_ids
 from .config import load_full_collect_config, parse_start_at, validate_listing_url
 from .module import OPERATION
@@ -66,6 +70,8 @@ class FullCollectExecutor:
         self.http = RoleSession(self.app, self.secrets, request_delay_seconds=0)
         self.pool = self.secrets.proxy_pool(self.app.full_collect_session)
         self.batch = {"pages": 0, "requests": 0, "created": 0, "updated": 0, "retries": 0}
+        self._archive = None
+        self._request_number = 0
 
     def _transaction(self):
         return self.context.transaction(timeout_seconds=self.config.page_write_timeout_seconds)
@@ -135,6 +141,7 @@ class FullCollectExecutor:
             ):
                 raise RuntimeError("stale full collection request")
         self.batch["requests"] += 1
+        self._request_number = data["counts"]["requests"]
         if previous != network:
             self._log("proxy_selected", **data["network"])
         return network
@@ -151,6 +158,41 @@ class FullCollectExecutor:
             data = {**workflow.payload, "next_request_at": until.isoformat()}
             if not repository.update_state(self.claim, payload=data):
                 raise RuntimeError("stale full collection request completion")
+
+    def _archive_page(self, html, url, received_at):
+        if not self.config.archive_enabled:
+            return
+        try:
+            # Compression does not hold a database lock or advance the listing cursor.
+            compressed = gzip.compress(html.encode("utf-8"), compresslevel=6)
+            with self._transaction() as repository:
+                workflow = repository.session.get(SpecialWorkflow, self.claim.workflow_id)
+                data = dict(workflow.payload)
+                settings = data.get("page_archive")
+                if settings is None:
+                    root = Path(self.config.archive_dir.strip()).expanduser().resolve()
+                    settings = {"root": str(root)}
+                    data["page_archive"] = settings
+                    if not repository.update_state(self.claim, payload=data):
+                        raise RuntimeError("stale full collection archive settings")
+                if self._archive is None:
+                    self._archive = BatchPageArchive(
+                        Path(settings["root"]), workflow_id=self.claim.workflow_id,
+                        job_id=self.claim.job_id,
+                        workflow_created_at=aware(workflow.created_at).isoformat(),
+                    )
+                    self._log("archive_selected", directory=str(self._archive.directory))
+                # A stale claim raises before any file is published. The short
+                # transaction also serializes writes by replacement workers.
+                self._archive.save(
+                    compressed, request_number=self._request_number, url=url,
+                    source_url=self.scope["initial_url"], fetched_at=received_at.isoformat(),
+                )
+        except (OSError, UnicodeError):
+            log.warning(
+                "full collection page archive preparation failed: workflow=%s job=%s",
+                self.claim.workflow_id, self.claim.job_id, exc_info=True,
+            )
 
     def _finish(self, phase, reason):
         next_job, selected_delay, due = None, None, None
@@ -398,7 +440,9 @@ class FullCollectExecutor:
                 except RequestException as exc:
                     failure = exc
                 finally:
-                    self._received(utcnow())
+                    request_seconds = time.monotonic() - began
+                    received_at = utcnow()
+                    self._received(received_at)
                 if failure is not None:
                     frames = [
                         f"{frame.name}:{frame.lineno}"
@@ -435,11 +479,12 @@ class FullCollectExecutor:
                     )
                 if status != 200:
                     return self._issue(f"http_{status}_requires_repair")
+                self._archive_page(response.text, data["cursor"], received_at)
                 try:
                     page = parse_collection_page(response.text, data["cursor"])
                     if self.context.stop_requested():
                         return self._finish("interrupted", "supervisor_stop")
-                    if not self._commit_page(page, elapsed_seconds=time.monotonic() - began):
+                    if not self._commit_page(page, elapsed_seconds=request_seconds):
                         return self._finish("paused", "user_pause")
                 except (ArchiveError, CollectionIssue) as exc:
                     code = exc.info.code if isinstance(exc, ArchiveError) else str(exc)
