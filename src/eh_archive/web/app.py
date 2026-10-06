@@ -136,6 +136,7 @@ def create_app(
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
     templates.env.globals["css_version"] = hashlib.sha256((STATIC_DIR / "app.css").read_bytes()).hexdigest()[:12]
     templates.env.filters["datetime"] = _format_datetime
+    templates.env.filters["full_collect_datetime"] = lambda value: _format_full_collect_datetime(value, app_config.timezone)
     templates.env.filters["schedule_datetime"] = lambda value: (
         value.astimezone(ZoneInfo(app_config.timezone)).strftime("%Y-%m-%d %H:%M:%S")
         if value else "—"
@@ -1573,6 +1574,18 @@ def _format_collected_at(value, timezone) -> str:
         if parsed.tzinfo is None:
             return str(value)
         return parsed.astimezone(ZoneInfo(timezone)).strftime("%Y-%m-%d %H:%M:%S %Z")
+    except (TypeError, ValueError, AttributeError):
+        return str(value)
+
+
+def _format_full_collect_datetime(value, timezone: str) -> str:
+    if not value:
+        return "—"
+    try:
+        parsed = datetime.fromisoformat(value) if isinstance(value, str) else value
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(ZoneInfo(timezone)).strftime("%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError, AttributeError):
         return str(value)
 
