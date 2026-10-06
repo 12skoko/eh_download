@@ -100,15 +100,27 @@ class FullCollectExecutor:
 
     def _begin_request(self, data):
         now = utcnow()
-        index = (
-            now.astimezone(ZoneInfo(self.app.timezone)).hour + data.get("proxy_offset", 0)
-        ) % len(self.pool)
-        network = self.pool[index]
         with self._transaction() as repository:
             workflow = repository.session.get(SpecialWorkflow, self.claim.workflow_id)
             data = dict(workflow.payload)
             if data.get("intent") != "run":
                 return None
+            failed = [name for name in data.get("failed_proxies", []) if name in self.pool]
+            # A reduced pool may contain only entries failed in the previous
+            # batch. Start a fresh round for that changed pool.
+            if all(name in failed for name in self.pool):
+                failed = []
+            data["failed_proxies"] = failed
+            if failed:
+                # Retry order must not change when the clock crosses an hour.
+                index = (self.pool.index(failed[-1]) + 1) % len(self.pool)
+                while self.pool[index] in failed:
+                    index = (index + 1) % len(self.pool)
+            else:
+                index = (
+                    now.astimezone(ZoneInfo(self.app.timezone)).hour + data.get("proxy_offset", 0)
+                ) % len(self.pool)
+            network = self.pool[index]
             previous = data.get("network", {}).get("name")
             data["batch_budget"] = {
                 "max_pages": self.config.batch_max_pages,
@@ -119,7 +131,7 @@ class FullCollectExecutor:
                 "name": network,
                 "index": index + 1,
                 "pool_size": len(self.pool),
-                "reason": "error_rotation" if data.get("request_failures") else "hourly",
+                "reason": "error_rotation" if failed else "hourly",
             }
             # If killed inside HTTP, preserve conservative pacing before retry.
             data["next_request_at"] = (
@@ -253,15 +265,23 @@ class FullCollectExecutor:
             if temporary:
                 data["proxy_offset"] = data.get("proxy_offset", 0) + 1
                 data["request_failures"] = data.get("request_failures", 0) + 1
+                failed = list(data.get("failed_proxies", []))
+                network = data["network"]["name"]
+                if network not in failed:
+                    failed.append(network)
+                data["failed_proxies"] = failed
                 data["next_request_at"] = max(
                     parse_start_at(data["next_request_at"]),
                     utcnow() + timedelta(seconds=self.config.retry_delay_seconds),
                 ).isoformat()
-            pool_failed = temporary and data["request_failures"] >= len(self.pool)
+            pool_failed = temporary and all(
+                name in data.get("failed_proxies", []) for name in self.pool
+            )
             cooling = bool(cooldown) or pool_failed
             if cooling:
                 data["consecutive_failures"] = data.get("consecutive_failures", 0) + 1
                 data["request_failures"] = 0
+                data["failed_proxies"] = []
                 data["cooldown_until"] = max(
                     cooldown or utcnow(),
                     utcnow() + timedelta(seconds=self.config.pool_failure_cooldown_seconds),
@@ -355,7 +375,8 @@ class FullCollectExecutor:
                 "updated": data["counts"]["updated"] + updated,
             }
             data.update(
-                consecutive_failures=0, request_failures=0, cooldown_until="", last_error=None
+                consecutive_failures=0, request_failures=0, failed_proxies=[],
+                cooldown_until="", last_error=None,
             )
             data["last_page"] = {
                 "url": page.url,

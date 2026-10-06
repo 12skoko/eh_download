@@ -82,6 +82,7 @@ def create(service, inputs):
         "intent": "run", "end_reached": False,
         "counts": {"pages": 0, "requests": 0, "found": 0, "created": 0, "updated": 0, "retries": 0},
         "consecutive_failures": 0, "request_failures": 0, "proxy_offset": 0,
+        "failed_proxies": [],
     })
     service.repository.queue_job(
         workflow, OPERATION, trigger_source=service.trigger_source, requested_by=service.actor,
@@ -135,6 +136,7 @@ def resume(service, workflow, inputs):
         "stop_reason": "",
         "consecutive_failures": 0,
         "request_failures": 0,
+        "failed_proxies": [],
     }
     workflow.phase, workflow.error_code, workflow.error_detail = "queued", None, None
     _changed(service, workflow, "full_collect_resumed")
