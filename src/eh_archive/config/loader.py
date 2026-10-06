@@ -179,6 +179,8 @@ class CrawlConfig:
     tag_translation_url: str = (
         "https://github.com/EhTagTranslation/Database/releases/latest/download/db.text.json"
     )
+    collect_archive_enabled: bool = False
+    collect_archive_dir: Path = Path("data/collect_pages")
 
     def collection_urls(self) -> tuple[str, ...]:
         values = list(self.urls.values())
@@ -762,6 +764,11 @@ def load_config(
         raise ValueError("special_processing.default_job_lease_seconds must be greater than zero")
     if supervisor.special_max_concurrency <= 0:
         raise ValueError("special_processing.max_concurrency must be greater than zero")
+    collect_archive_dir = crawl_raw.get("collect_archive_dir", "data/collect_pages")
+    if not isinstance(collect_archive_dir, str) or not collect_archive_dir.strip():
+        raise ValueError("collect_archive_dir 必须是非空目录路径")
+    if "\x00" in collect_archive_dir:
+        raise ValueError("collect_archive_dir 不能包含空字符")
     crawl = CrawlConfig(
         urls={str(k): str(v) for k, v in dict(crawl_raw.get("urls", {})).items()},
         collect_tags=_string_tuple(crawl_raw.get("collect_tags", []), "collect_tags"),
@@ -784,6 +791,8 @@ def load_config(
         tag_translation_url=str(
             crawl_raw.get("tag_translation_url", CrawlConfig.tag_translation_url)
         ),
+        collect_archive_enabled=crawl_raw.get("collect_archive_enabled", False),
+        collect_archive_dir=Path(collect_archive_dir.strip()).expanduser().resolve(),
     )
     if crawl.screen_required_tags_mode not in {"all", "any"}:
         raise ValueError("screen_required_tags_mode 必须是 all 或 any")

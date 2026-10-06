@@ -194,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
                 service.screen_entries()
         return 0
     if args.command == "collect":
+        from .services.collector import Collector
+
         url = args.url
         if not url:
             raise SystemExit("a gallery URL is required")
@@ -214,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                     "observation_days": crawl.observation_days,
                 },
             )
-            Collector(repository, app, crawl, secrets).collect_url(url, end=end)
+            Collector(repository, app, crawl, secrets, run_id=run_id).collect_url(url, end=end)
             repository.finish_collect_run("succeeded", detail={"end": end})
         print(f"collect run_id={run_id}")
         return 0

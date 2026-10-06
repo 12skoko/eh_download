@@ -118,7 +118,11 @@ def run(
                 len(collection_urls),
             )
             log.info("automatic collection boundary: end=%s run_id=%s", collect_end, run_id)
-            collector = Collector(repository, app, crawl, secrets)
+            collector = Collector(repository, app, crawl, secrets, run_id=run_id)
+            report.fields({
+                "collect_archive_enabled": crawl.collect_archive_enabled,
+                "collect_archive_dir": collector.archive_dir or "disabled",
+            })
             for url in collection_urls:
                 current_source = url
                 result = collector.collect_url(

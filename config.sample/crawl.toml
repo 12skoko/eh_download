@@ -2,6 +2,11 @@ config_version = 1
 observation_days = 1
 collect_end_days = 6
 collect_end_offset = 3000
+# Archive received HTML as .html.gz with one manifest.json per collection run.
+# Applies to ordinary scheduled/CLI collect; relative paths use the working directory.
+# Archive write failures warn and do not stop collection. Files are retained until removed.
+collect_archive_enabled = false
+collect_archive_dir = "data/collect_pages"
 collect_tags = []
 name_keywords = []
 tag_keywords = []

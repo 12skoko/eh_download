@@ -229,6 +229,10 @@ CRAWL_FIELDS = (
     FieldSpec(("observation_days",), "观察天数", "int", minimum=0),
     FieldSpec(("collect_end_days",), "采集结束天数", "int", minimum=0),
     FieldSpec(("collect_end_offset",), "采集结束偏移", "int", minimum=0),
+    FieldSpec(("collect_archive_enabled",), "保存采集页面", "bool",
+              help="普通 collect 在解析前保存 gzip HTML 和每轮一个 manifest.json；归档失败不阻断采集。"),
+    FieldSpec(("collect_archive_dir",), "页面归档目录",
+              help="相对路径以程序工作目录为基准。归档持续保留，需手动清理。下次采集生效。"),
     FieldSpec(("collect_tags",), "采集标签", "lines", help="每行一个标签。"),
     FieldSpec(("name_keywords",), "名称关键词", "lines", help="每行一个关键词。"),
     FieldSpec(("tag_keywords",), "标签关键词", "lines", help="每行一个关键词。"),
@@ -455,6 +459,8 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
             return "任务处理", False
         return "特殊处理" if key == "special_processing" else "调度与重试", path[-1].endswith("_seconds")
     if section == "crawl":
+        if key in {"collect_archive_enabled", "collect_archive_dir"}:
+            return "页面归档", False
         if key in {"urls", "collect_tags"}:
             return "采集来源", False
         if key in {"observation_days", "collect_end_days", "collect_end_offset"}:

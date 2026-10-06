@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlsplit
 
@@ -12,6 +13,7 @@ from ...domain.models import Manga
 from ...domain.states import QueueSource, Status
 from ...integrations.http import RoleSession
 from ...logging import get_logger
+from .archive import PageArchive
 from .parser import parse_metadata
 from .timing import collection_status
 
@@ -148,6 +150,7 @@ class Collector:
         secrets: SecretsConfig,
         *,
         http_client: Any | None = None,
+        run_id: str | None = None,
     ) -> None:
         self.repository = repository
         self.config = config
@@ -155,6 +158,19 @@ class Collector:
         self.secrets = secrets
         self.http = http_client
         self._role_session: RoleSession | None = None
+        self._archive = (
+            PageArchive(crawl.collect_archive_dir, run_id=run_id)
+            if crawl.collect_archive_enabled else None
+        )
+        if self._archive is not None:
+            log.info(
+                "collection page archive: run_id=%s directory=%s",
+                self._archive.run_id, self._archive.directory,
+            )
+
+    @property
+    def archive_dir(self) -> Path | None:
+        return self._archive.directory if self._archive is not None else None
 
     def collect_html(
         self, html: str, *, source: str = QueueSource.AUTOMATIC.value, actor: str = "collector"
@@ -227,6 +243,8 @@ class Collector:
                 raise RuntimeError(f"collection pagination loop detected: {current_url}")
             seen.add(current_url)
             html = self._get_page(current_url, timeout=timeout)
+            if self._archive is not None:
+                self._archive.save(html, url=current_url, source_url=url)
             page_result = self.collect_html(html, source=source, actor=actor)
             page_result.pages.append(
                 CollectedPage(
