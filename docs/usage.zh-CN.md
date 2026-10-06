@@ -796,31 +796,39 @@ Web 的“系统”页面提供服务控制、更新检查、更新执行和操�
 drain 可以取消，但没有强制停止并重启功能。迁移失败或 Web 无法启动时，
 通过 `eharchive operation show <操作ID>`、`journalctl` 和操作日志手工排查。
 
-## 全量采集与手动补齐
+## 全量采集与手动补采
 
-在“特殊模块 → 全量采集”开始历史轮次。配置位于
-`config/special/full_collect.toml`，默认关闭；先填写无筛选站点入口、
-`app.toml [sessions.full_collect]` 的独立账号和代理池名称，
-凭据与固定代理入口放在 secrets.toml。配置页面提供全量采集选项。
+在“特殊模块 → 全量采集”新建 ID 区间轮次，选择站点和已配置账号，
+每次填写起始 ID 与结束 ID。起始 ID 是首次请求的 next 游标，原样放入 URL，
+不要求对应档案存在，不加一。程序向较小 GID 扫描，只保存不大于起始 ID、
+不小于结束 ID 的可见档案；结束 ID 包含在区间中且必须小于起始 ID。
+结束 ID 为 0 时扫描到站点明确的末页。边界 ID 被删除、隐藏或不存在均可正常执行，
+空区间也可完成；无效页面和未推进的分页保留检查点等待修复，不能当作末页。
 
-默认从一周前定位，每批最多 10 页，请求后随机等待 5～20 秒，批次间
-60～120 秒只保存排队记录，不占工作进程。日期和数据库模式会沿站点上一页链接
-核实冻结边界；手工 URL 必须包含分页游标。定位或分页无法验证时保留检查点，
-显示待修复，不能将错误页当作结束。
+配置位于 `config/special/full_collect.toml`，默认关闭。base_url 和
+`app.toml [sessions.full_collect].account` 只预填新建默认值，可以在创建时覆盖；
+站点、账号、ID 区间冻结在各轮 payload.scope，修改默认值不影响已有轮次。
+代理池仍由 sessions.full_collect.network 指定；Cookie 和代理凭据放在 secrets.toml。
+Web / Supervisor 启动时按现有备份迁移机制将模块配置升级到 config_version=2，
+删除旧日期、定位、补齐默认天数和重叠页数设置，不修改已有工作流数据。
 
-新增档案为 filtered_out，remark 为 [full_collect] 全量收集建档；已有档案
-只刷新元数据，不改变状态、备注、优先级和下载上传信息。
-暂停后继续使用原 workflow。历史轮次暂停并安全退出后，在详情页预览、确认补齐；
-补齐完成不会自动恢复历史。近期未补齐区间会单独显示。
+每批默认最多 10 页，请求后随机等待 5～20 秒，批次间 60～120 秒仅保存排队记录。
+新增档案为 filtered_out，remark 为 [full_collect] 全量收集建档；已有档案只刷新
+元数据，不改变状态、备注、优先级和下载上传信息。账号权限仍影响可见范围。
 
-CLI 同样通过已注册动作控制（row-version 使用当前详情中的版本）：
+暂停后继续沿用原工作流和下一页游标。所有批次安全退出后，可确认“终止此轮”；
+终止保留档案、统计、日志和检查点，此轮不能继续或自动恢复。旧日期轮次只能查看、
+暂停或终止，不自动转换。补采通过手动指定另一 ID 区间创建独立轮次；允许范围重叠，
+新建或继续前先暂停当前轮次并等待安全退出，采集保持串行。
+
+CLI 使用同一创建参数和动作（row-version 使用详情中的当前版本）：
 
 ```powershell
-eharchive --config-dir config special create full_collect
+eharchive --config-dir config special create full_collect --inputs '{"start_id":4234999,"end_id":4200000}'
+eharchive --config-dir config special create full_collect --inputs '{"base_url":"https://exhentai.org/","account":"full_collection","start_id":4200000,"end_id":0}'
 eharchive --config-dir config special action 123 pause --row-version 7
 eharchive --config-dir config special action 123 resume --row-version 8
-eharchive --config-dir config special action 123 preview_backfill --row-version 9 --inputs '{"start_mode":"date","start_at":"2026-09-22T00:00:00+08:00"}'
-eharchive --config-dir config special action 123 confirm_backfill --row-version 10 --inputs '{"confirmed":true}'
+eharchive --config-dir config special action 123 terminate --row-version 9 --inputs '{"confirmed":true}'
 ```
 
 筛选入口另有 crawl.toml 的 screen_required_tags 与 screen_required_tags_mode

@@ -53,7 +53,8 @@ account = "default"
 network = "direct"
 
 [sessions.full_collect]
-# Supply an independent configured account and a fixed-entry proxy pool.
+# Account prefills new workflows; each workflow freezes its selected account.
+# Network selects the fixed-entry proxy pool used by collection workers.
 account = ""
 network = ""
 

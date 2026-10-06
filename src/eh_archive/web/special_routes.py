@@ -50,7 +50,7 @@ def install_special_routes(app, database, templates, app_config, config_dir):
                     "reason": str(form.get("reason", "")),
                     "confirmed": form.get("confirmed") == "yes",
                 }
-            if action == "confirm" and "confirmed" in form:
+            if action in {"confirm", "terminate"} and "confirmed" in form:
                 inputs = {"confirmed": form.get("confirmed") == "yes"}
             if not isinstance(inputs, dict):
                 raise SpecialInvalidRequest("输入必须是对象")

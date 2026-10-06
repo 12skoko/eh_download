@@ -64,6 +64,15 @@ def video_archive_v1_to_v2(document):
     document.pop("auto_start", None)
 
 
+def full_collect_v1_to_v2(document):
+    """ID intervals are provided per workflow; keep site and runtime settings."""
+    for name in (
+        "start_mode", "start_days_ago", "start_at", "start_url",
+        "backfill_default_days_ago", "boundary_overlap_pages",
+    ):
+        document.pop(name, None)
+
+
 # Keys are source versions; each function advances exactly one version.
 MIGRATIONS = {
     "app.toml": {0: establish_version, 1: app_v1_to_v2},
@@ -75,7 +84,7 @@ MIGRATIONS = {
     "special/download_cleanup.toml": {0: establish_version},
     "special/manual_torrent.toml": {0: establish_version},
     "special/lanraragi_metadata.toml": {0: establish_version},
-    "special/full_collect.toml": {0: establish_version},
+    "special/full_collect.toml": {0: establish_version, 1: full_collect_v1_to_v2},
 }
 
 CURRENT_VERSIONS = {filename: max(steps) + 1 for filename, steps in MIGRATIONS.items()}

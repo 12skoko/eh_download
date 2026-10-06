@@ -23,7 +23,6 @@ OPERATION = "collect_batch"
 PHASE_LABELS = {
     "queued": "等待调度 / 批次间等待",
     "collecting": "采集中",
-    "positioning": "定位冻结起点",
     "pausing": "正在暂停",
     "paused": "已暂停",
     "cooling": "冷却中",
@@ -31,7 +30,7 @@ PHASE_LABELS = {
     "waiting_repair": "等待修复",
     "completed": "本轮完成",
     "failed": "执行异常",
-    "cancelled": "已取消",
+    "cancelled": "已终止",
 }
 
 
@@ -73,45 +72,31 @@ def _config(service):
     return config
 
 
-def _new(service, scope, *, history=None, lower=None):
-    payload = {
-        "round_type": "backfill" if history else "history",
-        "history_id": history.id if history else None,
-        "scope": scope,
-        "cursor": scope["initial_url"],
-        "intent": "run",
-        "boundary_verified": scope["mode"] == "url",
-        "initialized": False,
-        "upper_anchor": None,
-        "lower_anchor": lower,
-        "end_reached": False,
+def create(service, inputs):
+    config = _config(service)
+    _assert_idle(service.session)
+    app, _, _, secrets = load_config(service.config_dir)
+    scope = initial_scope(config, app, secrets, inputs)
+    workflow = service.repository.create(KIND, actor=service.actor, payload={
+        "round_type": "id_range", "scope": scope, "cursor": scope["initial_url"],
+        "intent": "run", "end_reached": False,
         "counts": {"pages": 0, "requests": 0, "found": 0, "created": 0, "updated": 0, "retries": 0},
-        "consecutive_failures": 0,
-        "request_failures": 0,
-        "proxy_offset": 0,
-    }
-    workflow = service.repository.create(KIND, actor=service.actor, payload=payload)
+        "consecutive_failures": 0, "request_failures": 0, "proxy_offset": 0,
+    })
     service.repository.queue_job(
-        workflow,
-        OPERATION,
-        trigger_source=service.trigger_source,
-        requested_by=service.actor,
+        workflow, OPERATION, trigger_source=service.trigger_source, requested_by=service.actor,
     )
     return workflow
 
 
-def create(service, inputs):
-    config = _config(service)
-    _assert_idle(service.session)
-    scope = initial_scope(service.session, config, load_config(service.config_dir)[0], inputs)
-    existing = service.session.scalars(select(SpecialWorkflow).where(SpecialWorkflow.kind == KIND))
-    if any(
-        w.payload.get("round_type") == "history"
-        and w.payload.get("scope", {}).get("fingerprint") == scope["fingerprint"]
-        for w in existing
-    ):
-        raise SpecialConflict("此范围已有历史轮次，请继续原轮次或手动补齐")
-    return _new(service, scope)
+def creation_defaults(config_dir):
+    config = load_full_collect_config(config_dir)
+    app, _, _, secrets = load_config(config_dir)
+    return {
+        "collect_default_base": config.base_url,
+        "collect_default_account": app.full_collect_session.account,
+        "collect_accounts": sorted(secrets.accounts),
+    }
 
 
 def _changed(service, workflow, event):
@@ -142,11 +127,8 @@ def resume(service, workflow, inputs):
     if active_jobs(service.session, workflow.id):
         raise SpecialConflict("当前批次尚未停止，或已经排队")
     _assert_idle(service.session, workflow.id)
-    # Never resume history over an unfinished, manually created backfill.
-    if workflow.payload["round_type"] == "history":
-        for other in _others(service.session, workflow.id):
-            if other.payload.get("history_id") == workflow.id:
-                raise SpecialConflict("请先继续并完成已有补齐轮次")
+    if workflow.schema_version != 2:
+        raise SpecialInvalidRequest("旧日期轮次只能查看、暂停或终止；请按 ID 区间新建轮次")
     workflow.payload = {
         **workflow.payload,
         "intent": "run",
@@ -166,97 +148,29 @@ def resume(service, workflow, inputs):
     return workflow
 
 
-def coverage(session, history):
-    covered = history.payload.get("upper_anchor")
-    if not covered:
-        raise SpecialConflict("历史起始页尚未成功落库，不能创建补齐")
-    previous = history.id
-    for item in session.scalars(
-        select(SpecialWorkflow)
-        .where(
-            SpecialWorkflow.kind == KIND,
-            SpecialWorkflow.status == "completed",
-        )
-        .order_by(SpecialWorkflow.id)
-    ):
-        data = item.payload
-        if data.get("history_id") != history.id:
-            continue
-        if data["scope"]["fingerprint"] != history.payload["scope"]["fingerprint"]:
-            continue
-        if data.get("lower_anchor") == covered and data.get("upper_anchor"):
-            covered, previous = data["upper_anchor"], item.id
-    return covered, previous
-
-
-def preview_backfill(service, workflow, inputs):
-    config = _config(service)
-    if workflow.payload.get("round_type") != "history":
-        raise SpecialInvalidRequest("请在所属历史轮次上新建补齐")
-    if workflow.status not in {"active", "completed"} or active_jobs(service.session, workflow.id):
-        raise SpecialConflict("请先暂停历史轮次并等待安全退出")
-    if workflow.status == "active" and workflow.payload.get("intent") != "pause":
-        raise SpecialConflict("请先暂停历史轮次")
-    _assert_idle(service.session, workflow.id)
-    if any(
-        w.payload.get("history_id") == workflow.id for w in _others(service.session, workflow.id)
-    ):
-        raise SpecialConflict("已有未完成补齐，请继续该轮")
-    lower, previous = coverage(service.session, workflow)
-    scope = initial_scope(
-        service.session, config, load_config(service.config_dir)[0], inputs, backfill=True
-    )
-    if scope["fingerprint"] != workflow.payload["scope"]["fingerprint"]:
-        raise SpecialConflict("账号或站点范围已改变，不能连接原覆盖边界")
-    if parse_start_at(scope["upper_at"]) <= parse_start_at(lower["target_at"]):
-        raise SpecialInvalidRequest("补齐新边界必须晚于已覆盖上边界")
-    workflow.payload = {
-        **workflow.payload,
-        "backfill_preview": {
-            "scope": scope,
-            "lower_anchor": lower,
-            "previous_workflow_id": previous,
-            "created_at": utcnow().isoformat(),
-        },
-    }
-    _changed(service, workflow, "full_collect_backfill_previewed")
-    return workflow
-
-
-def confirm_backfill(service, workflow, inputs):
+def terminate(service, workflow, inputs):
     if inputs != {"confirmed": True}:
-        raise SpecialInvalidRequest("必须先预览并确认补齐范围")
-    service.enabled(KIND)
-    _config(service)
-    preview = workflow.payload.get("backfill_preview")
-    if not preview or workflow.payload.get("round_type") != "history":
-        raise SpecialConflict("没有待确认的补齐预览")
-    if active_jobs(service.session, workflow.id):
-        raise SpecialConflict("历史轮次尚未停止")
-    if workflow.status == "active" and workflow.payload.get("intent") != "pause":
-        raise SpecialConflict("历史轮次未暂停")
-    _assert_idle(service.session, workflow.id)
-    if any(
-        w.payload.get("history_id") == workflow.id for w in _others(service.session, workflow.id)
-    ):
-        raise SpecialConflict("已有未完成补齐")
-    if coverage(service.session, workflow) != (
-        preview["lower_anchor"],
-        preview["previous_workflow_id"],
-    ):
-        raise SpecialConflict("覆盖边界已变化，请重新预览")
-    result = _new(service, preview["scope"], history=workflow, lower=preview["lower_anchor"])
-    workflow.payload = {k: v for k, v in workflow.payload.items() if k != "backfill_preview"}
-    _changed(service, workflow, "full_collect_backfill_created")
-    return result
-
-
-def reject_cancel(service, workflow, inputs):
-    raise SpecialInvalidRequest("全量轮次使用 pause/resume 保留断点，不使用取消")
+        raise SpecialInvalidRequest("必须确认永久终止此轮，已采集档案和检查点会保留")
+    if workflow.status != "active":
+        raise SpecialInvalidRequest("工作流已结束")
+    if workflow.payload.get("intent") != "pause" or active_jobs(service.session, workflow.id):
+        raise SpecialConflict("请先暂停此轮，并等待所有批次安全退出")
+    # Existing legacy backfills remain visible and must be settled before their parent.
+    if any(w.payload.get("history_id") == workflow.id for w in _others(service.session, workflow.id)):
+        raise SpecialConflict("请先暂停并终止关联的旧补齐轮次")
+    workflow.payload = {**workflow.payload, "intent": "stop", "stop_reason": "user_terminate"}
+    workflow.status = workflow.phase = "cancelled"
+    workflow.completed_at = utcnow()
+    service.repository.release_resources(workflow, all_scopes=True)
+    _changed(service, workflow, "full_collect_terminated")
+    return workflow
 
 
 def recover(workflow, jobs, context):
     data = dict(workflow.payload)
+    if workflow.schema_version != 2:
+        data.update(intent="pause", stop_reason="legacy_id_range_required")
+        return OperationResult("paused", payload=data)
     if data.get("end_reached"):
         return OperationResult("completed", payload=data, status="completed")
     if data.get("intent") != "run":
@@ -284,7 +198,9 @@ def recover(workflow, jobs, context):
 class FullCollectIntegration(Integration):
     def validate(self, session, workflow, job):
         # A running job must retain its claim long enough to acknowledge pause.
-        return job.status == "running" or workflow.payload.get("intent") == "run"
+        return workflow.schema_version == 2 and (
+            job.status == "running" or workflow.payload.get("intent") == "run"
+        )
 
 
 DEFINITION = WorkflowDefinition(
@@ -299,15 +215,16 @@ DEFINITION = WorkflowDefinition(
             failure_phase="waiting_repair",
         )
     },
+    schema_version=2,
+    readable_versions=frozenset({1, 2}),
     integration=FullCollectIntegration(),
     create=create,
     actions={
         "pause": pause,
         "resume": resume,
         "retry": resume,
-        "cancel": reject_cancel,
-        "preview_backfill": preview_backfill,
-        "confirm_backfill": confirm_backfill,
+        "cancel": terminate,
+        "terminate": terminate,
     },
     lifecycle=LifecyclePolicy(
         cooperative_stop=True,
@@ -353,18 +270,6 @@ def detail(session, workflow_id):
     workflow = session.get(SpecialWorkflow, workflow_id)
     jobs = active_jobs(session, workflow_id)
     due = next((j.next_run_at for j in jobs if j.status == "queued"), None)
-    history = (
-        workflow
-        if workflow.payload["round_type"] == "history"
-        else session.get(
-            SpecialWorkflow,
-            workflow.payload["history_id"],
-        )
-    )
-    try:
-        covered, _ = coverage(session, history)
-    except SpecialConflict:
-        covered = None
     now = utcnow()
     control = session.get(SystemControl, "supervisor")
     online = bool(control and control.lease_until and aware(control.lease_until) > now)
@@ -379,7 +284,8 @@ def detail(session, workflow_id):
         "phase_labels": PHASE_LABELS,
         "current_job": next(iter(jobs), None),
         "next_due": due,
-        "covered_boundary": covered,
-        "history_id": history.id,
+        "legacy_round": workflow.schema_version != 2,
+        "can_terminate": workflow.status == "active" and not jobs
+        and workflow.payload.get("intent") == "pause",
         "now": utcnow(),
     }

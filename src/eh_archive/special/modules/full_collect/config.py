@@ -16,12 +16,6 @@ class FullCollectConfig:
     enabled: bool = False
     max_concurrency: int = 1
     base_url: str = ""
-    start_mode: str = "date"
-    start_days_ago: int = 7
-    start_at: str = ""
-    start_url: str = ""
-    backfill_default_days_ago: int = 7
-    boundary_overlap_pages: int = 1
     batch_max_pages: int = 10
     batch_max_seconds: float = 600
     request_timeout_seconds: float = 30
@@ -43,9 +37,9 @@ def parse_start_at(value: str) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(value)
     except (TypeError, ValueError):
-        raise ValueError("full_collect.start_at 必须是带时区的 ISO 日期时间") from None
+        raise ValueError("全量采集检查点时间必须是带时区的 ISO 日期时间") from None
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ValueError("full_collect.start_at 必须包含时区")
+        raise ValueError("全量采集检查点时间必须包含时区")
     return parsed.astimezone(UTC)
 
 
@@ -96,15 +90,22 @@ def validate_listing_url(url: str, *, base_url: str | None = None) -> str:
     return urlunsplit(("https", parts.netloc, "/", parts.query, ""))
 
 
+def validate_base_url(url):
+    url = validate_listing_url(url)
+    if any(key in {"next", "prev", "seek"} for key, _ in parse_qsl(urlsplit(url).query)):
+        raise ValueError("全量采集站点入口不得包含分页游标")
+    return url
+
+
 def load_full_collect_config(directory, *, app=None, secrets=None) -> FullCollectConfig:
     path = Path(directory) / "special" / "full_collect.toml"
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     except tomllib.TOMLDecodeError:
         raise ValueError("special/full_collect.toml: TOML 语法错误") from None
-    version = raw.pop("config_version", 1)
-    if type(version) is not int or version != 1:
-        raise ValueError("full_collect.config_version 必须为 1")
+    version = raw.pop("config_version", 2)
+    if type(version) is not int or version != 2:
+        raise ValueError("full_collect.config_version 必须为 2；请重启 Web / Supervisor 完成配置迁移")
     if set(raw) - {field.name for field in fields(FullCollectConfig)}:
         raise ValueError("full_collect 配置包含未知字段")
     config = FullCollectConfig(**raw)
@@ -113,14 +114,11 @@ def load_full_collect_config(directory, *, app=None, secrets=None) -> FullCollec
             raise ValueError(f"full_collect.{name} 必须为布尔值")
     for name in (
         "max_concurrency",
-        "boundary_overlap_pages",
         "batch_max_pages",
         "max_consecutive_failures",
-        "start_days_ago",
-        "backfill_default_days_ago",
     ):
         value = getattr(config, name)
-        minimum = 0 if name.endswith("days_ago") else 1
+        minimum = 1
         if type(value) is not int or value < minimum:
             raise ValueError(f"full_collect.{name} 必须是至少为 {minimum} 的整数")
     if config.max_concurrency != 1:
@@ -146,30 +144,16 @@ def load_full_collect_config(directory, *, app=None, secrets=None) -> FullCollec
     for prefix in ("page_delay", "job_delay"):
         if getattr(config, prefix + "_min_seconds") > getattr(config, prefix + "_max_seconds"):
             raise ValueError(f"full_collect.{prefix}_min_seconds 不得大于最大值")
-    for name in ("base_url", "start_mode", "start_at", "start_url"):
-        if not isinstance(getattr(config, name), str):
-            raise TypeError(f"full_collect.{name} 必须是文本")
-    if config.start_mode not in {"date", "database", "url"}:
-        raise ValueError("full_collect.start_mode 必须为 date/database/url")
-    parse_start_at(config.start_at)
+    if not isinstance(config.base_url, str):
+        raise TypeError("full_collect.base_url 必须是文本")
     if config.base_url:
-        validate_listing_url(config.base_url)
-        if any(
-            key in {"next", "prev", "seek"} for key, _ in parse_qsl(urlsplit(config.base_url).query)
-        ):
-            raise ValueError("full_collect.base_url 不得包含分页游标")
-    if config.start_url:
-        validate_listing_url(config.start_url, base_url=config.base_url or None)
+        validate_base_url(config.base_url)
     if config.enabled:
-        if not config.base_url or (config.start_mode == "url" and not config.start_url):
-            raise ValueError("启用全量采集须填写 base_url；URL 模式还须填写 start_url")
         if app is None or secrets is None:
             from ....config import load_config
 
             app, _, _, secrets = load_config(directory)
         ZoneInfo(app.timezone)
-        role = app.full_collect_session
-        if not role.account or role.account not in secrets.accounts or not secrets.cookies(role):
-            raise ValueError("sessions.full_collect.account 必须引用已配置 Cookie 的账号")
-        secrets.proxy_pool(role)
+        # 账号和站点只是新建默认值；执行时使用轮次冻结的选择。
+        secrets.proxy_pool(app.full_collect_session)
     return config

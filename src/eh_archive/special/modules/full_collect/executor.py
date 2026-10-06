@@ -4,6 +4,7 @@ import logging
 import random
 import time
 import traceback
+from dataclasses import replace
 from datetime import UTC, timedelta
 from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qsl, urlsplit
@@ -13,6 +14,7 @@ from requests import RequestException
 from sqlalchemy import select
 
 from ....config import load_config
+from ....config.loader import SessionRole
 from ....db.models import SpecialJob, SpecialWorkflow
 from ....db.repository import ArchiveRepository, utcnow
 from ....domain.errors import ArchiveError
@@ -20,7 +22,7 @@ from ....integrations.http import RoleSession
 from ....services.collector.service import manga_record, parse_collection_page
 from ...core.contracts import OperationResult
 from ...core.execution import ExecutionContext
-from .boundaries import deadline, listing_url, page_ids, scope_key
+from .boundaries import deadline, id_range, listing_url, page_ids
 from .config import load_full_collect_config, parse_start_at, validate_listing_url
 from .module import OPERATION
 
@@ -49,6 +51,16 @@ class FullCollectExecutor:
     def __init__(self, database, *, config_dir, claim):
         self.database, self.config_dir, self.claim = database, config_dir, claim
         self.app, _, _, self.secrets = load_config(config_dir)
+        with database.session() as session:
+            workflow = session.get(SpecialWorkflow, claim.workflow_id)
+            if workflow is None or workflow.schema_version != 2:
+                raise ValueError("旧日期轮次不能执行，请按 ID 区间新建轮次")
+            self.scope = dict(workflow.payload["scope"])
+        id_range(self.scope)
+        role = SessionRole(self.scope["account"], self.app.full_collect_session.network)
+        if role.account not in self.secrets.accounts or not self.secrets.cookies(role):
+            raise ValueError("工作流账号不存在或未配置 Cookie")
+        self.app = replace(self.app, full_collect_session=role)
         self.config = load_full_collect_config(config_dir, app=self.app, secrets=self.secrets)
         self.context = ExecutionContext(database, claim, config_dir=config_dir, app_config=self.app)
         self.http = RoleSession(self.app, self.secrets, request_delay_seconds=0)
@@ -248,7 +260,7 @@ class FullCollectExecutor:
             ids = page_ids(page)
             next_url = None
             if page.next_url:
-                validated = validate_listing_url(page.next_url, base_url=self.config.base_url)
+                validated = validate_listing_url(page.next_url, base_url=self.scope["base_url"])
                 cursor = {
                     k: v
                     for k, v in parse_qsl(urlsplit(validated).query)
@@ -264,46 +276,15 @@ class FullCollectExecutor:
             data = dict(workflow.payload)
             if data.get("intent") != "run":
                 return False
-            upper = parse_start_at(data["scope"]["upper_at"])
-            if not data["boundary_verified"]:
-                newer = any(item.posted_at > upper for item in page.items)
-                if not newer and not page.first_page:
-                    if not page.prev_url or data.get("positioning_pages", 0) >= 100:
-                        raise CollectionIssue("无法验证日期起点，请检查页面或使用手工分页 URL")
-                    try:
-                        previous = validate_listing_url(
-                            page.prev_url, base_url=data["scope"]["base_url"]
-                        )
-                    except ValueError:
-                        raise CollectionIssue("起点回溯链接无效") from None
-                    if previous in data.get("positioning_urls", []):
-                        raise CollectionIssue("起点回溯出现循环")
-                    data["positioning_urls"] = (data.get("positioning_urls", []) + [page.url])[-4:]
-                    data["positioning_pages"] = data.get("positioning_pages", 0) + 1
-                    data["cursor"] = previous
-                    if not repository.update_state(self.claim, payload=data, phase="positioning"):
-                        raise RuntimeError("stale full collection positioning")
-                    return True
-                data["boundary_verified"] = True
+            start_id, end_id = id_range(data["scope"])
             last_gid = data.get("scan_last_gid")
             if ids and last_gid is not None and (ids[0] > last_gid or ids[-1] >= last_gid):
                 raise CollectionIssue("下一页没有向历史推进，保留原游标等待核实")
             if next_url and next_url in (data.get("recent_urls", []) + [page.url]):
                 raise CollectionIssue("列表分页出现循环")
-            eligible = [item for item in page.items if item.posted_at <= upper]
-            if not data.get("initialized") and eligible:
-                item = eligible[0]
-                anchor = {
-                    "gid": int(item.manga_id.split("/", 1)[0]),
-                    "manga_id": item.manga_id,
-                    "target_at": item.posted_at.isoformat(),
-                    "page_url": page.url,
-                }
-                if data.get("lower_anchor") and anchor["gid"] <= data["lower_anchor"]["gid"]:
-                    raise CollectionIssue("新起点没有越过旧覆盖边界，请重新核实补齐起点")
-                data.update(initialized=True, upper_anchor=anchor)
-            if not next_url and not data.get("initialized"):
-                raise CollectionIssue("起点未找到范围内档案，不能将空页记作全量完成")
+            eligible = [
+                item for item, gid in zip(page.items, ids) if end_id <= gid <= start_id
+            ]
             created = updated = 0
             archive = ArchiveRepository(repository.session)
             for item in eligible:
@@ -316,19 +297,11 @@ class FullCollectExecutor:
                 _, added = archive.upsert_manga_metadata(record)
                 created += int(added)
                 updated += int(not added)
-            # Only numeric order verified above can establish crossing, not a
-            # coincidental existing database ID or a removed boundary record.
-            below = data.get("lower_anchor") and ids and ids[0] < data["lower_anchor"]["gid"]
-            overlap = data.get("overlap_pages", 0) + 1 if below else 0
-            data["overlap_pages"] = overlap
-            if (
-                data.get("lower_anchor")
-                and not next_url
-                and (not ids or ids[-1] > data["lower_anchor"]["gid"])
-            ):
-                raise CollectionIssue("末页尚未越过补齐旧边界，不能声称区间完整")
-            terminal = not next_url or (below and overlap >= self.config.boundary_overlap_pages)
-            data["end_reached"], data["cursor"] = bool(terminal), next_url
+            # Missing IDs are allowed. Reaching/crossing the inclusive lower
+            # bound, or an explicit site terminal marker, completes the interval.
+            terminal = not next_url or bool(end_id and ids and ids[-1] <= end_id)
+            data["end_reached"] = bool(terminal)
+            data["cursor"] = None if terminal else next_url
             data["recent_urls"] = (data.get("recent_urls", []) + [page.url])[-4:]
             if ids:
                 data["scan_last_gid"] = ids[-1]
@@ -347,8 +320,8 @@ class FullCollectExecutor:
                 "committed_at": utcnow().isoformat(),
                 "first_gid": ids[0] if ids else None,
                 "last_gid": ids[-1] if ids else None,
-                "oldest_at": min((x.posted_at for x in page.items), default=upper).isoformat(),
-                "newest_at": max((x.posted_at for x in page.items), default=upper).isoformat(),
+                "oldest_at": min((x.posted_at for x in page.items)).isoformat() if ids else None,
+                "newest_at": max((x.posted_at for x in page.items)).isoformat() if ids else None,
                 "found": len(eligible),
                 "created": created,
                 "updated": updated,
@@ -393,11 +366,8 @@ class FullCollectExecutor:
                     return self._finish("paused", "user_pause")
                 if reason := self.context.stop_requested():
                     return self._finish("interrupted", reason)
-                if data["scope"]["fingerprint"] != scope_key(
-                    self.config.base_url,
-                    self.app.full_collect_session.account,
-                ):
-                    return self._issue("scope_configuration_changed")
+                if data["scope"] != self.scope:
+                    return self._issue("scope_checkpoint_changed")
                 if (
                     attempts >= self.config.batch_max_pages
                     or time.monotonic() - started >= self.config.batch_max_seconds

@@ -1,95 +1,66 @@
-"""Frozen scope and runtime-verified pagination; no network or scheduling here."""
+"""Frozen ID intervals and runtime-verified pagination; no network or scheduling here."""
 
 import hashlib
 import json
-from datetime import UTC, timedelta
 from itertools import pairwise
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import select
-
-from ....db.models import MangaRecord
+from ....config.loader import SessionRole
 from ....db.repository import utcnow
-from .config import parse_start_at, validate_listing_url
+from .config import parse_start_at, validate_base_url, validate_listing_url
 
 
 def listing_url(base, **cursor):
     parts = urlsplit(validate_listing_url(base))
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    for name in ("next", "prev", "seek"):
+    for name in ("next", "prev", "seek", "inline_set"):
         query.pop(name, None)
-    query.pop("inline_set", None)
-    # An account's hidden-language/uploader/tag preferences must not narrow scope.
     query.update(f_cats="0", f_sfl="on", f_sfu="on", f_sft="on")
     query.update({name: str(value) for name, value in cursor.items()})
     return validate_listing_url(urlunsplit((parts.scheme, parts.netloc, "/", urlencode(query), "")))
 
 
-def scope_key(base, account):
-    return hashlib.sha256(
-        json.dumps(
-            {"base": listing_url(base), "account": account, "order": "gid-desc-v1"},
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
+def id_range(inputs):
+    result = []
+    for name, minimum in (("start_id", 1), ("end_id", 0)):
+        value = inputs.get(name)
+        if isinstance(value, str) and value.isascii() and value.isdecimal():
+            value = int(value)
+        if type(value) is not int or value < minimum:
+            raise ValueError(f"{name} 必须是至少为 {minimum} 的整数")
+        result.append(value)
+    start, end = result
+    if end >= start:
+        raise ValueError("结束 ID 必须小于起始 ID；0 表示采集到站点末页")
+    return start, end
 
 
-def initial_scope(session, config, app, inputs, *, backfill=False):
-    allowed = {"start_mode", "start_at", "start_url"}
-    if set(inputs) - allowed:
-        raise ValueError("未知起点参数")
-    mode = inputs.get("start_mode", config.start_mode)
-    if mode not in {"date", "database", "url"}:
-        raise ValueError("起点模式必须为 date/database/url")
-    days = config.backfill_default_days_ago if backfill else config.start_days_ago
-    supplied = inputs.get("start_at", "" if backfill else config.start_at)
-    upper = parse_start_at(supplied) or (utcnow() - timedelta(days=days))
-    if upper >= utcnow():
-        raise ValueError("起点必须早于当前时间")
-    base = listing_url(config.base_url)
-    anchor_id = None
-    if mode == "url":
-        url = inputs.get("start_url", config.start_url)
-        url = validate_listing_url(url, base_url=base)
-        query = dict(parse_qsl(urlsplit(url).query))
-        if not any(name in query for name in ("next", "prev", "seek")):
-            raise ValueError("手工起点须包含分页游标，不能从最新页开始")
-        url = listing_url(url, **{k: v for k, v in query.items() if k in {"next", "prev", "seek"}})
-    else:
-        target = upper
-        if mode == "database":
-            # This record is only a navigation hint, never proof of page coverage.
-            record = session.scalar(
-                select(MangaRecord)
-                .where(
-                    MangaRecord.posted_at <= upper,
-                    MangaRecord.link.like(f"https://{urlsplit(base).netloc}/g/%"),
-                    ~MangaRecord.manga_id.like("picacg/%"),
-                )
-                .order_by(MangaRecord.posted_at.desc(), MangaRecord.manga_id.desc())
-                .limit(1)
-            )
-            if record is None:
-                raise ValueError("数据库没有目标时间之前的同站点档案，请选择日期或手工 URL")
-            target = (
-                record.posted_at.replace(tzinfo=UTC)
-                if record.posted_at.tzinfo is None
-                else record.posted_at
-            )
-            anchor_id = record.manga_id
-        # Seek is only an initial hint. The executor follows the site's previous
-        # links until it observes the upper boundary or the explicit first page.
-        url = listing_url(
-            base, seek=(target.astimezone(UTC) + timedelta(days=1)).date().isoformat()
-        )
+def scope_key(base, account, start_id, end_id):
+    # Display parameters and query ordering do not change the interval identity.
+    parts = urlsplit(listing_url(base))
+    return hashlib.sha256(json.dumps({
+        "host": parts.netloc, "account": account,
+        "filters": {"f_cats": "0", "f_sfl": "on", "f_sfu": "on", "f_sft": "on"},
+        "order": "gid-desc-v1", "start_id": start_id, "end_id": end_id,
+    }, sort_keys=True).encode()).hexdigest()
+
+
+def initial_scope(config, app, secrets, inputs):
+    if set(inputs) - {"base_url", "account", "start_id", "end_id"}:
+        raise ValueError("未知采集范围参数")
+    start, end = id_range(inputs)
+    base = listing_url(validate_base_url(inputs.get("base_url", config.base_url)))
+    account = inputs.get("account", app.full_collect_session.account)
+    if not isinstance(account, str) or not account or account not in secrets.accounts:
+        raise ValueError("请选择已配置的全量采集账号")
+    role = SessionRole(account, app.full_collect_session.network)
+    if not secrets.cookies(role):
+        raise ValueError("全量采集账号必须配置 Cookie")
+    secrets.proxy_pool(role)
     return {
-        "mode": mode,
-        "upper_at": upper.isoformat(),
-        "initial_url": url,
-        "base_url": base,
-        "account": app.full_collect_session.account,
-        "fingerprint": scope_key(base, app.full_collect_session.account),
-        "database_anchor": anchor_id,
+        "start_id": start, "end_id": end, "base_url": base, "account": account,
+        "initial_url": listing_url(base, next=start),
+        "fingerprint": scope_key(base, account, start, end),
     }
 
 
@@ -102,11 +73,7 @@ def page_ids(page):
 
 def deadline(payload, now=None):
     now = now or utcnow()
-    return max(
-        [now]
-        + [
-            parsed
-            for key in ("next_request_at", "cooldown_until", "batch_not_before")
-            if (parsed := parse_start_at(payload.get(key, "")))
-        ]
-    )
+    return max([now] + [
+        parsed for key in ("next_request_at", "cooldown_until", "batch_not_before")
+        if (parsed := parse_start_at(payload.get(key, "")))
+    ])

@@ -28,7 +28,7 @@ def install_routes(app, database, templates, app_config, config_dir):
     def form_inputs(form):
         return {
             name: str(form[name]).strip()
-            for name in ("start_mode", "start_at", "start_url")
+            for name in ("base_url", "account", "start_id", "end_id")
             if form.get(name)
         }
 
@@ -46,42 +46,6 @@ def install_routes(app, database, templates, app_config, config_dir):
             with database.session() as session:
                 workflow = service(session, request).create(KIND, form_inputs(form))
             return _redirect_response(request, f"/special/workflows/{workflow.id}")
-        except ValueError as exc:
-            return error(request, exc)
-
-    @app.post("/special/full-collect/{workflow_id}/backfill-preview")
-    async def preview(request: Request, workflow_id: int):
-        form = await _validated_form(request)
-        try:
-            with database.session() as session:
-                workflow = session.get(SpecialWorkflow, workflow_id)
-                if workflow is None or workflow.kind != KIND:
-                    raise SpecialInvalidRequest("全量轮次不存在")
-                service(session, request).action(
-                    workflow_id,
-                    "preview_backfill",
-                    row_version=int(str(form.get("row_version", ""))),
-                    inputs=form_inputs(form),
-                )
-            return _redirect_response(request, f"/special/workflows/{workflow_id}")
-        except ValueError as exc:
-            return error(request, exc)
-
-    @app.post("/special/full-collect/{workflow_id}/backfill-confirm")
-    async def confirm(request: Request, workflow_id: int):
-        form = await _validated_form(request)
-        try:
-            with database.session() as session:
-                workflow = session.get(SpecialWorkflow, workflow_id)
-                if workflow is None or workflow.kind != KIND:
-                    raise SpecialInvalidRequest("全量轮次不存在")
-                created = service(session, request).action(
-                    workflow_id,
-                    "confirm_backfill",
-                    row_version=int(str(form.get("row_version", ""))),
-                    inputs={"confirmed": form.get("confirmed") == "yes"},
-                )
-            return _redirect_response(request, f"/special/workflows/{created.id}")
         except ValueError as exc:
             return error(request, exc)
 

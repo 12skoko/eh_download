@@ -151,7 +151,7 @@ def load_modules():
     registrations = (
         ModuleRegistration(
             full.DEFINITION, full.executor, full.capability,
-            "逐页建档、断点续跑与手动补齐，新增档案进入 filtered_out。",
+            "按 ID 区间逐页建档，支持暂停、继续和终止，新增档案进入 filtered_out。",
             "special/full_collect.html", full.dashboard, full.detail,
             "special/full_collect_detail.html", "special/_full_collect_panel.html",
             full_routes,

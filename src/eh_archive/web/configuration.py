@@ -330,7 +330,8 @@ APP_FIELDS = tuple(
     FieldSpec(("sessions", "browse", "network"), "浏览网络"),
     FieldSpec(("sessions", "archive", "account"), "归档账号"),
     FieldSpec(("sessions", "archive", "network"), "归档网络"),
-    FieldSpec(("sessions", "full_collect", "account"), "全量采集账号", optional=True),
+    FieldSpec(("sessions", "full_collect", "account"), "新建全量轮次默认账号", optional=True,
+              help="仅预填新建工作流；已有轮次使用创建时选择的账号。"),
     FieldSpec(("sessions", "full_collect", "network"), "全量采集代理池", optional=True),
 )
 APP_FIELDS = tuple(
@@ -348,14 +349,8 @@ VIDEO_ARCHIVE_FIELDS = tuple(
 FULL_COLLECT_FIELDS = (
     FieldSpec(("enabled",), "启用全量采集", "bool", help="启用只允许调度，不自动创建历史或补齐轮次。"),
     FieldSpec(("max_concurrency",), "模块最大并发", "int", minimum=1, maximum=1),
-    FieldSpec(("base_url",), "无筛选站点入口", optional=True),
-    FieldSpec(("start_mode",), "首次定位方式", "choice", options=("date", "database", "url")),
-    FieldSpec(("start_days_ago",), "首次起点距今天数", "int", minimum=0),
-    FieldSpec(("start_at",), "首次起点日期时间", optional=True,
-              help="可选带时区 ISO 日期时间；只影响新任务。"),
-    FieldSpec(("start_url",), "首次分页 URL", optional=True),
-    FieldSpec(("backfill_default_days_ago",), "手动补齐默认距今天数", "int", minimum=0),
-    FieldSpec(("boundary_overlap_pages",), "交界重叠页数", "int", minimum=1),
+    FieldSpec(("base_url",), "新建轮次默认站点入口", optional=True,
+              help="仅预填新建工作流；已有轮次使用创建时选择的站点。"),
     FieldSpec(("batch_max_pages",), "每批最多页数", "int", minimum=1),
     *(
         FieldSpec((name,), label + "（秒）", "float", minimum=0.001 if positive else 0)
@@ -479,8 +474,7 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
         return "模块设置", key == "max_concurrency"
     if section == "full_collect":
         return ("范围与启停", False) if key in {
-            "enabled", "max_concurrency", "base_url", "start_mode", "start_days_ago",
-            "start_at", "start_url", "backfill_default_days_ago", "resume_after_restart"
+            "enabled", "max_concurrency", "base_url", "resume_after_restart"
         } else ("批次与等待", key in {
             "request_timeout_seconds", "page_write_timeout_seconds", "control_poll_seconds",
             "max_consecutive_failures", "pool_failure_cooldown_seconds", "retry_delay_seconds"

@@ -132,7 +132,8 @@ Before production cutover:
 ## Full collection module
 
 The module ships disabled at config/special/full_collect.toml. Populate its HTTPS
-root base_url, an explicit app.toml sessions.full_collect account/network, and
+root base_url and app.toml sessions.full_collect.account as creation defaults, plus
+sessions.full_collect.network and
 secrets.toml account cookies plus a proxy_pool referring to fixed http/https proxy
 entries. Empty or nested pools fail validation; no direct fallback is used.
 Configuration editing, synchronization and packaged samples include these fields.
@@ -141,10 +142,12 @@ Credentials are never copied into workflow checkpoints or module files.
 The target special-task concurrency is 2, with full_collect limited to 1. Restart
 Web to load the new catalog/templates and Supervisor to load lifecycle capabilities
 and concurrency. No Alembic migration is needed. Enabling never starts collection;
-create a historical round explicitly in the module page, then check its first
-committed boundary. A site/schema/login error stops at waiting_repair.
+create an ID interval explicitly in the module page, then check its first committed
+page. Startup migrates full_collect.toml to config_version=2 with the existing backup
+mechanism, removing retired date/locator/overlap settings. Existing workflow rows
+are not converted; pause/terminate legacy date rounds and create an explicit ID interval. A site/schema/login error stops at waiting_repair.
 
-Date/GID seeking is treated as a hint. Navigation is validated from returned pages,
+The start ID is used directly as a next cursor; its gallery need not exist. Navigation is validated from returned pages,
 including descending IDs, same-site links and explicit terminal markers. Before
 long-running deployment, validate the chosen account's visibility and list layout
 on the actual site. Local synthetic tests do not establish current site connectivity

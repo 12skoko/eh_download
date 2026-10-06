@@ -676,6 +676,10 @@ def create_app(
             )
         with database.session() as session:
             data = module.load_dashboard(session, page=max(1, page))
+        if kind == "full_collect":
+            from ..special.modules.full_collect.module import creation_defaults
+
+            data.update(creation_defaults(config_dir))
         module_health = special_module_health(module.kind, config_dir)
         return templates.TemplateResponse(
             request=request,

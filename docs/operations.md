@@ -157,15 +157,23 @@ leaves the old archive in `outdated`; it does not cause automatic deletion.
 
 ## Full collection operations
 
-The full_collect special module uses one history workflow and manually confirmed
-backfill workflows. Page metadata and the resume cursor share a claim-validated
-transaction. No database schema migration or separate checkpoint file is required.
+The full_collect special module creates independent ID-interval workflows. Enter
+a positive start_id (used directly as the site's next cursor) and end_id (inclusive,
+or 0 for the site terminal page). Missing boundary galleries are allowed. Manual
+incremental collection uses another explicit interval, with no coverage-chain inference.
+Site and account are frozen per workflow; config values only prefill creation.
+Pause the current round and wait for its batch to exit before creating/resuming another.
+Page metadata and the resume cursor share a claim-validated transaction.
+No database schema migration or separate checkpoint file is required.
 
 Use Pause/Resume in the workflow detail page. Supervisor drain/shutdown sends the
 optional generic cooperative-stop notification. A normal stop saves progress at a
 page boundary; an abnormal exit is recovered only after confirmation or explicit
 claim fencing. With resume_after_restart=false, existing queued batches are also
-held for manual resume. Paused, repair-required and completed rounds do not restart.
+held for manual resume. Paused, repair-required, terminated and completed rounds do not restart.
+After pausing and waiting for all jobs to stop, confirm Terminate to keep archives,
+checkpoints and statistics but permanently end the round. Legacy date-format rounds
+remain viewable and can be paused/terminated; they cannot resume under the ID executor.
 
 Configure special_processing.max_concurrency=2 and full_collect.max_concurrency=1.
 The pool is shared, not reserved. Restart Supervisor after changing concurrency or
@@ -175,4 +183,4 @@ Details report boundaries, current batch, checkpoint, counts, account/proxy name
 cooldown, heartbeat and stop reasons. Workflow logs support job/level selection and
 bounded reading. Files continue under logs/special/full_collect using the existing
 per-job naming convention. This module does not rotate, delete or maintain logs.
-Archive counts measure processing, including boundary overlap, not unique coverage.
+Archive counts measure processing, including overlapping intervals, not unique coverage.
