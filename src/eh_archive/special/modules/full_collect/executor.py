@@ -455,6 +455,14 @@ class FullCollectExecutor:
                     ):
                         return
                     continue
+                if 300 <= status < 400:
+                    log.warning(
+                        "full_collect redirect workflow=%s job=%s status=%s location=%s",
+                        self.claim.workflow_id,
+                        self.claim.job_id,
+                        status,
+                        response.headers.get("Location", ""),
+                    )
                 if status != 200:
                     return self._issue(f"http_{status}_requires_repair")
                 try:
