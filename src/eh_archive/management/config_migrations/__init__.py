@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import MutableMapping
+from copy import deepcopy
 import os
 import shutil
 import tempfile
@@ -63,6 +65,40 @@ def configuration_lock(directory: Path, *, timeout: float = 30):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def _fill_missing(document, defaults, *, filename: str, path: tuple[str, ...] = ()) -> None:
+    """Materialize supported defaults without replacing user-owned values/maps."""
+    for key, value in defaults.items():
+        location = (*path, key)
+        if key == "config_version" or (filename == "crawl.toml" and location == ("urls",)):
+            continue
+        if key not in document:
+            document[key] = deepcopy(value)
+        elif isinstance(value, MutableMapping) and isinstance(document[key], MutableMapping):
+            _fill_missing(document[key], value, filename=filename, path=location)
+
+
+def _complete_defaults(document, filename: str) -> None:
+    template = sample_directory() / filename
+    try:
+        defaults = tomlkit.parse(template.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ParseError):
+        raise ConfigMigrationError(
+            f"{filename}: 配置模板缺失或无法解析，文件未修改。"
+        ) from None
+    if filename == "secrets.toml":
+        # Example credentials, account/network maps and connection settings are
+        # instructions, never values to insert into an existing secrets file.
+        defaults = {"web_username": defaults.get("web_username", "admin")}
+    if filename in {"special/download_cleanup.toml", "special/lanraragi_compare.toml"}:
+        name = Path(filename).stem
+        defaults = defaults.get(name, defaults)
+        if name in document:
+            if isinstance(document[name], MutableMapping):
+                _fill_missing(document[name], defaults, filename=filename)
+            return
+    _fill_missing(document, defaults, filename=filename)
+
+
 def _prepare(directory: Path) -> tuple[dict[str, bytes], dict[str, bytes]]:
     originals, candidates = {}, {}
     for filename, expected in CURRENT_VERSIONS.items():
@@ -101,9 +137,7 @@ def _prepare(directory: Path) -> tuple[dict[str, bytes], dict[str, bytes]]:
             raise ConfigMigrationError(
                 f"{filename}: 配置模板版本必须为 {expected}，文件未修改。"
             )
-        if version == expected:
-            candidates[filename] = content
-            continue
+        before = document.unwrap()
         while version < expected:
             step = MIGRATIONS[filename].get(version)
             if step is None:
@@ -115,7 +149,12 @@ def _prepare(directory: Path) -> tuple[dict[str, bytes], dict[str, bytes]]:
             version += 1
         # TOMLDocument puts scalar keys before tables, even when appended last.
         document["config_version"] = expected
-        candidates[filename] = tomlkit.dumps(document).encode("utf-8")
+        if original is not None:
+            _complete_defaults(document, filename)
+        candidates[filename] = (
+            content if document.unwrap() == before
+            else tomlkit.dumps(document).encode("utf-8")
+        )
     return originals, candidates
 
 

@@ -82,6 +82,11 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("两次输入的密码不一致")
         print(hash_password(password))
         return 0
+    migrated_files = []
+    if args.command == "supervisor":
+        from .management.config_migrations import migrate_configuration
+
+        migrated_files = migrate_configuration(args.config_dir)
     app, _, crawl, secrets = load_config(args.config_dir)
     session_run_id = str(uuid.uuid4())
     component = args.command if args.command in {"supervisor", "web"} else "cli"
@@ -92,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
         component=component,
         run_id=session_run_id,
     )
+    if migrated_files:
+        log.info("配置迁移完成：%s", ", ".join(migrated_files))
     database = Database(app.database_url)
     if args.command == "db":
         if args.action == "upgrade":
