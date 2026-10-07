@@ -38,16 +38,16 @@
 </div>
 {%- endmacro %}
 
-{% macro pager(page, url, target=none, select=none) -%}
+{% macro pager(page, url, target=none, select=none, page_param='page') -%}
 {%- if page.total > 0 or caller is defined -%}
 <nav class="pager{{ ' with-controls' if caller is defined }}" aria-label="分页">
   <span class="total">共 {{ page.total }} 条{% if page.total_pages > 1 %} · 第 {{ page.page }} / {{ page.total_pages }} 页{% endif %}</span>
   {% if caller is defined %}{{ caller() }}{% endif %}
   {%- if page.total_pages > 1 -%}
     {%- set sep = '&' if '?' in url else '?' -%}
-    {% if page.has_prev %}<a href="{{ url }}{{ sep }}page={{ page.page - 1 }}" {% if target %}hx-get="{{ url }}{{ sep }}page={{ page.page - 1 }}" hx-target="#{{ target }}" hx-swap="outerHTML" hx-push-url="true"{% endif %} aria-label="上一页">{{ icon('chevron-left', 'icon-sm') }}</a>{% endif %}
-    {% for p in page.page_numbers() %}{% if p is none %}<span class="gap">…</span>{% elif p == page.page %}<span class="page" aria-current="page">{{ p }}</span>{% else %}<a href="{{ url }}{{ sep }}page={{ p }}" {% if target %}hx-get="{{ url }}{{ sep }}page={{ p }}" hx-target="#{{ target }}" hx-swap="outerHTML" hx-push-url="true"{% endif %}>{{ p }}</a>{% endif %}{% endfor %}
-    {% if page.has_next %}<a href="{{ url }}{{ sep }}page={{ page.page + 1 }}" {% if target %}hx-get="{{ url }}{{ sep }}page={{ page.page + 1 }}" hx-target="#{{ target }}" hx-swap="outerHTML" hx-push-url="true"{% endif %} aria-label="下一页">{{ icon('chevron-right', 'icon-sm') }}</a>{% endif %}
+    {% if page.has_prev %}<a href="{{ url }}{{ sep }}{{ page_param }}={{ page.page - 1 }}" {% if target %}hx-get="{{ url }}{{ sep }}{{ page_param }}={{ page.page - 1 }}" hx-target="#{{ target }}" hx-swap="outerHTML" hx-push-url="true"{% endif %} aria-label="上一页">{{ icon('chevron-left', 'icon-sm') }}</a>{% endif %}
+    {% for p in page.page_numbers() %}{% if p is none %}<span class="gap">…</span>{% elif p == page.page %}<span class="page" aria-current="page">{{ p }}</span>{% else %}<a href="{{ url }}{{ sep }}{{ page_param }}={{ p }}" {% if target %}hx-get="{{ url }}{{ sep }}{{ page_param }}={{ p }}" hx-target="#{{ target }}" hx-swap="outerHTML" hx-push-url="true"{% endif %}>{{ p }}</a>{% endif %}{% endfor %}
+    {% if page.has_next %}<a href="{{ url }}{{ sep }}{{ page_param }}={{ page.page + 1 }}" {% if target %}hx-get="{{ url }}{{ sep }}{{ page_param }}={{ page.page + 1 }}" hx-target="#{{ target }}" hx-swap="outerHTML" hx-push-url="true"{% endif %} aria-label="下一页">{{ icon('chevron-right', 'icon-sm') }}</a>{% endif %}
   {%- endif -%}
 </nav>
 {%- endif -%}
@@ -81,13 +81,13 @@
 </li>
 {%- endmacro %}
 
-{% macro job_table(jobs, labels={}) -%}
+{% macro job_table(jobs, labels={}, logs_url=none) -%}
 <div class="table-wrap"><table class="table compact">
   <thead><tr><th>Job</th><th>操作</th><th>尝试</th><th>状态</th><th>来源</th><th>开始</th><th>结束</th><th>错误</th></tr></thead>
   <tbody>
   {% for job in jobs %}
   <tr>
-    <td class="mono">#{{ job.id }}</td>
+    <td class="mono">{% if logs_url %}<a href="{{ logs_url }}?job_id={{ job.id }}" title="查看 Job #{{ job.id }} 日志">#{{ job.id }}</a>{% else %}#{{ job.id }}{% endif %}</td>
     <td><span class="mono xs">{{ job.operation }}</span>{% if labels.get(job.operation) %}<div class="xs muted">{{ labels.get(job.operation) }}</div>{% endif %}</td>
     <td class="num">{{ job.attempt_no }}</td>
     <td>{{ run_pill(job.status) }}</td>

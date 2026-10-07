@@ -51,17 +51,6 @@
     if (form) form.dataset.v2Dirty = "true";
     if (form?.matches("[data-video-choices]")) updateRisks(form);
   });
-  let workflowTab = "jobs";
-  document.addEventListener("htmx:beforeSwap", event => {
-    if (event.detail.target?.id === "workflow-panel") {
-      workflowTab = $('[data-tab][aria-selected="true"]', event.detail.target)?.dataset.tab || "jobs";
-    }
-  });
-  document.addEventListener("htmx:afterSwap", event => {
-    if (event.detail.target?.id === "workflow-panel") {
-      $(`[data-tab="${workflowTab}"]`, $("#workflow-panel"))?.click();
-    }
-  });
   function updateRisks(form) {
     const risks = new Set();
     for (const role of ["image", "video"]) {

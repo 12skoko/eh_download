@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ...config import load_config
 from ...db.models import EventLog, SpecialJob, SpecialWorkflow
@@ -195,17 +195,41 @@ class ModuleService:
         return result[0]
 
 
-def workflow_detail(session, workflow_id, *, page=1):
+def workflow_detail(session, workflow_id, *, page=1, jobs_page=None, events_page=None):
     workflow = session.get(SpecialWorkflow, workflow_id)
     if workflow is None:
         raise SpecialNotFound("特殊工作流不存在")
+    history_paging = None
+    history_active_job = None
+    jobs_limit, events_limit = 50, 100
+    job_page = event_page = max(1, page)
+    if jobs_page is not None or events_page is not None:
+        jobs_limit, events_limit = 20, 30
+        jobs_total = session.scalar(select(func.count()).select_from(SpecialJob).where(
+            SpecialJob.workflow_id == workflow_id
+        ))
+        events_total = session.scalar(select(func.count()).select_from(EventLog).where(
+            EventLog.component == "special_processing",
+            workflow_event_filter(session, workflow_id),
+        ))
+        job_page = min(max(1, jobs_page or 1), max(1, (jobs_total + jobs_limit - 1) // jobs_limit))
+        event_page = min(max(1, events_page or 1), max(1, (events_total + events_limit - 1) // events_limit))
+        history_paging = {
+            "jobs_page": job_page, "events_page": event_page,
+            "jobs_total": jobs_total, "events_total": events_total,
+            "jobs_limit": jobs_limit, "events_limit": events_limit,
+        }
+        history_active_job = session.scalar(select(SpecialJob).where(
+            SpecialJob.workflow_id == workflow_id,
+            SpecialJob.status.in_(("queued", "running")),
+        ).order_by(SpecialJob.id.desc()).limit(1))
     jobs = list(
         session.scalars(
             select(SpecialJob)
             .where(SpecialJob.workflow_id == workflow_id)
             .order_by(SpecialJob.id.desc())
-            .offset((max(1, page) - 1) * 50)
-            .limit(50)
+            .offset((job_page - 1) * jobs_limit)
+            .limit(jobs_limit)
         )
     )
     events = list(
@@ -216,8 +240,8 @@ def workflow_detail(session, workflow_id, *, page=1):
                 workflow_event_filter(session, workflow_id),
             )
             .order_by(EventLog.created_at.desc(), EventLog.id.desc())
-            .offset((max(1, page) - 1) * 100)
-            .limit(100)
+            .offset((event_page - 1) * events_limit)
+            .limit(events_limit)
         )
     )
     try:
@@ -232,7 +256,7 @@ def workflow_detail(session, workflow_id, *, page=1):
     expired = next(
         (
             job
-            for job in jobs
+            for job in ([history_active_job] if history_active_job is not None else jobs)
             if job.status == "running" and job.lease_until and aware(job.lease_until) < utcnow()
         ),
         None,
@@ -243,6 +267,8 @@ def workflow_detail(session, workflow_id, *, page=1):
         "events": events,
         "payload": workflow.payload or {},
         "page": max(1, page),
+        "history_paging": history_paging,
+        "history_active_job": history_active_job,
         "execution_reason": execution_reason,
         "expired_job": expired,
     }

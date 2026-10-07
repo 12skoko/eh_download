@@ -514,6 +514,8 @@ details.more > summary:hover { color: var(--text); }
 .tabs > [aria-selected="true"], .tabs > [aria-current="page"] { color: var(--text); }
 .tabs > [aria-selected="true"]::after, .tabs > [aria-current="page"]::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--primary); }
 .tabs .count { font: 500 var(--fs-xs)/1 var(--font-mono); color: var(--faint); }
+.workflow-history-tabs { overflow-y: hidden; }
+.workflow-history-tabs > [aria-selected="true"]::after { bottom: 0; }
 
 /* ---------- 浮层：对话框 / 弹出层 / 通知 ---------- */
 dialog.modal {
