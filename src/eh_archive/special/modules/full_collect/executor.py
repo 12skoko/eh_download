@@ -171,6 +171,41 @@ class FullCollectExecutor:
             if not repository.update_state(self.claim, payload=data):
                 raise RuntimeError("stale full collection request completion")
 
+    def _check_page_count(self, page):
+        actual = len(page.items)
+        expected = self.config.expected_page_items
+        if not self.config.page_count_check_enabled or actual == expected:
+            return
+        site_terminal = page.next_url is None
+        level = "info" if site_terminal and actual < expected else "warning"
+        notice = {
+            "level": level, "actual": actual, "expected": expected,
+            "url": page.url, "at": utcnow().isoformat(), "site_terminal": site_terminal,
+            "job_id": self.claim.job_id, "request_number": self._request_number,
+        }
+        with self._transaction() as repository:
+            workflow = repository.session.get(SpecialWorkflow, self.claim.workflow_id)
+            data = dict(workflow.payload)
+            notices = dict(data.get("page_count_notices", {}))
+            notices["count"] = notices.get("count", 0) + 1
+            notices["last"] = notice
+            if level == "warning":
+                notices["warning_count"] = notices.get("warning_count", 0) + 1
+                notices["last_warning"] = notice
+            data["page_count_notices"] = notices
+            # Persist independently so a later metadata rollback does not hide
+            # an observed page anomaly. Only the latest notices are retained.
+            if not repository.update_state(self.claim, payload=data):
+                raise RuntimeError("stale full collection page count notice")
+        log.log(
+            logging.WARNING if level == "warning" else logging.INFO,
+            "full_collect page_count_mismatch workflow=%s job=%s request=%s %s",
+            self.claim.workflow_id, self.claim.job_id, self._request_number, notice,
+            extra={"event": {
+                "name": "page_count_mismatch", "workflow_id": self.claim.workflow_id, **notice,
+            }},
+        )
+
     def _archive_page(self, html, url, received_at):
         if not self.config.archive_enabled:
             return
@@ -505,6 +540,7 @@ class FullCollectExecutor:
                     page = parse_collection_page(response.text, data["cursor"])
                     if self.context.stop_requested():
                         return self._finish("interrupted", "supervisor_stop")
+                    self._check_page_count(page)
                     if not self._commit_page(page, elapsed_seconds=request_seconds):
                         return self._finish("paused", "user_pause")
                 except (ArchiveError, CollectionIssue) as exc:

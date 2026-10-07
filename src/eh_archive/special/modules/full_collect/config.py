@@ -31,6 +31,8 @@ class FullCollectConfig:
     control_poll_seconds: float = 1
     archive_enabled: bool = False
     archive_dir: str = "data/full_collect_pages"
+    page_count_check_enabled: bool = True
+    expected_page_items: int = 25
 
 
 def parse_start_at(value: str) -> datetime | None:
@@ -111,7 +113,7 @@ def load_full_collect_config(directory, *, app=None, secrets=None) -> FullCollec
     if set(raw) - {field.name for field in fields(FullCollectConfig)}:
         raise ValueError("full_collect 配置包含未知字段")
     config = FullCollectConfig(**raw)
-    for name in ("enabled", "resume_after_restart", "archive_enabled"):
+    for name in ("enabled", "resume_after_restart", "archive_enabled", "page_count_check_enabled"):
         if type(getattr(config, name)) is not bool:
             raise ValueError(f"full_collect.{name} 必须为布尔值")
     if not isinstance(config.archive_dir, str) or not config.archive_dir.strip():
@@ -122,6 +124,7 @@ def load_full_collect_config(directory, *, app=None, secrets=None) -> FullCollec
         "max_concurrency",
         "batch_max_pages",
         "max_consecutive_failures",
+        "expected_page_items",
     ):
         value = getattr(config, name)
         minimum = 1

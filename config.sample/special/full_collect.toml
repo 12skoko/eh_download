@@ -10,6 +10,11 @@ base_url = ""
 # Retained until manually removed; enabling takes effect for the next batch.
 archive_enabled = false
 archive_dir = "data/full_collect_pages"
+# Check parsed page items before ID filtering; notices never stop collection.
+# Short confirmed terminal pages are informational; other mismatches warn.
+# Changes take effect for the next batch. Existing notices remain visible.
+page_count_check_enabled = true
+expected_page_items = 25
 batch_max_pages = 10
 batch_max_seconds = 600
 # Applied to connection/read respectively; not a hard whole-request wall clock.

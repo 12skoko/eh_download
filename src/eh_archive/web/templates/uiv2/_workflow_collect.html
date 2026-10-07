@@ -3,6 +3,17 @@
 {% if legacy_round %}<div class="note" data-tone="warn">此轮使用旧日期格式，可查看、暂停或终止。请按 ID 区间新建轮次，旧档案与进度会保留。</div>{% endif %}
 {% if not supervisor_online %}<div class="note" data-tone="warn">调度器离线，排队任务等待启动；存活的执行者仍读取暂停意图。</div>{% else %}<p class="small muted">调度器状态：{{ supervisor_state }}</p>{% endif %}
 {% if payload.get('last_error') %}<div class="note" data-tone="warn">最近错误：{{ payload.last_error.code }} · {{ payload.last_error.at|full_collect_datetime }}</div>{% endif %}
+{% set notices=payload.get('page_count_notices', {}) %}
+{% if notices.get('last_warning') %}{% set warning=notices.last_warning %}
+<div class="note" data-tone="warn" data-page-count-warning><strong>页面数量警报</strong>：最近一次实际 {{ warning.actual }} 条，预期 {{ warning.expected }} 条。
+<div class="small">累计提醒 {{ notices.get('count', 0) }} 次，其中警报 {{ notices.get('warning_count', 0) }} 次。最近警报 {{ warning.at|full_collect_datetime }} · Job #{{ warning.job_id }} · 请求 #{{ warning.request_number }}</div>
+<div class="small mono"><a href="{{ warning.url }}" target="_blank" rel="noopener noreferrer">{{ warning.url }}</a></div></div>
+{% endif %}
+{% if notices.get('last', {}).get('level') == 'info' %}{% set notice=notices.last %}
+<div class="note" data-tone="info" data-page-count-info><strong>末页数量提醒</strong>：实际 {{ notice.actual }} 条，预期 {{ notice.expected }} 条；站点已给出末页标记。
+<div class="small">累计提醒 {{ notices.get('count', 0) }} 次。{{ notice.at|full_collect_datetime }} · Job #{{ notice.job_id }} · 请求 #{{ notice.request_number }}</div>
+<div class="small mono"><a href="{{ notice.url }}" target="_blank" rel="noopener noreferrer">{{ notice.url }}</a></div></div>
+{% endif %}
 {% if next_due %}<p class="small muted">下一批最早 {{ next_due|full_collect_datetime }}，距现在约 {{ wait_seconds }} 秒；到期后仍须等待调度器和公共池允许执行。</p>{% endif %}
 {% if current_job %}<p class="small">Job <span class="mono">#{{ current_job.id }}</span> · {{ run_pill(current_job.status) }} · 租约至 {{ current_job.lease_until|full_collect_datetime }} · {{ current_job.progress.get('message', '等待领取') }}</p>{% endif %}
 {{ summary(counts, {'pages':'已提交页','requests':'请求','found':'处理条目','created':'新增','updated':'更新','retries':'重试'}) }}<p class="xs muted">重叠区间可能重复处理同一档案。开始 {{ payload.get('started_at')|full_collect_datetime if payload.get('started_at') else '尚未启动' }} · 本轮跨度 {{ elapsed_seconds }} 秒。</p>

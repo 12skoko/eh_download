@@ -359,6 +359,10 @@ FULL_COLLECT_FIELDS = (
               help="按 workflow_id/job_id 保存 gzip HTML，每个 job 一个 manifest.json。下个批次生效。"),
     FieldSpec(("archive_dir",), "全量页面归档目录",
               help="相对路径以程序工作目录为基准；已有轮次沿用首次归档目录。归档需手动清理。"),
+    FieldSpec(("page_count_check_enabled",), "检查页面档案数量", "bool",
+              help="数量不符时提醒并继续采集；关闭后不产生新提醒，历史提醒保留。下个批次生效。"),
+    FieldSpec(("expected_page_items",), "每页预期档案数量", "int", minimum=1,
+              help="按页面实际解析条数检查，不受 ID 区间过滤影响。明确末页不足时普通提示。"),
     FieldSpec(("batch_max_pages",), "每批最多页数", "int", minimum=1),
     *(
         FieldSpec((name,), label + "（秒）", "float", minimum=0.001 if positive else 0)
@@ -485,6 +489,8 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
     if section == "full_collect":
         if key in {"archive_enabled", "archive_dir"}:
             return "页面归档", False
+        if key in {"page_count_check_enabled", "expected_page_items"}:
+            return "页面数量检查", False
         return ("范围与启停", False) if key in {
             "enabled", "max_concurrency", "base_url", "resume_after_restart"
         } else ("批次与等待", key in {
