@@ -1,0 +1,36 @@
+{% extends "uiv3/base.html" %}
+{% from "uiv3/_macros.html" import icon, empty with context %}
+{% set nav = 'workflows' %}
+{% block title %}全量采集 #{{ workflow_id }} 日志{% endblock %}
+{% block crumbs %}<a href="/uiv3/workflows">工作流</a>{{ icon('chevron-right') }}<a href="/uiv3/workflows/full_collect">全量采集</a>{{ icon('chevron-right') }}<a href="/uiv3/workflows/full_collect/{{ workflow_id }}">#{{ workflow_id }}</a>{{ icon('chevron-right') }}<span class="current">日志</span>{% endblock %}
+{% block main %}
+<div class="page">
+  <div class="page-head"><div class="grow"><h1>全量采集 #{{ workflow_id }} 日志</h1><p>按 Job 与级别读取本轮 JSON 日志，每次最多 64 KiB。</p></div>
+    <a class="btn" href="/uiv3/workflows/full_collect/{{ workflow_id }}">{{ icon('arrow-left') }}轮次详情</a></div>
+  <div class="settings">
+    <aside class="stack">
+      <form class="card card-body form-stack" method="get">
+        <div class="field"><label>Job ID（0 为整轮）</label><input class="input num" name="job_id" type="number" min="0" value="{{ job_id }}"></div>
+        <div class="field"><label>级别</label><select class="select" name="level">{% for value in ["", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] %}<option value="{{ value }}" {% if level == value %}selected{% endif %}>{{ value or "全部" }}</option>{% endfor %}</select></div>
+        <button class="btn btn-primary" type="submit">{{ icon('filter') }}筛选</button>
+      </form>
+      <nav class="file-nav static" aria-label="日志文件">
+        {% for item in files %}<a href="?{{ item.query }}" {% if selected and item.name == selected.name %}aria-current="page"{% endif %}><strong class="truncate">{{ item.filename }}</strong><small>{{ item.size|filesize }} · {{ item.modified|datetime }}</small></a>
+        {% else %}<p class="small muted">暂无仍存在的日志文件。</p>{% endfor %}
+        {% if truncated %}<p class="xs muted">目录条目超过读取上限，可填写 Job ID 或使用日志浏览器定位。</p>{% endif %}
+        <div class="row gap8">{% if file_page > 1 %}<a class="btn btn-sm" href="?job_id={{ job_id }}&level={{ level }}&page={{ file_page - 1 }}">上一页文件</a>{% endif %}{% if has_more %}<a class="btn btn-sm" href="?job_id={{ job_id }}&level={{ level }}&page={{ file_page + 1 }}">下一页文件</a>{% endif %}</div>
+      </nav>
+    </aside>
+    <section class="card">
+      <div class="card-head"><h2 class="mono small truncate">{{ selected.filename if selected else "日志内容" }}</h2><div class="actions">{% if previous %}<a class="btn btn-sm" href="?{{ previous }}">{{ icon('arrow-up', 'icon-sm') }}读取更早内容</a>{% endif %}</div></div>
+      {% if rows %}
+      <div class="log-records">
+        {% for row in rows %}
+        <div class="log-record" data-level="{{ row.get('level', '') }}"><time class="num">{{ row.get("time", "") }}</time><span class="lvl">{{ row.get("level", "") }}</span><span class="msg">{{ row.get("message", "") }}{% if row.get("exception") %}<pre class="codeblock">{{ row.exception }}</pre>{% endif %}</span></div>
+        {% endfor %}
+      </div>
+      {% else %}{{ empty('当前读取窗口没有匹配记录。', 'scroll-text') }}{% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

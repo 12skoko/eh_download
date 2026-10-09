@@ -1,0 +1,44 @@
+{% extends "uiv3/special/_dash.html" %}
+{% from "uiv3/_macros.html" import icon, csrf, form_error, run_pill, empty, simple_pager with context %}
+{% from "uiv3/special/_wf.html" import module_head with context %}
+{% block dash %}
+{{ module_head(module, kind, module_health) }}
+<div class="cols-main">
+  <section class="card">
+    <div class="card-head"><h2>选择档案并预览差异</h2></div>
+    {% if module_health.available %}
+    <form class="card-body form-stack" method="post" action="/uiv3/workflows/lanraragi_metadata/start" hx-post="/uiv3/workflows/lanraragi_metadata/start" hx-swap="none" hx-disabled-elt="find button[type=submit]" data-id-picker data-mismatch-url="/special/modules/lanraragi_metadata/mismatch-ids">
+      {{ csrf() }}
+      <p class="small">检查远端文件并用本地数据修复标题和标签，先预览再确认，不重新上传文件。支持已完成档案及因上传错误进入人工复核的档案；文件不存在或身份不符时保留人工复核。</p>
+      <div class="field" data-picker-raw><label for="meta-ids">完整档案 ID</label><textarea class="textarea mono" id="meta-ids" name="manga_ids" rows="5" placeholder="4194902/07c0c45119，每行一个，也可用逗号分隔">{{ request.query_params.get('manga_id', '') }}</textarea></div>
+      <div class="field" data-picker hidden>
+        <div class="row center"><strong class="small" data-picker-count aria-live="polite">已选择 0 个档案</strong><span class="grow"></span><button type="button" class="btn btn-sm btn-ghost" data-picker-clear>清空</button></div>
+        <div class="chip-box">
+          <ul class="id-chips" data-picker-chips aria-label="已选档案"></ul>
+          <input type="text" class="chip-input mono" data-picker-entry aria-label="输入或粘贴档案 ID" placeholder="输入 ID 后按回车，或粘贴多个 ID" autocomplete="off">
+        </div>
+      </div>
+      <div class="row center wrap gap8"><button type="button" class="btn btn-sm" data-picker-mismatch>{{ icon('inbox', 'icon-sm') }}加入上传出错的待复核档案</button><span class="xs muted" data-picker-status role="status" aria-live="polite"></span></div>
+      <div class="field"><label for="meta-archive">LANraragi 档案 ID（可选，仅限单个档案）</label><input class="input mono" id="meta-archive" name="archive_id" pattern="[0-9a-fA-F]{40}" maxlength="40" placeholder="无法自动定位时，填写远端档案的 40 位 ID">
+        <span class="help">默认从主记录、当前文件版本的上传记录或远端来源标签定位。手动 ID 仍需核对文件名、大小和来源，不能覆盖已有的不一致 ID。每批默认最多 500 个档案。</span></div>
+      {{ form_error() }}
+      <div><button class="btn btn-primary" type="submit">{{ icon('eye') }}生成差异预览</button></div>
+    </form>
+    {% endif %}
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>处理历史</h2><span class="meta">共 {{ total }} 次</span></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>工作流</th><th>阶段</th><th class="col-num">档案</th><th>创建时间</th></tr></thead>
+      <tbody>
+      {% for item in workflows %}
+      <tr><td><a class="mono" href="/uiv3/workflows/{{ kind }}/{{ item.id }}">#{{ item.id }}</a></td>
+        <td>{{ run_pill(item.status, phase_labels.get(item.phase, item.phase)) }}</td>
+        <td class="col-num">{{ item.payload.get('count', 0) }}</td><td class="num muted">{{ item.created_at|datetime }}</td></tr>
+      {% else %}<tr><td colspan="4">{{ empty('暂无记录', 'tag') }}</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    {{ simple_pager(page, page * 50 < total, total) }}
+  </section>
+</div>
+{% endblock %}

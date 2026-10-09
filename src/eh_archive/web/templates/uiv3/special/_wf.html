@@ -1,0 +1,186 @@
+{% from "uiv3/_macros.html" import icon, csrf, form_error, modal_head, run_pill, status_pill, event_item, job_table, empty, manga_link with context %}
+
+{# 面板内单按钮表单：成功后替换整个面板 #}
+{% macro act(url, label, workflow, cls='btn', glyph=none, extra={}, confirm=none) -%}
+<form method="post" action="{{ url }}" hx-post="{{ url }}" hx-target="#wf-panel" hx-swap="outerHTML" hx-disabled-elt="find button" {% if confirm %}hx-confirm="{{ confirm }}"{% endif %}>
+  {{ csrf() }}<input type="hidden" name="row_version" value="{{ workflow.row_version }}">
+  {% for key, value in extra.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+  <button type="submit" class="{{ cls }}">{% if glyph %}{{ icon(glyph) }}{% endif %}{{ label }}</button>
+</form>
+{%- endmacro %}
+
+{# 顶部阶段卡片 #}
+{% macro hero(workflow, kind, title, glyph=none, tone='') -%}
+<section class="card">
+  <div class="phase-hero">
+    <span class="glyph" {% if tone %}data-tone="{{ tone }}"{% endif %}>{{ icon(glyph or v3_kind_icons.get(kind, 'workflow')) }}</span>
+    <div class="grow min0">
+      <div class="eyebrow">{{ v3_kind_labels.get(kind, kind) }} · 工作流 #{{ workflow.id }}</div>
+      <h2>{{ title }}</h2>
+      <div class="sub">
+        {{ run_pill(workflow.status) }}
+        <span class="mono xs">{{ workflow.phase }}</span>
+        <span>· 创建 {{ workflow.created_at|datetime }}</span>
+        <span>· 更新 <span title="{{ workflow.updated_at|datetime }}">{{ workflow.updated_at|v3_ago }}</span></span>
+        {% if workflow.cancel_requested_at and workflow.status == 'active' %}<span class="pill" data-tone="warn">已请求取消</span>{% endif %}
+      </div>
+    </div>
+    {% if caller is defined %}<div class="btn-group">{{ caller() }}</div>{% endif %}
+  </div>
+  {{ bindings_bar() }}
+</section>
+{%- endmacro %}
+
+{% macro bindings_bar() -%}
+{% if v3_bindings %}
+<div class="bind-bar">
+  {{ icon('library', 'faint') }}
+  {% if v3_binding_total == 1 %}{% set b = v3_bindings[0] %}
+    {% if b.manga %}{{ manga_link(b.manga_id, b.manga.name or b.manga.real_name or b.manga_id, 'truncate') }}{% endif %}
+    <span class="id">{{ b.manga_id }}</span>
+    {% if b.manga %}{{ status_pill(b.manga.status) }}{% endif %}
+    <span class="grow"></span>
+    {% if b.resume_status %}<span class="xs muted">进入前状态 <span class="mono">{{ b.resume_status }}</span></span>{% endif %}
+  {% else %}
+    <span class="small">关联 {{ v3_binding_total }} 个档案</span>
+    <span class="bind-list">{% for b in v3_bindings[:6] %}{{ manga_link(b.manga_id, b.manga_id, 'tag') }}{% endfor %}{% if v3_binding_total > 6 %}<span class="xs muted">…</span>{% endif %}</span>
+  {% endif %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{# 通用提示 #}
+{% macro notices(workflow, extra_reason=none) -%}
+{% if execution_reason %}<div class="note" data-tone="warn">{{ icon('triangle-alert') }}<div>{{ execution_reason }}</div></div>{% endif %}
+{% if not module_health.available %}<div class="note" data-tone="warn">{{ icon('plug') }}<div>{{ module_health.reason }}{{ extra_reason or '' }}</div></div>{% endif %}
+{% if workflow.error_code %}<div class="note" data-tone="danger">{{ icon('circle-alert') }}<div><strong class="mono">{{ workflow.error_code }}</strong><div class="xs break">{{ workflow.error_detail }}</div></div></div>{% endif %}
+{%- endmacro %}
+
+{# 输出报告 #}
+{% macro outputs(workflow, payload, labels={}) -%}
+{% for output in payload.get('outputs', []) %}
+<div class="output-row">
+  {{ icon('file-json') }}
+  <div class="grow min0"><strong class="small">{{ labels.get(output.id, output.name) }}</strong><div class="xs muted"><span class="mono">{{ output.name }}</span> · {{ output.size_bytes|filesize }} · {{ output.created_at|v3_ago }}</div></div>
+  <a class="btn btn-sm btn-primary" href="/uiv3/workflow/{{ workflow.id }}/outputs/{{ output.id }}">{{ icon('eye', 'icon-sm') }}浏览</a>
+  <a class="btn btn-sm" href="/special/workflows/{{ workflow.id }}/outputs/{{ output.id }}/download" hx-boost="false" download>{{ icon('download', 'icon-sm') }}下载 JSON</a>
+</div>
+{% else %}
+{{ caller() if caller else '' }}
+{% endfor %}
+{%- endmacro %}
+
+{# 指标网格 #}
+{% macro metrics(values, labels={}) -%}
+{% if values %}
+<div class="metric-row">
+  {% for key, value in values.items() %}<div class="metric"><span>{{ labels.get(key, key) }}</span><strong class="num">{{ '{:,}'.format(value) if value is number else value }}</strong></div>{% endfor %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{# 过期租约对话框 #}
+{% macro expired_dialog(workflow, url, text, default_reason='') -%}
+<div class="resolve" data-tone="danger" style="margin:0">
+  <div class="resolve-head">{{ icon('timer') }}<div class="grow"><h3>Job #{{ expired_job.id }} 的租约已过期</h3><div class="sub">{{ text }}</div></div>
+    <button type="button" class="btn btn-sm btn-danger" data-open-dialog="wf-expired-dialog">解除过期租约…</button></div>
+</div>
+<dialog class="modal" id="wf-expired-dialog">
+  <form method="post" action="{{ url }}" hx-post="{{ url }}" hx-target="#wf-panel" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
+    {{ csrf() }}<input type="hidden" name="row_version" value="{{ workflow.row_version }}">
+    {{ modal_head('解除过期租约', 'Job #' ~ expired_job.id ~ ' · ' ~ expired_job.operation, 'timer', 'danger') }}
+    <div class="modal-body">
+      <p>{{ text }}</p>
+      <dl class="kv"><dt>租约持有者</dt><dd class="mono xs">{{ expired_job.lease_owner or '—' }}</dd><dt>租约到期</dt><dd>{{ expired_job.lease_until|datetime }}</dd><dt>开始时间</dt><dd>{{ expired_job.started_at|datetime }}</dd></dl>
+      <div class="field"><label>解除原因<span class="req">*</span></label><textarea class="textarea" name="reason" rows="2" required>{{ default_reason }}</textarea></div>
+      <label class="confirm-box" data-tone="danger"><input type="checkbox" name="confirmed" value="yes" required><span>我已检查进程与外部系统，确认旧 Worker 已停止，不会继续写回。</span></label>
+      {{ form_error() }}
+    </div>
+    <div class="modal-foot"><button type="button" class="btn" data-close-dialog>返回</button><button type="submit" class="btn btn-danger">确认解除</button></div>
+  </form>
+</dialog>
+{%- endmacro %}
+
+{# 任务与事件：两个标签页各自分页，翻页只替换面板 #}
+{% macro history_pager(pg, key, tab) -%}
+{%- if pg.total_pages > 1 -%}
+<nav class="pager" aria-label="{{ '任务' if tab == 'jobs' else '事件' }}分页">
+  <span class="total">共 {{ pg.total }} 条 · 每页 {{ pg.limit }} 条</span>
+  {%- macro link(n, body, aria=none) -%}
+  {%- set q = v3_history_query(**{key: n, 'tab': tab}) -%}
+  <a href="{{ v3_page_url }}?{{ q }}" hx-get="/uiv3/partials/workflow/{{ workflow.id }}?{{ q }}" hx-target="#wf-panel" hx-swap="outerHTML" hx-push-url="{{ v3_page_url }}?{{ q }}" {% if aria %}aria-label="{{ aria }}"{% endif %}>{{ body }}</a>
+  {%- endmacro -%}
+  {% if pg.has_prev %}{{ link(pg.page - 1, icon('chevron-left', 'icon-sm'), '上一页') }}{% endif %}
+  {% for n in pg.page_numbers() %}{% if n is none %}<span class="gap">…</span>{% elif n == pg.page %}<span class="page" aria-current="page">{{ n }}</span>{% else %}{{ link(n, n) }}{% endif %}{% endfor %}
+  {% if pg.has_next %}{{ link(pg.page + 1, icon('chevron-right', 'icon-sm'), '下一页') }}{% endif %}
+</nav>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro history(workflow, op_labels={}, job_title='任务', log_links=false) -%}
+{% set show = 'events' if v3_tab == 'events' else 'jobs' %}
+<section class="card" data-tabs>
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="jobs" aria-selected="{{ 'true' if show == 'jobs' else 'false' }}">{{ job_title }} <span class="count">{{ v3_jobs_page.total }}</span></button>
+    <button type="button" role="tab" data-tab="events" aria-selected="{{ 'true' if show == 'events' else 'false' }}">事件 <span class="count">{{ v3_events_page.total }}</span></button>
+  </div>
+  <div data-tab-panel="jobs" {% if show != 'jobs' %}hidden{% endif %}>
+    {{ job_table(v3_jobs_page.rows, op_labels, ('/uiv3/workflow/' ~ workflow.id ~ '/logs?job_id=') if log_links else none) }}
+    {{ history_pager(v3_jobs_page, 'jobs_page', 'jobs') }}
+  </div>
+  <div data-tab-panel="events" {% if show != 'events' %}hidden{% endif %}>
+    <div class="card-body">{% if v3_events_page.rows %}<ol class="timeline">{% for event in v3_events_page.rows %}{{ event_item(event, true) }}{% endfor %}</ol>{% else %}{{ empty('暂无事件', 'activity') }}{% endif %}</div>
+    {{ history_pager(v3_events_page, 'events_page', 'events') }}
+  </div>
+</section>
+{%- endmacro %}
+
+{# 模块控制台顶部 #}
+{% macro module_head(module, kind, module_health) -%}
+<div class="page-head">
+  <div class="row center" style="gap:14px">
+    <span class="module-glyph">{{ icon(v3_kind_icons.get(kind, 'workflow'), 'icon-lg') }}</span>
+    <div class="grow"><div class="eyebrow mono">{{ kind }}</div><h1>{{ module.label }}</h1><p>{{ module.description }}</p></div>
+  </div>
+  <div class="grow"></div>
+  <div class="page-head-actions">
+    {% if module_health.available %}<span class="pill pill-lg" data-tone="ok">已启用</span>
+    {% elif module_health.reason == '模块配置无效，请检查配置文件' %}<span class="pill pill-lg" data-tone="warn">配置异常</span>
+    {% else %}<span class="pill pill-lg" data-tone="muted">未启用</span>{% endif %}
+    {{ caller() if caller else '' }}
+  </div>
+</div>
+{% if not module_health.available %}<div class="note" data-tone="warn" style="margin-bottom:16px">{{ icon('plug') }}<div>{{ module_health.reason }}</div></div>{% endif %}
+{%- endmacro %}
+
+{# 报告分组与分页 #}
+{% macro section_tabs(sections, section, labels) -%}
+<nav class="tabs report-tabs" aria-label="报告分组">
+  {% for key, count in sections.items() %}<a href="?section={{ key }}" {% if key == section %}aria-current="page"{% endif %}>{{ labels.get(key, key) }} <span class="count">{{ count }}</span></a>{% endfor %}
+</nav>
+{%- endmacro %}
+
+{% macro report_pager(report_total, report_page, section=none) -%}
+<nav class="pager"><span class="total">共 {{ report_total }} 条，每页 100 条</span>
+  {% set q = 'section=' ~ section ~ '&' if section else '' %}
+  {% if report_page > 1 %}<a href="?{{ q }}page={{ report_page - 1 }}" aria-label="上一页">{{ icon('chevron-left', 'icon-sm') }}</a>{% endif %}
+  <span class="page" aria-current="page">{{ report_page }}</span>
+  {% if report_page * 100 < report_total %}<a href="?{{ q }}page={{ report_page + 1 }}" aria-label="下一页">{{ icon('chevron-right', 'icon-sm') }}</a>{% endif %}
+</nav>
+{%- endmacro %}
+
+{# 全量采集：ID 区间文字与进度 #}
+{% macro id_span(scope) -%}
+<span class="id-span"><span class="num">{{ '{:,}'.format(scope.get('start_id', 0)) }}</span>{{ icon('arrow-right', 'icon-sm faint') }}{% if scope.get('end_id') %}<span class="num">{{ '{:,}'.format(scope.end_id) }}</span>{% else %}<span class="muted">站点末页</span>{% endif %}</span>
+{%- endmacro %}
+
+{% macro id_progress(scope, last, status, wide=false) -%}
+{%- set start = scope.get('start_id') -%}{%- set end = scope.get('end_id') or 0 -%}{%- set gid = last.get('last_gid') -%}
+{%- if status == 'completed' -%}{%- set pct = 100 -%}
+{%- elif end and gid is number and start is number and start > end -%}{%- set pct = [[(start - gid) / (start - end) * 100, 0]|max, 100]|min -%}
+{%- else -%}{%- set pct = none -%}{%- endif -%}
+<div class="id-progress{{ ' wide' if wide }}" {% if pct is none %}data-open{% endif %} title="{% if pct is not none %}已扫 {{ '%.1f'|format(pct) }}%{% elif gid is number %}已扫到 GID {{ gid }}，结束于站点末页，无法估算比例{% else %}尚未扫描{% endif %}">
+  <div class="progress"><span style="width:{{ pct if pct is not none else (100 if gid is number else 0) }}%"></span></div>
+  {% if not wide %}<span class="xs muted num">{% if pct is not none %}{{ '%.1f'|format(pct) }}%{% elif gid is number %}末页未知{% else %}—{% endif %}</span>{% endif %}
+</div>
+{%- endmacro %}

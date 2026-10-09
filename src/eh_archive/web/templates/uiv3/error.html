@@ -1,0 +1,16 @@
+{% extends "uiv3/base.html" %}
+{% from "uiv3/_macros.html" import icon with context %}
+{% block title %}操作失败{% endblock %}
+{% block crumbs %}<span class="current">操作没有完成</span>{% endblock %}
+{% block main %}
+<div class="page page-narrow">
+  <section class="card error-card">
+    <div class="phase-hero">
+      <span class="glyph" data-tone="danger">{{ icon('circle-alert') }}</span>
+      <div class="grow"><div class="eyebrow">HTTP {{ status_code_value }}</div><h2>操作没有完成</h2><div class="sub">{{ message }}</div></div>
+    </div>
+    {% if status_code_value == 409 %}<div class="card-body"><div class="note" data-tone="warn">{{ icon('refresh-cw') }}<div>Supervisor 或另一个页面可能已经修改了这条记录。请返回刷新后重新确认。</div></div></div>{% endif %}
+    <div class="card-foot"><button type="button" class="btn" onclick="history.back()">{{ icon('arrow-left') }}返回上一页</button><a class="btn btn-ghost" href="/uiv3/">回到概览</a></div>
+  </section>
+</div>
+{% endblock %}

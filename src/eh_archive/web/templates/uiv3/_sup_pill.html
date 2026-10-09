@@ -1,0 +1,49 @@
+{% from "uiv3/_macros.html" import icon, csrf, form_error, modal_head with context %}
+{% set st = supervisor_state|default('unknown', true) %}
+{% set sup_label = {'running': '正在调度', 'paused': '已暂停', 'draining': '排空中', 'stale': '已停止', 'unknown': '状态未知'}.get(st, st) %}
+{% set sup_tone = {'running': 'run', 'paused': 'muted', 'draining': 'warn', 'stale': 'danger'}.get(st, 'muted') %}
+<div id="sup-pill" class="sup-wrap" {% if oob %}hx-swap-oob="outerHTML"{% endif %}
+     {% if scope != 'overview' %}hx-get="/uiv3/partials/control?scope=pill" hx-trigger="every 15s [uiv3CanPoll()]" hx-swap="none"{% endif %}>
+  <button class="sup" type="button" popovertarget="sup-pop" data-state="{{ st }}">
+    <span class="dot" data-tone="{{ sup_tone }}" {% if st == 'running' %}data-live{% endif %}></span>调度器 {{ sup_label }}
+    {% if supervisor and supervisor.heartbeat_at %}<small>· 心跳 {{ supervisor.heartbeat_at|v3_ago }}</small>{% endif %}
+  </button>
+  <div popover id="sup-pop" class="pop mod-pop" data-error-scope>
+    <header>{{ icon('server') }}<div class="grow"><strong>调度器</strong><div class="id">supervisor</div></div><span class="pill" data-tone="{{ sup_tone }}">{{ sup_label }}</span></header>
+    <div class="body">
+      <dl class="kv">
+        <dt>最后心跳</dt><dd class="num">{{ supervisor.heartbeat_at|datetime if supervisor else '—' }}</dd>
+        <dt>租约持有者</dt><dd class="mono xs">{{ supervisor.lease_owner if supervisor and supervisor.lease_owner else '—' }}</dd>
+      </dl>
+      {% if st in ['paused', 'draining'] %}<div class="note" data-tone="warn">{{ icon('circle-pause') }}<div><strong>{{ '排空中' if st == 'draining' else '暂停原因' }}</strong><div class="xs">{{ supervisor.reason or '未填写原因' }}</div></div></div>
+      {% elif st in ['stale', 'unknown'] %}<div class="note" data-tone="danger">{{ icon('heart-pulse') }}<div>{{ '心跳已过期，调度器可能已退出' if st == 'stale' else '暂无心跳，无法确认调度器状态' }}</div></div>{% endif %}
+      {{ form_error() }}
+    </div>
+    <footer>
+      {% if st in ['paused', 'draining'] %}
+      <form hx-post="/uiv3/control/supervisor" hx-swap="none" hx-disabled-elt="find button">{{ csrf() }}
+        <input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}"><input type="hidden" name="scope" value="{{ scope }}">
+        <button class="btn btn-sm btn-primary" name="state" value="running">{{ icon('play', 'icon-sm') }}恢复调度</button>
+      </form>
+      {% elif st in ['stale', 'unknown'] %}
+      <a class="btn btn-sm" href="/uiv3/system" hx-boost="false">{{ icon('server', 'icon-sm') }}前往系统页重启</a>
+      {% else %}
+      <button type="button" class="btn btn-sm" data-open-dialog="sup-pause-dialog">{{ icon('pause', 'icon-sm') }}暂停调度</button>
+      {% endif %}
+      <span class="grow"></span><a class="btn btn-sm btn-ghost" href="/uiv3/">概览{{ icon('arrow-right', 'icon-sm') }}</a>
+    </footer>
+  </div>
+  <dialog class="modal" id="sup-pause-dialog">
+    <form hx-post="/uiv3/control/supervisor" hx-swap="none" hx-disabled-elt="find button[type=submit]">
+      {{ csrf() }}<input type="hidden" name="row_version" value="{{ supervisor.row_version if supervisor else '' }}">
+      <input type="hidden" name="state" value="paused"><input type="hidden" name="scope" value="{{ scope }}">
+      {{ modal_head('暂停 Supervisor', '调度器控制', 'circle-pause', 'warn') }}
+      <div class="modal-body">
+        <p>暂停后不会再启动新的子进程；已经启动的任务不会被强制终止。如需让 Supervisor 退出，请在系统页使用“停止 Supervisor”。</p>
+        <div class="field"><label for="sup-pause-reason">暂停原因（可选）</label><textarea class="textarea" id="sup-pause-reason" name="reason" rows="3"></textarea></div>
+        {{ form_error() }}
+      </div>
+      <div class="modal-foot"><button type="button" class="btn" data-close-dialog>返回</button><button type="submit" class="btn btn-primary">确认暂停</button></div>
+    </form>
+  </dialog>
+</div>

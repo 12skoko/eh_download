@@ -1,0 +1,33 @@
+{% extends "uiv3/special/_dash.html" %}
+{% from "uiv3/_macros.html" import icon, csrf, run_pill, empty, simple_pager with context %}
+{% from "uiv3/special/_wf.html" import module_head with context %}
+{% block dash %}
+{% call module_head(module, kind, module_health) %}
+  {% if module_health.available %}
+  <form method="post" action="/uiv3/workflows/{{ kind }}/create" hx-post="/uiv3/workflows/{{ kind }}/create" hx-swap="none" hx-disabled-elt="find button">{{ csrf() }}
+    <button type="submit" class="btn btn-primary">{{ icon('scan-search') }}开始扫描预览</button></form>
+  {% endif %}
+{% endcall %}
+<section class="card">
+  <div class="card-body small form-stack">
+    <p>扫描 qBittorrent 中属于 <span class="mono">eharchive</span> 的种子，以及种子、直链、H@H、aria2 下载目录。只有数据库状态为 completed 或 deleted，且没有活动任务或租约的条目可以清理。</p>
+    <p class="muted">先生成预览清单，再手动确认删除。清理不改变普通档案状态，也不删除 LANraragi 档案。扫描和清理由 Supervisor 的特殊任务 Worker 执行。</p>
+  </div>
+</section>
+<section class="card mt16">
+  <div class="card-head"><h2>清理历史</h2><span class="meta">共 {{ total }} 次</span></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>工作流</th><th>阶段</th><th>创建时间</th><th class="col-num">待清理</th><th class="col-num">已删除</th><th class="col-num">失败</th></tr></thead>
+    <tbody>
+    {% for item in workflows %}{% set s = (item.payload or {}).get('summary', {}) %}
+    <tr><td><a class="mono" href="/uiv3/workflows/{{ kind }}/{{ item.id }}">#{{ item.id }}</a></td>
+      <td>{{ run_pill(item.status, phase_labels.get(item.phase, item.phase)) }}</td>
+      <td class="num muted">{{ item.created_at|datetime }}</td>
+      <td class="col-num">{{ s.get('would_delete', 0) }}</td><td class="col-num">{{ s.get('deleted', 0) }}</td>
+      <td class="col-num" {% if s.get('delete_failed', 0) + s.get('torrent_delete_failed', 0) %}style="color:var(--seal)"{% endif %}>{{ s.get('delete_failed', 0) + s.get('torrent_delete_failed', 0) }}</td></tr>
+    {% else %}<tr><td colspan="6">{{ empty('暂无清理记录', 'eraser') }}</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {{ simple_pager(page, page * 50 < total, total) }}
+</section>
+{% endblock %}

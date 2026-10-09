@@ -1,0 +1,48 @@
+{% extends "uiv3/base.html" %}
+{% from "uiv3/_macros.html" import icon, csrf with context %}
+{% set nav = 'settings' %}
+{% block title %}配置 · {{ active_section.filename }}{% endblock %}
+{% block crumbs %}<span>运维</span>{{ icon('chevron-right') }}<span class="current">配置</span>{% endblock %}
+{% block main %}
+{% set section = active_section %}
+<div class="page page-narrow" style="max-width:1240px" data-config-editor>
+  <div class="page-head"><div class="grow"><h1>配置</h1><p>按文件管理设置。保存只写入当前文件，不会自动重启服务；每项标注了生效方式。保存前会重新校验完整配置并备份原文件。</p></div></div>
+  <div id="config-status" class="note" data-tone="{{ 'danger' if config_error else 'ok' }}" role="alert" tabindex="-1" {% if not config_error and not notice %}hidden{% endif %} style="margin-bottom:16px">
+    {{ icon('circle-alert' if config_error else 'circle-check') }}
+    <div class="grow" data-status-message>{{ config_error or notice or '' }}</div>
+    {% if saved_policy in ['web', 'supervisor', 'web_and_supervisor'] %}<a class="btn btn-sm" href="/uiv3/system" hx-boost="false" data-status-link>{{ policy_labels[saved_policy] }}{{ icon('arrow-right', 'icon-sm') }}</a>{% endif %}
+  </div>
+  <div class="settings">
+    <nav class="file-nav" aria-label="配置文件">
+      {% for item in sections %}
+      {% if item.filename.startswith('special/') and loop.previtem and not loop.previtem.filename.startswith('special/') %}<div class="nav-label">特殊模块</div>{% endif %}
+      <a href="/uiv3/settings?section={{ item.name }}" hx-boost="false" {% if item.name == section.name %}aria-current="page"{% endif %}><strong>{{ item.filename }}</strong><small>{{ item.title }}{% if item.error %} · <span style="color:var(--seal)">读取错误</span>{% elif not item.exists %} · 尚未创建{% endif %}</small></a>
+      {% endfor %}
+    </nav>
+    <form class="card" method="post" action="/uiv3/settings/{{ section.name }}" hx-boost="false" novalidate data-config-form>
+      {{ csrf() }}<input type="hidden" name="revision" value="{{ section.revision }}">
+      <div class="card-head"><div><div class="eyebrow mono">{{ section.filename }}</div><h2>{{ section.title }}</h2></div></div>
+      {% if section.name == 'supervisor' %}<div class="note" data-tone="info" style="margin:14px 16px 0">{{ icon('info') }}<div>模块开关决定重启后的自动调度；临时暂停请使用概览中的模块控制。定时模块到期启动，其他普通模块有待处理工作时启动。</div></div>{% endif %}
+      {% if section.name == 'secrets' %}<div class="note" data-tone="info" style="margin:14px 16px 0">{{ icon('key-round') }}<div>敏感值不会回显。留空保留已有内容，只提交需要替换的凭据。</div></div>{% endif %}
+      {% if section.fields %}
+        {% for advanced in [false, true] %}
+          {% set visible = section.fields|selectattr('advanced', 'equalto', advanced)|list %}
+          {% if visible %}
+            {% set grouped = visible|groupby('group') %}
+            {% if section.name == 'full_collect' %}{% set grouped = (grouped|selectattr('grouper', 'equalto', '范围与启停')|list) + (grouped|rejectattr('grouper', 'equalto', '范围与启停')|list) %}{% endif %}
+            {% if advanced %}<details class="advanced" {% if visible|selectattr('error')|list %}open{% endif %}><summary>{{ icon('chevron-right', 'icon-sm') }}高级设置 <span class="xs muted">连接、限制与低频选项 · {{ visible|length }} 项</span></summary>{% endif %}
+            {% for group, fields in grouped %}
+            <div class="section-title setting-group">{{ '高级 · ' if advanced else '' }}{{ group }}</div>
+            {% for field in fields %}{% include "uiv3/_setting.html" %}{% endfor %}
+            {% endfor %}
+            {% if advanced %}</details>{% endif %}
+          {% endif %}
+        {% endfor %}
+        <div class="savebar"><span class="state" data-dirty-note>保存只写入当前文件，不会自动重启服务。</span><span class="grow"></span><button class="btn btn-primary" type="submit">{{ icon('save') }}保存 {{ section.filename }}</button></div>
+      {% else %}
+        <div class="card-body small muted">{{ section.error or '这个文件没有可在网页维护的字段。' }}</div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+{% endblock %}

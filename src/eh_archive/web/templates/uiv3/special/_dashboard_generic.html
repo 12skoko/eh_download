@@ -1,0 +1,24 @@
+{% extends "uiv3/special/_dash.html" %}
+{% from "uiv3/_macros.html" import icon, csrf, run_pill, empty, simple_pager with context %}
+{% from "uiv3/special/_wf.html" import module_head with context %}
+{% block dash %}
+{% call module_head(module, kind, module_health) %}
+  {% if module_health.available %}
+  <form method="post" action="/uiv3/workflows/{{ kind }}/create" hx-post="/uiv3/workflows/{{ kind }}/create" hx-swap="none" hx-disabled-elt="find button">{{ csrf() }}
+    <button type="submit" class="btn btn-primary">{{ icon('plus') }}创建新的运行</button></form>
+  {% endif %}
+{% endcall %}
+<section class="card">
+  <div class="card-head"><h2>工作流</h2>{% if total is defined %}<span class="meta">共 {{ total }} 个</span>{% endif %}</div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>工作流</th><th>状态</th><th>阶段</th><th>创建时间</th></tr></thead>
+    <tbody>
+    {% for item in workflows|default([]) %}
+    <tr><td><a class="mono" href="/uiv3/workflows/{{ kind }}/{{ item.id }}">#{{ item.id }}</a></td><td>{{ run_pill(item.status) }}</td>
+      <td class="small">{{ (phase_labels|default({})).get(item.phase, item.phase) }}</td><td class="num muted">{{ item.created_at|datetime }}</td></tr>
+    {% else %}<tr><td colspan="4">{{ empty('暂无工作流', 'workflow') }}</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% if total is defined %}{{ simple_pager(page|default(1), page|default(1) * 50 < total, total) }}{% endif %}
+</section>
+{% endblock %}

@@ -207,7 +207,8 @@ def create_app(
     async def authenticate(request, call_next):
         path = request.url.path
         public = (
-            path in {"/login", "/uiv2/login", "/health/live"} or path.startswith("/static/")
+            path in {"/login", "/uiv2/login", "/uiv3/login", "/health/live"}
+            or path.startswith("/static/")
         )
         if public or not auth_enabled:
             request.state.identity = WebIdentity("local", "local", int(time.time()) + 3600)
@@ -226,10 +227,11 @@ def create_app(
             if path.startswith("/api/") or path == "/health":
                 return JSONResponse({"detail": "authentication required"}, status_code=401)
             next_path = request.url.path + ("?" + request.url.query if request.url.query else "")
-            v2 = path == "/uiv2" or path.startswith("/uiv2/")
-            login_path = "/uiv2/login" if v2 else "/login"
-            if v2 and request.headers.get("HX-Request") == "true":
-                # A v2 fragment request must not swap the login page into a panel.
+            ui = next((prefix for prefix in ("/uiv2", "/uiv3")
+                       if path == prefix or path.startswith(prefix + "/")), None)
+            login_path = f"{ui}/login" if ui else "/login"
+            if ui and request.headers.get("HX-Request") == "true":
+                # A v2/v3 fragment request must not swap the login page into a panel.
                 return JSONResponse(
                     {"detail": "authentication required"}, status_code=401,
                     headers={"HX-Redirect": f"{login_path}?next={quote(next_path, safe='/?=&')}"},
@@ -1398,6 +1400,14 @@ def create_app(
     from .uiv2 import install_uiv2
 
     install_uiv2(
+        app, templates=templates, database=database, app_config=app_config,
+        supervisor_config=supervisor_config, secrets_config=secrets_config, signer=signer,
+        auth_enabled=auth_enabled, config_dir=config_dir,
+        management_path=Path(management_config),
+    )
+    from .uiv3 import install_uiv3
+
+    install_uiv3(
         app, templates=templates, database=database, app_config=app_config,
         supervisor_config=supervisor_config, secrets_config=secrets_config, signer=signer,
         auth_enabled=auth_enabled, config_dir=config_dir,

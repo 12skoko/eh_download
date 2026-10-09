@@ -1,0 +1,36 @@
+{% from "uiv3/_macros.html" import icon with context %}
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · EH Archive</title>
+<script>
+  (() => {
+    const mode = localStorage.getItem("uiv3-theme") || "auto";
+    const dark = mode === "dark" || (mode === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+  })();
+</script>
+<link rel="icon" type="image/svg+xml" href="/static/uiv3/favicon.svg">
+<link rel="stylesheet" href="/static/uiv3/uiv3.css?v={{ v3_asset }}">
+</head>
+<body>
+<main class="login">
+  <div class="login-card">
+    <div class="brand" style="padding:0 0 18px"><span class="seal" aria-hidden="true">档</span><span class="brand-text"><strong>EH Archive</strong><small>局域网归档控制台</small></span></div>
+    <h1 style="font-size:var(--fs-xl)">管理员登录</h1>
+    <p class="muted small" style="margin:4px 0 18px">登录后可以查看运行状态并执行人工操作。</p>
+    {% if error %}<div class="note" data-tone="danger" role="alert" style="margin-bottom:14px">{{ icon('circle-alert') }}<div>{{ error }}</div></div>{% endif %}
+    {% if not auth_enabled %}<div class="note" data-tone="warn" style="margin-bottom:14px">{{ icon('triangle-alert') }}<div>当前仅允许本机无认证访问。</div></div>{% endif %}
+    <form method="post" action="/uiv3/login" class="form-stack">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field"><label for="username">用户名</label><input class="input" id="username" name="username" autocomplete="username" required autofocus></div>
+      <div class="field"><label for="password">密码</label><input class="input" id="password" type="password" name="password" autocomplete="current-password" required></div>
+      <button class="btn btn-primary btn-lg" type="submit" style="width:100%">登录</button>
+    </form>
+    <p class="xs faint" style="margin-top:16px;text-align:center"><a href="/login" class="faint">使用旧版登录页</a></p>
+  </div>
+</main>
+</body>
+</html>

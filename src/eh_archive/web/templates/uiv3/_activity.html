@@ -1,0 +1,22 @@
+{% from "uiv3/_macros.html" import icon, manga_link with context %}
+<section class="card" id="activity" hx-get="/uiv3/partials/activity" hx-trigger="every 2s [uiv3CanPoll()]" hx-swap="outerHTML">
+  <div class="card-head"><h2>实时活动</h2><span class="meta">{{ activity|length }} 个任务</span><div class="actions"><span class="live"><span class="dot" data-tone="run" data-live></span>每 2 秒</span></div></div>
+  <div class="activity">
+  {% for item in activity %}{% set task = item.task %}{% set attempt = item.attempt %}
+    {% set special = task.module not in v3_module_icons %}
+    <div class="activity-item">
+      <span class="glyph" {% if special %}data-tone="special"{% endif %}>{{ icon(v3_kind_icons.get(task.module, 'workflow') if special else v3_module_icons.get(task.module, 'package'), 'icon-sm') }}</span>
+      <div class="grow min0">
+        <div class="what truncate"><strong>{{ task.module_label }}</strong> <span class="id">{{ task.module }}</span> · {% if task.manga_id %}{{ manga_link(task.manga_id, task.manga_name or task.manga_id) }}{% else %}系统任务{% endif %}</div>
+        {% if attempt and attempt.operation == 'direct_download' %}{% set progress = attempt|attempt_progress %}
+        <div class="progress" {% if progress.percent is none %}data-indeterminate{% endif %} style="margin-top:7px"><span style="width:{{ progress.percent or 0 }}%"></span></div>
+        <div class="progress-meta">{% if progress.percent is not none %}<strong>{{ '%.1f'|format(progress.percent) }}%</strong>{% endif %}<span>{{ progress.downloaded|filesize }}{% if progress.total is not none %} / {{ progress.total|filesize }}{% endif %}</span>{% if progress.speed %}<span>{{ progress.speed|filesize }}/s</span>{% endif %}{% if progress.eta is not none %}<span>预计剩余 {{ progress.eta|duration }}</span>{% endif %}</div>
+        {% else %}<div class="where">{{ task.state|v3_phase(task.module) }}</div>{% endif %}
+      </div>
+      <span class="when" title="{{ task.updated_at|datetime }}">{% if task.started_at %}{{ task.started_at|v3_clock }} 开始{% else %}{{ task.updated_at|v3_clock }} 更新{% endif %}</span>
+    </div>
+  {% else %}
+    <div class="empty">{{ icon('circle-check') }}<span>当前没有运行中的模块或档案任务</span></div>
+  {% endfor %}
+  </div>
+</section>
