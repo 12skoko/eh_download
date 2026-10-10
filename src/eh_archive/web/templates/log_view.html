@@ -1,19 +1,24 @@
 {% extends "base.html" %}
-{% block title %}查看日志 ▪ EH Archive控制台{% endblock %}
-{% block content %}
-<div class="page-head"><div><p class="eyebrow">日志文件</p><h1>查看日志</h1><p class="mono" style="overflow-wrap:anywhere">{{ filename }}</p></div></div>
-<div id="log-viewer" data-file="{{ filename }}">
-<div class="filter-panel">
-<a class="button" href="/logs?{{ directory_query }}" hx-boost="false">返回所在目录</a>
-<button type="button" data-earlier disabled>更早内容</button>
-<button type="button" data-latest>最新内容</button>
-<label class="check"><input type="checkbox" data-auto>每 5 秒刷新</label>
-<label class="check"><input type="checkbox" data-follow checked>跟随底部</label>
-<a class="button primary" href="/api/logs/download?file={{ file_query }}" hx-boost="false">下载完整日志</a>
+{% from "_macros.html" import icon with context %}
+{% set nav = 'logs' %}
+{% block title %}{{ filename }}{% endblock %}
+{% block crumbs %}<span>观测</span>{{ icon('chevron-right') }}<a href="/logs" hx-boost="false">日志</a>{% for crumb in breadcrumbs %}{{ icon('chevron-right') }}<a class="mono" href="/logs?directory={{ crumb.url }}" hx-boost="false">{{ crumb.name }}</a>{% endfor %}{{ icon('chevron-right') }}<span class="current mono">{{ filename.split('/')[-1] }}</span>{% endblock %}
+{% block main %}
+<div class="page page-wide" data-log-viewer data-file="{{ filename }}">
+  <section class="card">
+    <div class="card-head">
+      <div class="min0"><h2 class="mono small truncate" title="{{ filename }}">{{ filename }}</h2><div class="xs muted" data-log-status role="status" aria-live="polite">正在读取…</div></div>
+      <div class="actions">
+        <a class="btn btn-sm btn-ghost" href="/logs?{{ directory_query }}" hx-boost="false">{{ icon('folder-open', 'icon-sm') }}所在目录</a>
+        <button type="button" class="btn btn-sm" data-log-earlier disabled>{{ icon('arrow-up', 'icon-sm') }}更早内容</button>
+        <button type="button" class="btn btn-sm" data-log-latest>{{ icon('arrow-down', 'icon-sm') }}最新内容</button>
+        <label class="switch xs"><input type="checkbox" data-log-auto>每 5 秒刷新</label>
+        <label class="switch xs"><input type="checkbox" data-log-follow checked>跟随底部</label>
+        <a class="btn btn-sm btn-primary" href="/api/logs/download?file={{ file_query }}" hx-boost="false">{{ icon('download', 'icon-sm') }}下载完整日志</a>
+      </div>
+    </div>
+    <div class="log-toolbar"><div class="input-icon">{{ icon('text-search', 'icon-sm') }}<input class="input" type="search" data-log-filter placeholder="在当前窗口中高亮关键字（不影响下载）" aria-label="高亮关键字"></div><span class="xs muted">每次显示最多 64 KiB 原始内容；查看更早内容会暂停自动刷新。下载保留原文，未做脱敏。</span></div>
+    <pre class="log-view" data-log-content tabindex="0" aria-label="日志内容"></pre>
+  </section>
 </div>
-<p>每次显示最多 64 KiB 原始内容；查看更早内容会暂停自动刷新。下载保留原文，未做脱敏。</p>
-<p data-log-status role="status" aria-live="polite">正在读取…</p>
-<pre class="log-content" data-log-content tabindex="0" aria-label="日志内容"></pre>
-</div>
-<script src="/static/logs.js" defer></script>
 {% endblock %}

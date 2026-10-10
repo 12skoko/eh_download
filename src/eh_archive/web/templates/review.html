@@ -1,7 +1,0 @@
-{% extends "base.html" %}
-{% block title %}人工复核 ▪ EH Archive控制台{% endblock %}
-{% block content %}
-<div class="page-head"><div><p class="eyebrow">人工工作台</p><h1>人工复核</h1></div></div>
-<div class="tabs"><a class="{{ 'active' if selected_status == 'manual_review' }}" href="/review?status=manual_review">人工复核</a><a class="{{ 'active' if selected_status == 'quarantined' }}" href="/review?status=quarantined">隔离产物</a></div>
-{% include "_review_workspace.html" %}
-{% endblock %}

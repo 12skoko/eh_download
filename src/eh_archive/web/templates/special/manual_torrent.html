@@ -1,10 +1,27 @@
-{% extends "base.html" %}
-{% block title %}手动种子下载 ▪ EH Archive{% endblock %}
-{% block content %}
-<div class="page-head"><div><a href="/special">← 特殊模块</a><h1>手动种子下载</h1><p>每个工作流只处理一个档案、一个种子。进入后点击“加载种子”才会访问种子页面。</p></div></div>
-<section class="panel"><p>可从档案的种子下载错误入口进入，或在“进入下载队列”中选择“手动选择种子”。支持批量创建独立工作流，候选不会自动加载。</p>
-{% if not module_health.available %}<p class="alert warning">{{ module_health.reason }}</p>{% endif %}</section>
-<section class="panel table-panel"><table><thead><tr><th>工作流</th><th>档案</th><th>状态</th><th>阶段</th></tr></thead><tbody>
-{% for item in workflows %}<tr><td><a href="/special/workflows/{{ item.id }}">#{{ item.id }}</a></td><td><a href="/manga/{{ item.manga_bindings[0].manga_id }}">{{ item.manga_bindings[0].manga_id }}</a></td><td>{{ item.status }}</td><td>{{ phase_labels.get(item.phase, item.phase) }}</td></tr>{% else %}<tr><td colspan="4">暂无工作流</td></tr>{% endfor %}
-</tbody></table><div class="panel-actions">{% if page > 1 %}<a href="?page={{ page - 1 }}">上一页</a>{% endif %}{% if page * 50 < total %}<a href="?page={{ page + 1 }}">下一页</a>{% endif %}</div></section>
+{% extends "special/_dash.html" %}
+{% from "_macros.html" import icon, run_pill, empty, manga_link, simple_pager with context %}
+{% from "special/_wf.html" import module_head with context %}
+{% block dash %}
+{{ module_head(module, kind, module_health) }}
+<section class="card">
+  <div class="card-body small form-stack">
+    <p>每个工作流只处理一个档案、一个种子。可从档案的种子下载错误入口进入，或在“更改状态 → 等待下载”中选择“手动选择种子”；批量更改状态也支持此选项，每个档案创建独立工作流。</p>
+    <p class="muted">进入后不会自动加载候选，必须手动点击“加载种子”。提交成功后档案交回普通下载流程，复用 torrent_check。</p>
+  </div>
+</section>
+<section class="card mt16">
+  <div class="card-head"><h2>工作流</h2><span class="meta">共 {{ total }} 个</span></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>工作流</th><th>档案</th><th>状态</th><th>阶段</th><th>更新</th></tr></thead>
+    <tbody>
+    {% for item in workflows %}
+    <tr><td><a class="mono" href="/workflows/manual_torrent/{{ item.id }}">#{{ item.id }}</a></td>
+      <td class="mono xs">{{ manga_link(item.manga_bindings[0].manga_id) }}</td>
+      <td>{{ run_pill(item.status) }}</td><td class="small">{{ phase_labels.get(item.phase, item.phase) }}</td>
+      <td class="num muted" title="{{ item.updated_at|datetime }}">{{ item.updated_at|ui_clock }}</td></tr>
+    {% else %}<tr><td colspan="5">{{ empty('暂无工作流', 'magnet') }}</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {{ simple_pager(page, page * 50 < total, total) }}
+</section>
 {% endblock %}

@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon with context %}
+{% set nav = 'overview' %}
+{% block title %}概览{% endblock %}
+{% block crumbs %}<span class="current">概览</span>{% endblock %}
+{% block main %}
+{% set scope = 'overview' %}
+<div class="page">
+  <div class="page-head">
+    <div class="grow"><h1>概览</h1><p>流水线各环节的积压、模块调度状态与正在发生的任务。</p></div>
+    <div class="page-head-actions">
+      <span class="xs muted" title="状态数量只在打开页面时统计，避免反复扫描全表">数量统计于 {{ now|ui_clock }}</span>
+      <a class="btn btn-sm" href="/">{{ icon('refresh-cw', 'icon-sm') }}刷新数量</a>
+    </div>
+  </div>
+
+  {# ---------- 需要关注 ---------- #}
+  {% set review_count = counts.get('manual_review', 0) %}{% set quarantine_count = counts.get('quarantined', 0) %}
+  {% set bad_health = [] %}{% for component, item in health.items() %}{% if health_states.get(component) != 'healthy' %}{% set _ = bad_health.append((component, item)) %}{% endif %}{% endfor %}
+  {# 概览流水线只突出需要关注的状态，其余计数不上色；档案列表等处仍用完整的 ui_tone。 #}
+  {% set flow_tones = {'deferred': 'warn', 'manual_review': 'danger', 'quarantined': 'danger'} %}
+  {% set held = [] %}{% for unit in units.values() %}{% if unit.state in ['paused', 'cooldown'] %}{% set _ = held.append(unit) %}{% endif %}{% endfor %}
+  <section class="attention" aria-label="需要关注">
+    {% if review_count %}
+    <a class="alert-card status-tone" data-tone="{{ 'manual_review'|ui_tone }}" href="/inbox">
+      <span class="glyph">{{ icon('inbox') }}</span>
+      <div class="grow min0"><div class="big">{{ review_count }} <span class="small muted fw4">待人工复核</span></div>
+        <div class="sub">{% for facet in review_facets %}<span class="nowrap"><span class="code">{{ facet.error_code }}</span> <b>{{ facet.count }}</b></span>{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+      {{ icon('chevron-right', 'faint') }}
+    </a>
+    {% endif %}
+    {% if quarantine_count %}
+    <a class="alert-card status-tone" data-tone="{{ 'quarantined'|ui_tone }}" href="/inbox?status=quarantined">
+      <span class="glyph">{{ icon('shield-alert') }}</span>
+      <div class="grow min0"><div class="big">{{ quarantine_count }} <span class="small muted fw4">已隔离产物</span></div>
+        <div class="sub">{% for facet in quarantine_facets %}<span class="nowrap"><span class="code">{{ facet.error_code }}</span> <b>{{ facet.count }}</b></span>{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+      {{ icon('chevron-right', 'faint') }}
+    </a>
+    {% endif %}
+    {% if bad_health %}
+    <div class="alert-card" data-tone="{{ 'danger' if bad_health|selectattr('1.status', 'in', ['error', 'unhealthy', 'failed', 'unavailable'])|list else 'warn' }}">
+      <span class="glyph">{{ icon('plug') }}</span>
+      <div class="grow min0"><div class="big md">{{ bad_health|length }} 项依赖服务异常</div>
+        <div class="sub">{% for component, item in bad_health %}<span class="nowrap">{% if component.startswith('storage:') %}存储 · {{ component[8:] }}{% else %}{{ component|component_label }}{% endif %} {{ health_states.get(component)|ui_run_label }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</div></div>
+    </div>
+    {% endif %}
+    {% if supervisor_state != 'running' or held %}
+    <div class="alert-card" {% if supervisor_state in ['stale', 'unknown'] %}data-tone="danger"{% endif %}>
+      <span class="glyph">{{ icon('circle-pause') }}</span>
+      <div class="grow min0">
+        {% if supervisor_state != 'running' %}<div class="big md">调度器{{ {'paused': '已暂停', 'draining': '正在排空', 'stale': '心跳过期', 'unknown': '状态未知'}.get(supervisor_state, supervisor_state) }}</div>
+        {% else %}<div class="big md">{{ held|length }} 个模块未在调度</div>{% endif %}
+        <div class="sub">{% for unit in held %}{{ unit.label }} {{ '已暂停' if unit.state == 'paused' else '冷却中' }}{% if not loop.last %} · {% endif %}{% else %}新的子进程不会启动{% endfor %}</div>
+      </div>
+    </div>
+    {% endif %}
+    {% if not review_count and not quarantine_count and not bad_health and supervisor_state == 'running' and not held %}
+    <div class="alert-card" data-tone="ok"><span class="glyph">{{ icon('circle-check') }}</span><div class="grow"><div class="big md">一切正常</div><div class="sub">没有待复核档案、依赖异常或暂停的模块。</div></div></div>
+    {% endif %}
+  </section>
+
+  {# ---------- 流水线 ---------- #}
+  <section class="card" aria-label="流水线">
+    <div hidden hx-get="/partials/control?scope=overview" hx-trigger="every 3s [archiveUICanPoll()]" hx-swap="none"></div>
+    {% include "_master.html" %}
+    {# 档案只用文字行（状态名 … 数量）；模块只用方角卡片，放在“模块”底带里。
+       主流程与旁路共用同一套列：行首标签 + 5 列。 #}
+    <div class="pipeline">
+      <div class="flow" aria-label="主流程">
+        <div class="flow-band" aria-hidden="true"></div>
+        <div class="flow-label" style="grid-row: 2">档案</div>
+        <div class="flow-label flow-label-mod" style="grid-row: 3">模块</div>
+        {% for key, title, statuses, modules in ui_pipeline %}
+        <section class="stage" style="grid-column: {{ loop.index + 1 }}" aria-label="{{ title }}">
+          <div class="stage-head"><span class="step">{{ loop.index }}</span>{{ title }}</div>
+          <div class="counts">
+            {% for status in statuses %}{% set n = counts.get(status, 0) %}{% set tone = flow_tones.get(status) %}
+            {% if loop.first %}
+            <a class="count-row lead{{ ' status-tone' if tone }}" href="/archives?status={{ status }}" {% if tone %}data-tone="{{ tone }}"{% endif %}><span class="n">{{ '{:,}'.format(n) }}</span><span class="lbl">{{ status|status_label }}</span></a>
+            {% else %}
+            <a class="count-row{{ ' status-tone' if tone }}{{ ' zero' if not n and not tone }}" href="/archives?status={{ status }}" {% if tone %}data-tone="{{ tone }}"{% endif %}>{{ status|status_label }}<span class="n">{{ '{:,}'.format(n) }}</span></a>
+            {% endif %}
+            {% endfor %}
+          </div>
+          <div class="modules" aria-label="{{ title }}模块">
+            {% for name in modules %}{% set unit = units[name] %}{% include "_module_unit.html" %}{% else %}<span class="xs faint">—</span>{% endfor %}
+          </div>
+        </section>
+        {% endfor %}
+      </div>
+      <div class="flow flow-side" aria-label="旁路">
+        <div class="flow-label flow-label-head" style="grid-row: 1">旁路</div>
+        <div class="flow-label" style="grid-row: 2">档案</div>
+        {% set col = namespace(n=2) %}
+        {% for key, title, glyph, statuses, modules in ui_side_groups %}
+        {% set span = 2 if statuses|length > 3 else 1 %}
+        <section class="stage" style="grid-column: {{ col.n }} / span {{ span }}" aria-label="{{ title }}">
+          <div class="stage-head">{{ icon(glyph, 'icon-sm') }}{{ title }}</div>
+          <div class="counts{{ ' cols2' if span == 2 }}">
+            {% for status in statuses %}{% set n = counts.get(status, 0) %}{% set tone = flow_tones.get(status) if n or status not in ['manual_review', 'quarantined'] else none %}
+            <a class="count-row{{ ' status-tone' if tone }}{{ ' zero' if not n and not tone }}" href="/{{ 'inbox?status=' ~ status if status in ['manual_review', 'quarantined'] else 'archives?status=' ~ status }}" {% if tone %}data-tone="{{ tone }}"{% endif %}>{{ status|status_label }}<span class="n">{{ '{:,}'.format(n) }}</span></a>
+            {% endfor %}
+          </div>
+        </section>
+        {% set col.n = col.n + span %}
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <div class="cols-main mt16">
+    {% include "_activity.html" %}
+    {# 依赖服务：外部服务逐行显示；存储目录合并成一行，展开看各目录明细。
+       同一轮探测共用 checked_at，所以检查时间只在卡头写一次。 #}
+    {% set services = [] %}{% set storages = [] %}
+    {% for component, item in health|dictsort %}{% set entry = (component, item, health_states.get(component, 'unknown')) %}
+      {% if component.startswith('storage:') %}{% set _ = storages.append(entry) %}{% else %}{% set _ = services.append(entry) %}{% endif %}
+    {% endfor %}
+    {% set checked = health.values()|map(attribute='checked_at')|reject('none')|list %}
+    <section class="card health-card">
+      <div class="card-head"><h2>依赖服务</h2>{% if checked %}<span class="meta" title="{{ (checked|max)|datetime }}">检查于 {{ (checked|max)|ui_ago }}</span>{% endif %}</div>
+      {% for component, item, state in services %}
+      <div class="health-row" title="检查于 {{ item.checked_at|datetime }}"><span class="dot" data-tone="{{ state|ui_run_tone }}"></span>
+        <div class="grow min0"><strong>{{ component|component_label }}</strong><div class="msg">{{ item.message or '等待首次检查' }}{% if item.latency_ms is not none %} · {{ item.latency_ms }} ms{% endif %}</div></div>
+        <span class="pill" data-tone="{{ state|ui_run_tone }}">{{ state|ui_run_label }}</span></div>
+      {% endfor %}
+      {% if storages %}
+      {% set rank = {'danger': 3, 'warn': 2, 'ok': 0} %}
+      {% set worst = namespace(state='healthy', rank=-1, free=none) %}{% set bad = [] %}
+      {% for name, item, state in storages %}{% set r = rank.get(state|ui_run_tone, 1) %}
+        {% if r > worst.rank %}{% set worst.state = state %}{% set worst.rank = r %}{% endif %}
+        {% if state != 'healthy' %}{% set _ = bad.append((name, item, state)) %}{% endif %}
+        {% set free = (item.detail or {}).get('free_bytes') %}{% if free is not none and (worst.free is none or free < worst.free) %}{% set worst.free = free %}{% endif %}
+      {% endfor %}
+      {% set summary -%}
+        {% if not bad %}读写正常{% if worst.free is not none %} · 最少剩余 {{ worst.free|filesize }}{% endif %}
+        {%- else %}{% for name, item, state in bad[:2] %}{{ name[8:] }} {{ item.message or state|ui_run_label }}{% if not loop.last %} · {% endif %}{% endfor %}{% if bad|length > 2 %} 等 {{ bad|length }} 个{% endif %}{% if storages|length > bad|length %} · 其余 {{ storages|length - bad|length }} 个正常{% endif %}{% endif %}
+      {%- endset %}
+      <details class="health-group">
+        <summary class="health-row"><span class="dot" data-tone="{{ worst.state|ui_run_tone }}"></span>
+          <div class="grow min0"><strong>存储 · {{ storages|length }} 个目录</strong>
+            <div class="msg truncate" title="{{ summary }}">{{ summary }}</div></div>
+          <span class="pill" data-tone="{{ worst.state|ui_run_tone }}">{{ worst.state|ui_run_label }}</span>{{ icon('chevron-right', 'icon-sm chev') }}</summary>
+        <div class="health-sub">
+          {% for name, item, state in storages %}{% set detail = item.detail or {} %}
+          {# 一行一个目录：正常时只给剩余空间，异常时改写状态与原因 #}
+          <div class="health-sub-row" title="{{ item.message or '等待首次检查' }}{% if item.latency_ms is not none %} · {{ item.latency_ms }} ms{% endif %} · 检查于 {{ item.checked_at|datetime }}"><span class="dot" data-tone="{{ state|ui_run_tone }}"></span>
+            <span class="mono grow truncate">{{ name[8:] }}</span>
+            {% if state != 'healthy' %}<span class="status-tone nowrap" data-tone="{{ state|ui_run_tone }}">{{ state|ui_run_label }} · {{ item.message or '等待首次检查' }}</span>
+            {% elif detail.get('free_bytes') is not none %}<span class="free nowrap">{{ detail.free_bytes|filesize }}{% if detail.get('total_bytes') %} / {{ detail.total_bytes|filesize }}{% endif %}</span>{% endif %}</div>
+          {% endfor %}
+        </div>
+      </details>
+      {% endif %}
+      {% if not health %}
+      <div class="empty">{{ icon('heart-pulse') }}<span>等待 Supervisor 写入首次健康快照。</span></div>
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

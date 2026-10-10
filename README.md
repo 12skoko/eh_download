@@ -1,31 +1,92 @@
-# EH Archive
+# EH Archive 安装与运行
 
-EH Archive is the replacement for the legacy scripts in `old/`. It separates
-collection, download, validation, preparation, upload and cleanup into
-recoverable services driven by PostgreSQL state.
+先安装 Conda，并准备 PostgreSQL 数据库、EH 账号 Cookie、启用 Web API 的 qBittorrent 和 LANraragi。
 
-## Quick start
+## 1. 安装环境
 
-1. Create a Python 3.11+ environment (this repository uses Conda environment `eh`: `conda create -n eh python=3.11`) and install `pip install -e ".[dev]"`; qBittorrent support is part of the base installation.
-2. Create the ignored `config/` directory and copy `app.toml`, `supervisor.toml`, `crawl.toml` and `secrets.toml` from the tracked `config.sample/` directory. To use video-archive special processing, also copy `config.sample/special/video_archive.toml` to `config/special/video_archive.toml`. Fill in PostgreSQL, service, crawl, storage, ffmpeg and the special work root; video downloads reuse the APP qBittorrent and local torrent roots. The entire runtime `config/` directory is local-only and ignored by Git.
-3. Run `eharchive db upgrade` (or `python -m eh_archive.cli db upgrade`).
-4. Start `eharchive-web` and `eharchive-supervisor` as separate processes.
+```bash
+conda create -n eh python=3.11 -y
+conda activate eh
+python -m pip install -e .
+```
 
-The complete Chinese setup and operations guide is [docs/usage.zh-CN.md](docs/usage.zh-CN.md).
+已有 `eh` 环境时跳过创建命令。需要 aria2、旧 MySQL 迁移或开发工具时，按需安装：
 
-The Supervisor runs periodic collection and bounded on-demand
-screen/download/validation/upload/cleanup workers. After each upload worker finishes its batch, it requests one global
-LANraragi thumbnail regeneration pass.
+```bash
+python -m pip install -e ".[aria2]"
+python -m pip install -e ".[migration]"
+python -m pip install -e ".[dev]"
+```
 
-The Web “特殊处理” area provides persistent, user-driven one-shot workflows.
-It only writes workflow/job requests to PostgreSQL; Supervisor starts the
-allowlisted worker processes. The first module combines a manually selected
-image torrent and video torrent, converts MP4 files to animated WebP, and
-returns one validated ZIP to the ordinary `downloaded -> validate` pipeline.
+## 2. 配置与初始化
 
-The `scripts/` directory contains one-time MySQL migration and reconciliation
-tools. Runtime code never imports those scripts.
+首次运行时复制示例配置：
 
-## 特殊模块
+```bash
+mkdir -p config
+cp config.sample/{app,supervisor,crawl,secrets}.toml config/
+cp -r config.sample/special config/special
+```
 
-视频处理与 LANraragi 数据库核对共用独立工作流框架。核对可从 Web「特殊处理」启动并浏览、下载报告；视频仍保留原有手动流程。升级、配置与新增模块说明见 [特殊模块使用与扩展](docs/SPECIAL_MODULES.md)。
+修改 `config/` 中的示例值，填写数据库连接、EH Cookie、qBittorrent 和 LANraragi 的地址与凭据、采集地址，并将日志和存储目录改为实际的绝对路径。数据库和用户需提前创建，存储目录需有读写权限。
+
+默认大文件通过 SMB 上传，需要配置 SMB 地址和凭据；只使用 HTTP 上传时，在 `app.toml` 中设置 `upload_backend = "http"`。使用视频处理时，还需配置 ffmpeg 和相关路径。
+
+生成 Web 登录密码哈希：
+
+```bash
+eharchive web-password
+```
+
+将输出填入 `config/secrets.toml` 的 `web_password_hash`，设置 `web_username`，并将 `web_secret` 替换为至少 32 个字符的随机字符串。
+
+初始化数据库表并检查连接：
+
+```bash
+eharchive --config-dir config db upgrade
+eharchive --config-dir config db ping
+```
+
+## 3. 直接运行
+
+打开两个终端，都进入项目根目录。
+
+终端一启动 Web：
+
+```bash
+conda activate eh
+eharchive-web --config-dir config
+```
+
+终端二启动后台任务：
+
+```bash
+conda activate eh
+eharchive-supervisor --config-dir config
+```
+
+浏览器打开 [http://127.0.0.1:8787](http://127.0.0.1:8787)，使用配置的用户名和密码登录。两个终端需保持运行，停止时分别按 `Ctrl+C`。以后启动时重复上述命令即可。
+
+## 4. Linux 系统服务运行
+
+也可以通过 systemd 在后台运行。需要 Linux、systemd、Git 和 root 权限；项目必须位于 Git 仓库中。先完成上面的环境安装、配置和数据库初始化，并停止手动运行的 Web 与 Supervisor。
+
+在 root 的 Bash 终端中进入项目目录，激活已安装项目的 `eh` 环境，安装并启动服务：
+
+```bash
+conda activate eh
+eharchive --config-dir config service install --start
+```
+
+安装会记录当前 Python 环境和项目的绝对路径，后续无需保持终端打开。常用管理命令（同样在 root 身份及已激活的 `eh` 环境中执行）：
+
+```bash
+eharchive service status
+eharchive service stop all
+eharchive service start all
+eharchive service restart all
+eharchive service logs web
+eharchive service logs supervisor
+```
+
+Web 与 Supervisor 服务默认不会在机器重启后自动启动，重启后执行 `eharchive service start all`。

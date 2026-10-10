@@ -174,7 +174,7 @@ eharchive --config-dir config db upgrade
 
 模块可使用 `ExecutionContext` 的短事务、进度与输出接口。worker 自动续租只更新 job 租约，不推进阶段；每次结果提交仍独立验证执行身份。可选操作执行期限到达后拒绝续租和提交，外部调用应同时设置自己的网络/子进程超时，并在循环中检查执行上下文。期限失效不代表业务取消成功，也不会自动释放未核实占用。
 
-自定义动作在 `definition.actions` 注册；Web 通用路由为 `POST /special/workflows/{id}/actions/{action}`。默认支持手动重试、取消、已确认旧 Worker 停止后的只读任务过期恢复和 `migrate-data`。数据升级要求没有 queued/running job；不支持的历史版本禁止领取，历史与输出仍可查看。未安装模块同样回退到通用历史页。
+自定义动作在 `definition.actions` 注册；主界面通用路由为 `POST /workflow/{id}/actions/{action}`，V1 备用界面使用 `POST /v1/special/workflows/{id}/actions/{action}`。默认支持手动重试、取消、已确认旧 Worker 停止后的只读任务过期恢复和 `migrate-data`。数据升级要求没有 queued/running job；不支持的历史版本禁止领取，历史与输出仍可查看。未安装模块同样回退到通用历史页。
 
 ### 事务与资源协议
 

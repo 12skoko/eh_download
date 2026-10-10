@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}EH Archive控制台{% endblock %}</title>
+  <link rel="stylesheet" href="/static/v1/app.css?v={{ css_version }}">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/v1/app.js" defer></script>
+  <script src="/static/v1/bulk-status.js" defer></script>
+</head>
+<body hx-boost="true">
+  <header class="topbar">
+    <a class="brand" href="/v1/">
+      <span class="brand-mark">EH</span>
+      <span><strong>EH Archive V1</strong><small>备用控制台</small></span>
+    </a>
+    <nav aria-label="主导航">
+      <a href="{{ main_ui_url }}" hx-boost="false">进入主界面</a>
+      <a class="{{ 'active' if request.url.path == '/v1/' else '' }}" href="/v1/">总览</a>
+      <a class="{{ 'active' if request.url.path.startswith('/v1/manga') else '' }}" href="/v1/manga">档案队列</a>
+      <a class="{{ 'active' if request.url.path == '/v1/review' else '' }}" href="/v1/review">人工复核</a>
+      <a class="{{ 'active' if request.url.path.startswith('/v1/special') else '' }}" href="/v1/special">特殊模块</a>
+      <a class="{{ 'active' if request.url.path == '/v1/events' else '' }}" href="/v1/events">事件与错误</a>
+      <a class="{{ 'active' if request.url.path.startswith('/v1/logs') else '' }}" href="/v1/logs" hx-boost="false">日志</a>
+      <a class="{{ 'active' if request.url.path == '/v1/config' else '' }}" href="/v1/config">配置</a>
+      <a class="{{ 'active' if request.url.path.startswith('/v1/system') else '' }}" href="/v1/system"><span>系统<span class="update-dot" data-update-dot hidden role="img" aria-label="有新更新" title="有新更新"></span></span></a>
+    </nav>
+    <form action="/v1/logout" method="post" class="logout-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <span class="user">{{ identity.username }}</span>
+      <button class="link-button" type="submit">退出</button>
+    </form>
+  </header>
+  <main id="main" class="shell">
+    {% block content %}{% endblock %}
+  </main>
+  <template id="system-operation-shell">
+    {% include "v1/_system_operation_body.html" %}
+  </template>
+</body>
+</html>

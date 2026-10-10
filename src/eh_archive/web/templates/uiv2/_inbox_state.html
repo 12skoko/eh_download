@@ -1,6 +1,0 @@
-<div id="inbox-state" hidden {% if oob_facets %}hx-swap-oob="outerHTML"{% endif %}>
-  <input type="hidden" name="status" value="{{ selected_status }}" form="inbox-filter">
-  <input type="hidden" name="error_code" value="{{ error_code }}" form="inbox-filter">
-  <input type="hidden" name="missing_error" value="{{ 'true' if missing_error else 'false' }}" form="inbox-filter">
-  <input type="hidden" name="operation" value="{{ operation }}" form="inbox-filter">
-</div>

@@ -1,2 +1,0 @@
-{% from 'uiv2/_macros.html' import modal_head with context %}
-<dialog class="modal" id="system-confirm">{{ modal_head('确认系统操作', glyph='server', tone='warn') }}<form method="dialog" class="card-body form-stack" data-system-confirm><p class="small" data-confirm-message></p><div class="note" data-tone="warn">服务停止或重启期间连接可能短暂中断；详情页会等待服务恢复并继续读取结果。</div><div class="btn-group"><span class="grow"></span><button class="btn" type="button" data-close-dialog>取消</button><button class="btn btn-primary" type="submit">确认执行</button></div></form></dialog>

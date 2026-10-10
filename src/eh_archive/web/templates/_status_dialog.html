@@ -1,0 +1,69 @@
+{% from "_macros.html" import icon, csrf, form_error, status_pill with context %}
+{% set advance_group = ['discovered', 'download_pending', 'downloaded', 'completed'] %}
+<dialog class="modal wide" id="status-dialog" data-status-dialog aria-labelledby="status-dialog-title">
+  <div class="modal-head">
+    <span class="icon-badge">{{ icon('square-pen') }}</span>
+    <div class="grow min0"><h2 id="status-dialog-title">更改状态</h2><p class="truncate">{{ row.name or row.real_name or row.manga_id }} · <span class="mono">{{ row.manga_id }}</span></p></div>
+    <button type="button" class="btn btn-ghost btn-icon" data-close-dialog aria-label="关闭">{{ icon('x') }}</button>
+  </div>
+  <div class="cmd">
+    <div class="cmd-list" role="listbox" aria-label="目标状态">
+      {% for group_name, members in [('推进流程', 'advance'), ('停止或标记', 'mark'), ('高影响', 'danger')] %}
+      <div class="cmd-group">{{ group_name }}</div>
+      {% for target in manual_status_targets %}
+        {% set kind = 'danger' if target.danger else 'advance' if target.status in advance_group else 'mark' %}
+        {% if kind == members %}
+        {% set source_allowed = not target.allowed_from or row.status in target.allowed_from %}
+        {% set blocked = execution_active or row.status == target.status or not source_allowed %}
+        <button type="button" class="cmd-item" role="option" data-status-target="{{ target.status }}" {% if target.danger %}data-danger{% endif %} {% if blocked %}disabled{% endif %}>
+          <span class="status-tone" data-tone="{{ target.status|ui_tone }}">{{ target.label }}</span>
+          <small>{{ target.status }}{% if row.status == target.status %} · 当前状态{% elif not source_allowed %} · 仅限 {{ target.allowed_from|map('status_label')|join('/') }}{% elif target.requires_reason %} · 需原因{% endif %}</small>
+        </button>
+        {% endif %}
+      {% endfor %}
+      {% endfor %}
+    </div>
+    <div class="cmd-pane">
+      <div class="cmd-empty" data-status-empty>{{ icon('arrow-left') }}<span>{% if execution_active %}当前档案仍有活动任务或租约，人工状态调整已锁定。{% else %}从左侧选择目标状态，这里会显示需要填写的信息。{% endif %}</span></div>
+      {% for target in manual_status_targets %}
+      <form class="cmd-form" data-status-form="{{ target.status }}" hidden
+            action="/archives/{{ row.manga_id }}/status/{{ target.status }}" method="post"
+            hx-post="/archives/{{ row.manga_id }}/status/{{ target.status }}" hx-target="#dossier" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
+        {{ csrf() }}<input type="hidden" name="row_version" value="{{ row.row_version }}"><input type="hidden" name="mode" value="{{ mode }}">
+        <p class="desc">{{ target.description }}</p>
+        <div class="shift">{{ status_pill(row.status) }}<span class="mono xs muted">{{ row.status }}</span>{{ icon('arrow-right') }}{{ status_pill(target.status) }}<span class="mono xs muted">{{ target.status }}</span></div>
+        {% if target.status in ['download_pending', 'downloaded'] %}
+        <div class="field"><label>下载方式<span class="req">*</span></label>
+          <select class="select" name="download_method" required {% if target.status == 'downloaded' %}data-artifact-method{% endif %}>
+            <option value="">请选择</option>
+            {% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}" data-artifact-directory="{{ artifact_directories.get(method, '') }}" {% if row.download_method == method %}selected{% endif %}>{{ method }}</option>{% endfor %}
+            {% if target.status == 'download_pending' %}<option value="manual_torrent">手动选择种子（进入特殊模块，暂不加载）</option>{% endif %}
+          </select></div>
+        {% endif %}
+        {% if target.status == 'downloaded' %}
+        <div class="field"><label>文件名<span class="req">*</span></label><input class="input mono" name="artifact_filename" value="{{ row.artifact_filename or '' }}" placeholder="服务器下载目录中的文件名" data-artifact-filename required></div>
+        <div class="field"><span class="label">服务器路径</span><output class="path-preview" data-artifact-path>请选择下载方式并填写文件名</output><span class="help">Web 会根据下载方式自动登记位置，但不会在此处检查文件是否存在，后续由 validate 模块统一校验。</span></div>
+        {% endif %}
+        {% if target.status in ['uploaded', 'completed'] %}
+        <div class="field"><label>LANraragi archive ID<span class="req">*</span></label><input class="input mono" name="archive_id" value="{{ row.lrr_archive_id or '' }}" pattern="[0-9A-Fa-f]{40}" maxlength="40" placeholder="40 位十六进制 archive ID" required></div>
+        {% endif %}
+        {% if target.status == 'outdated' %}
+        <div class="field"><label>替代档案 ID<span class="req">*</span></label><input class="input mono" name="superseded_by_id" value="{{ row.superseded_by_id or '' }}" placeholder="例如 123456/token" required><span class="help">必须是数据库中存在且不是当前档案自身的档案。</span></div>
+        {% endif %}
+        {% if target.status == 'force_delete_pending' %}
+        <div class="field"><label>档案 ID 二次确认<span class="req">*</span> <span class="mono xs muted" style="margin-left:6px">{{ row.manga_id }}</span></label><input class="input mono" name="confirmation_manga_id" placeholder="请输入上方档案 ID" autocomplete="off" required></div>
+        {% endif %}
+        <div class="field"><label>操作原因{% if target.requires_reason %}<span class="req">*</span>{% else %}（可选）{% endif %}</label>
+          <textarea class="textarea" name="reason" rows="3" placeholder="写入审计轨迹" {% if target.requires_reason %}required{% endif %}>{% if target.status == 'force_delete_pending' %}outdated{% else %}{{ target.default_reason|default('') }}{% endif %}</textarea></div>
+        {% if target.danger %}<div class="note" data-tone="danger">{{ icon('triangle-alert') }}<div>这是高影响操作，请核对目标状态和必填信息后再确认。</div></div>{% endif %}
+        {{ form_error() }}
+        <div class="cmd-foot">
+          <span class="left">{{ icon('lock', 'icon-sm') }} 使用 row_version {{ row.row_version }} 提交，记录被其他操作修改时会拒绝</span>
+          <button type="button" class="btn" data-close-dialog>返回</button>
+          <button type="submit" class="btn {{ 'btn-danger' if target.danger else 'btn-primary' }}">确认修改</button>
+        </div>
+      </form>
+      {% endfor %}
+    </div>
+  </div>
+</dialog>

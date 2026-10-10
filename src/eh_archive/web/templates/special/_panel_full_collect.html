@@ -1,0 +1,137 @@
+{% from "_macros.html" import icon, csrf, form_error, modal_head, run_pill with context %}
+{% from "special/_wf.html" import act, hero, notices, history, id_span, id_progress with context %}
+{% set actions = '/workflow/' ~ workflow.id ~ '/actions/' %}
+{% set scope = payload.get("scope", {}) %}{% set counts = payload.get("counts", {}) %}{% set last = payload.get("last_page", {}) %}{% set network = payload.get("network", {}) %}
+{% set page_notes = payload.get("page_count_notices", {}) %}
+{% set round_title = '旧日期轮次' if legacy_round else 'ID 区间采集' %}
+<div id="wf-panel" class="stack" hx-get="{{ ui_panel_url }}" hx-trigger="every 10s [archiveUICanPoll() && archiveUIWorkflowCanPoll() && !document.activeElement?.closest('#wf-panel form') && !document.querySelector('#wf-panel dialog[open]')]" hx-swap="outerHTML">
+  {% call hero(workflow, kind, round_title ~ ' · ' ~ phase_labels.get(workflow.phase, workflow.phase), 'layers', 'danger' if workflow.phase in ['failed', 'waiting_repair', 'interrupted'] else 'warn' if workflow.phase in ['cooling', 'paused', 'pausing'] else 'ok' if workflow.status == 'completed' else '') %}
+    {% if workflow.status == "active" %}
+      {% if current_job or payload.get("intent") == "run" %}{{ act(actions ~ 'pause', '暂停', workflow, 'btn', 'pause') }}{% endif %}
+      {% if not current_job and module_health.available and not legacy_round %}{{ act(actions ~ 'resume', '继续此轮', workflow, 'btn btn-primary', 'play') }}{% endif %}
+      {% if can_terminate %}<button type="button" class="btn btn-danger-quiet" data-open-dialog="fc-terminate-dialog">{{ icon('square') }}终止此轮…</button>{% endif %}
+    {% endif %}
+    <a class="btn btn-ghost" href="/workflow/{{ workflow.id }}/logs">{{ icon('scroll-text') }}本轮日志</a>
+  {% endcall %}
+
+  {% if legacy_round %}<div class="note" data-tone="warn">{{ icon('archive') }}<div><strong>这是升级前的日期轮次。</strong>只能查看、暂停或终止；已采集档案与进度会保留。需要继续采集时，请在模块页按 ID 区间新建轮次。</div></div>{% endif %}
+  {{ notices(workflow, '；当前配置不能领取新任务。') }}
+  {% if payload.get("last_error") %}<div class="note" data-tone="warn">{{ icon('circle-alert') }}<div>最近错误：<span class="code">{{ payload.last_error.code }}</span> · {{ payload.last_error.at|full_collect_datetime }}</div></div>{% endif %}
+  {% if not supervisor_online %}<div class="note" data-tone="warn">{{ icon('server') }}<div>调度器离线，排队任务等待调度器启动；仍存活的执行者会继续读取暂停意图。</div></div>{% endif %}
+  {% if expired_job %}<div class="note" data-tone="danger">{{ icon('timer') }}<div>执行租约已过期，等待框架核实或撤销旧执行资格；当前不代表正常运行。</div></div>{% endif %}
+
+  {# 页面条目数核对：警报优先，其次末页提醒 #}
+  {% set warning = page_notes.get("last_warning") %}{% set latest = page_notes.get("last", {}) %}
+  {% if warning %}
+  <section class="resolve" data-tone="warn" style="margin:0" data-page-count-warning>
+    <div class="resolve-head">{{ icon('triangle-alert') }}<div class="grow"><h3>列表页条目数异常</h3>
+      <div class="sub"><span>最近一次实际 <strong class="num">{{ warning.actual }}</strong> 条，预期 <strong class="num">{{ warning.expected }}</strong> 条</span><span>· 累计提醒 {{ page_notes.get("count", 0) }} 次，其中警报 {{ page_notes.get("warning_count", 0) }} 次</span></div></div></div>
+    <div class="resolve-body">
+      <dl class="facts three">
+        <div><dt>发生时间</dt><dd class="num">{{ warning.at|full_collect_datetime }}</dd></div>
+        <div><dt>批次</dt><dd><a class="mono" href="/workflow/{{ workflow.id }}/logs?job_id={{ warning.job_id }}">Job #{{ warning.job_id }}</a> · 请求 #{{ warning.request_number }}</dd></div>
+        <div><dt>站点末页标记</dt><dd>{{ '有' if warning.get('site_terminal') else '无' }}</dd></div>
+        <div class="wide"><dt>页面</dt><dd><a class="mono xs break" href="{{ warning.url }}" target="_blank" rel="noopener noreferrer">{{ warning.url }}</a></dd></div>
+      </dl>
+      <p class="xs muted">条目少于预期可能来自站点过滤、隐藏内容或请求异常；采集不会因此停止，请结合本批次日志判断。</p>
+    </div>
+  </section>
+  {% endif %}
+  {% if latest.get("level") == "info" %}
+  <div class="note" data-tone="info" data-page-count-info>{{ icon('info') }}<div><strong>末页条目数提醒</strong>：实际 {{ latest.actual }} 条，预期 {{ latest.expected }} 条，站点已给出末页标记。
+    <div class="xs muted">累计提醒 {{ page_notes.get("count", 0) }} 次 · {{ latest.at|full_collect_datetime }} · <a class="mono" href="/workflow/{{ workflow.id }}/logs?job_id={{ latest.job_id }}">Job #{{ latest.job_id }}</a> · 请求 #{{ latest.request_number }}</div>
+    <div><a class="mono xs break" href="{{ latest.url }}" target="_blank" rel="noopener noreferrer">{{ latest.url }}</a></div></div></div>
+  {% endif %}
+
+  {# 区间标尺 #}
+  {% if not legacy_round %}
+  <section class="card">
+    <div class="card-head"><h3>扫描区间</h3><span class="meta">GID 由大到小</span></div>
+    <div class="card-body id-ruler">
+      <div class="id-ruler-ends">
+        <div><span class="xs muted">起始 ID</span><strong class="num">{{ '{:,}'.format(scope.get('start_id', 0)) }}</strong></div>
+        <div class="here">{% if last.get('last_gid') is not none %}<span class="xs muted">已扫到</span><strong class="num">{{ '{:,}'.format(last.last_gid) }}</strong>{% else %}<span class="xs muted">尚未提交任何页</span>{% endif %}</div>
+        <div class="right"><span class="xs muted">结束 ID（包含）</span><strong class="num">{% if scope.get('end_id') %}{{ '{:,}'.format(scope.end_id) }}{% else %}站点末页{% endif %}</strong></div>
+      </div>
+      {{ id_progress(scope, last, workflow.status, wide=true) }}
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="metric-row big">
+    <div class="metric"><span>已提交页数</span><strong class="num">{{ '{:,}'.format(counts.get("pages", 0)) }}</strong></div>
+    <div class="metric"><span>处理条目</span><strong class="num">{{ '{:,}'.format(counts.get("found", 0)) }}</strong></div>
+    <div class="metric"><span>新增 / 更新</span><strong class="num">{{ '{:,}'.format(counts.get("created", 0)) }} / {{ '{:,}'.format(counts.get("updated", 0)) }}</strong></div>
+    <div class="metric"><span>读取 / 重试</span><strong class="num">{{ counts.get("requests", 0) }} / {{ counts.get("retries", 0) }}</strong></div>
+    <div class="metric"><span>条目数提醒 / 警报</span><strong class="num">{{ page_notes.get("count", 0) }} / {{ page_notes.get("warning_count", 0) }}</strong></div>
+  </div>
+  <p class="xs muted">处理次数包含边界重叠，不代表唯一档案总数。</p>
+
+  <div class="cols">
+    <section class="card">
+      <div class="card-head"><h3>调度</h3><span class="meta">每 10 秒刷新</span></div>
+      <div class="card-body"><dl class="kv">
+        <dt>调度器</dt><dd>{% if supervisor_online %}{{ supervisor_state|ui_run_label }}{% else %}离线{% endif %}</dd>
+        <dt>创建</dt><dd class="num">{{ workflow.created_at|datetime }}</dd>
+        <dt>开始</dt><dd class="num">{{ payload.get("started_at")|full_collect_datetime if payload.get("started_at") else "尚未启动" }}</dd>
+        <dt>最后更新</dt><dd class="num">{{ workflow.updated_at|datetime }}</dd>
+        <dt>本轮运行跨度</dt><dd class="num">{{ elapsed_seconds }} 秒</dd>
+        {% if next_due %}<dt>下一批最早</dt><dd class="num">{{ next_due|datetime }}（约 {{ wait_seconds }} 秒后）</dd>{% endif %}
+        {% if current_job %}<dt>当前 Job</dt><dd><a class="mono" href="/workflow/{{ workflow.id }}/logs?job_id={{ current_job.id }}">#{{ current_job.id }}</a> · {{ run_pill(current_job.status) }} · 租约至 {{ current_job.lease_until|datetime }}</dd>
+        <dt>运行阶段</dt><dd>{{ current_job.progress.get("message", "等待领取") }}</dd>{% endif %}
+        <dt>批次预算</dt><dd class="mono xs break">{{ payload.get("batch_budget", {}) }}</dd>
+        <dt>{{ '当前批次' if current_job else '最近批次' }}</dt><dd class="mono xs break">{{ (current_job.progress.get("batch", {}) if current_job else payload.get("last_batch", {})) }}</dd>
+        <dt>剩余冷却</dt><dd class="num">约 {{ cooldown_seconds }} 秒</dd>
+        <dt>停止原因</dt><dd class="mono xs">{{ payload.get("stop_reason") or "—" }}</dd>
+      </dl>
+      {% if next_due %}<p class="xs muted mt8">到期后仍需等待调度器在线、总开关与模块开关开启、暂停 / 排空 / 维护解除及公共池空位。</p>{% endif %}</div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h3>网络</h3></div>
+      <div class="card-body"><dl class="kv">
+        <dt>账号</dt><dd class="mono xs">{{ network.get("account", scope.get("account")) }}</dd>
+        <dt>代理</dt><dd><span class="mono xs">{{ network.get("name", "尚未选择") }}</span>（{{ network.get("index", "—") }}/{{ network.get("pool_size", "—") }}）</dd>
+        <dt>下一允许请求</dt><dd class="num">{{ payload.get("next_request_at")|full_collect_datetime if payload.get("next_request_at") else "—" }}</dd>
+        <dt>冷却截至</dt><dd class="num">{{ payload.get("cooldown_until")|full_collect_datetime if payload.get("cooldown_until") else "无" }}</dd>
+        <dt>连续失败批次</dt><dd class="num">{{ payload.get("consecutive_failures", 0) }}</dd>
+      </dl></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="card-head"><h3>范围与检查点</h3>{% if scope.get('fingerprint') %}<span class="meta mono" title="区间指纹 {{ scope.fingerprint }}">{{ scope.fingerprint[:12] }}</span>{% endif %}</div>
+    <div class="card-body"><dl class="kv wide-kv">
+      {% if legacy_round %}
+      <dt>旧目标时间</dt><dd>{{ scope.get("upper_at", "—") }}</dd>
+      {% else %}
+      <dt>ID 区间</dt><dd>{{ id_span(scope) }}<span class="xs muted">　起始 ID 即 <span class="mono">next</span>，结束 ID 包含在内</span></dd>
+      {% endif %}
+      <dt>冻结站点</dt><dd class="mono xs break">{{ scope.get("base_url", "—") }}</dd>
+      <dt>冻结账号</dt><dd class="mono xs">{{ scope.get("account", "—") }}</dd>
+      <dt>本轮初始页</dt><dd class="mono xs break">{{ scope.get("initial_url", "—") }}</dd>
+      <dt>最后成功页</dt><dd class="mono xs break">{% if last.get("url") %}<a href="{{ last.url }}" target="_blank" rel="noopener noreferrer">{{ last.url }}</a>{% else %}尚无{% endif %}</dd>
+      <dt>最近页 GID 范围</dt><dd class="num">{{ last.get("first_gid", "—") }} → {{ last.get("last_gid", "—") }}</dd>
+      <dt>提交时间</dt><dd class="num">{{ last.get("committed_at")|full_collect_datetime if last.get("committed_at") else "—" }}</dd>
+      <dt>下一页游标</dt><dd class="mono xs break">{{ payload.get("cursor") or "本轮已到终点" }}</dd>
+      {% if payload.get("page_archive", {}).get("root") %}<dt>页面存档目录</dt><dd class="mono xs break">{{ payload.page_archive.root }}</dd>{% endif %}
+    </dl></div>
+  </section>
+
+  {{ history(workflow, job_title='批次', log_links=true) }}
+
+  {% if can_terminate %}
+  <dialog class="modal" id="fc-terminate-dialog">
+    <form method="post" action="{{ actions }}terminate" hx-post="{{ actions }}terminate" hx-target="#wf-panel" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
+      {{ csrf() }}<input type="hidden" name="row_version" value="{{ workflow.row_version }}">
+      {{ modal_head('终止此轮', round_title ~ ' #' ~ workflow.id, 'square', 'danger') }}
+      <div class="modal-body">
+        <p>终止后此轮永久结束，不能再继续；已采集的档案、检查点和日志都会保留。需要补采剩余区间时，请按 ID 区间新建轮次。</p>
+        {% if not legacy_round %}<dl class="kv"><dt>ID 区间</dt><dd>{{ id_span(scope) }}</dd><dt>已扫到</dt><dd class="num">{{ last.get("last_gid", "尚未扫描") }}</dd><dt>下一页游标</dt><dd class="mono xs break">{{ payload.get("cursor") or "—" }}</dd></dl>{% endif %}
+        <label class="confirm-box" data-tone="danger"><input type="checkbox" name="confirmed" value="yes" required><span>确认永久终止此轮；档案和检查点保留，此轮不能继续。</span></label>
+        {{ form_error() }}
+      </div>
+      <div class="modal-foot"><button type="button" class="btn" data-close-dialog>返回</button><button type="submit" class="btn btn-danger">终止此轮</button></div>
+    </form>
+  </dialog>
+  {% endif %}
+</div>

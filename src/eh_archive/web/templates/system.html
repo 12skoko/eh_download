@@ -1,38 +1,64 @@
 {% extends "base.html" %}
-{% block title %}系统 · EH Archive{% endblock %}
-{% block content %}
-<div class="page-head"><h1>系统</h1><a href="/config">配置</a></div>
-<div id="system-error" class="alert warning" role="alert" {% if not management_error %}hidden{% endif %}>{{ management_error or '' }}</div>
-{% if not management_error %}
-<div data-system-dashboard>
-  <section id="services">
-    <h2>服务</h2>
-    <table><thead><tr><th>服务</th><th>状态</th><th>PID</th><th>启动时间</th><th>操作</th></tr></thead>
-      <tbody>{% for role in ['web', 'supervisor'] %}
-      <tr data-service="{{ role }}"><th>{{ role }}</th><td data-status></td><td data-pid></td><td data-started></td>
-        <td>{% for action, label in [('start', '启动'), ('stop', '停止'), ('restart', '重启')] %}
-          <button type="button" data-operation="{{ action }}_{{ role }}">{{ label }}</button>
-        {% endfor %}</td></tr>{% endfor %}
-      </tbody>
-    </table>
-    <p><button type="button" data-operation="restart_all">全部重启</button></p>
-    <p id="supervisor-control"></p>
-  </section>
-  <section><h2>当前 Worker</h2>
-    <table><thead><tr><th>模块</th><th>任务</th><th>状态</th><th>开始时间</th></tr></thead>
-      <tbody id="system-workers"></tbody></table>
-  </section>
-  <section><h2>Git 更新<span class="update-dot" data-update-dot hidden role="img" aria-label="有新更新" title="有新更新"></span></h2>
-    <p id="git-check-schedule"></p><dl id="git-status"></dl><pre id="git-changes" hidden></pre>
-    <button type="button" id="git-fetch">检查更新</button>
-    <button type="button" data-operation="git_update">执行更新</button>
-  </section>
-  <section><h2>操作记录</h2>
-    <table><thead><tr><th>时间</th><th>操作</th><th>状态</th><th>阶段</th></tr></thead>
-      <tbody id="operation-history"></tbody>
-    </table>
-  </section>
+{% from "_macros.html" import icon, modal_head with context %}
+{% set nav = 'system' %}
+{% block title %}系统{% endblock %}
+{% block crumbs %}<span>运维</span>{{ icon('chevron-right') }}<span class="current">系统</span>{% endblock %}
+{% block main %}
+<div class="page" data-system>
+  <div class="page-head"><div class="grow"><h1>系统</h1><p>服务状态、当前 Worker、Git 更新与运维操作记录。改变服务的操作在独立执行单元中运行，提交后返回操作 ID。</p></div>
+    <div class="page-head-actions"><a class="btn btn-ghost" href="/settings" hx-boost="false">{{ icon('sliders-horizontal') }}配置</a></div></div>
+  <div class="note" data-tone="danger" data-system-error role="alert" {% if not management_error %}hidden{% endif %} style="margin-bottom:16px">{{ icon('circle-alert') }}<div data-system-error-text>{{ management_error or '' }}</div></div>
+  {% if not management_error %}
+  <div class="cols-main">
+    <div class="stack">
+      <section class="card">
+        <div class="card-head"><h2>服务</h2><span class="meta" data-system-refreshed>正在读取…</span><div class="actions"><button type="button" class="btn btn-sm" data-operation="restart_all">{{ icon('rotate-cw', 'icon-sm') }}全部重启</button></div></div>
+        <div class="services">
+          {% for role, label, glyph in [('web', 'Web', 'monitor'), ('supervisor', 'Supervisor', 'server')] %}
+          <div class="service" data-service="{{ role }}">
+            <span class="glyph">{{ icon(glyph) }}</span>
+            <div class="grow min0"><div class="row center gap8"><strong>{{ label }}</strong><span class="pill" data-status data-tone="muted">—</span></div>
+              <div class="xs muted">PID <span class="mono" data-pid>—</span> · 启动于 <span data-started>—</span></div></div>
+            <div class="btn-group">
+              <button type="button" class="btn btn-sm" data-operation="start_{{ role }}">{{ icon('play', 'icon-sm') }}启动</button>
+              <button type="button" class="btn btn-sm" data-operation="restart_{{ role }}">{{ icon('rotate-cw', 'icon-sm') }}重启</button>
+              <button type="button" class="btn btn-sm btn-danger-quiet" data-operation="stop_{{ role }}">{{ icon('power', 'icon-sm') }}停止</button>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="card-foot"><span class="small" data-supervisor-control>—</span></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>当前 Worker</h2></div>
+        <div class="table-wrap"><table class="table compact"><thead><tr><th>模块</th><th>任务</th><th>状态</th><th>开始时间</th></tr></thead><tbody data-workers><tr><td colspan="4" class="muted small">正在读取…</td></tr></tbody></table></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>操作记录</h2></div>
+        <div class="table-wrap"><table class="table compact table-clickable"><thead><tr><th>时间</th><th>操作</th><th>状态</th><th>阶段</th></tr></thead><tbody data-operations><tr><td colspan="4" class="muted small">正在读取…</td></tr></tbody></table></div>
+      </section>
+    </div>
+    <aside class="stack">
+      <section class="card">
+        <div class="card-head"><h2>Git 更新</h2><span class="nav-dot" data-update-dot hidden title="有新更新"></span></div>
+        <div class="card-body form-stack">
+          <p class="xs muted" data-git-schedule></p>
+          <dl class="kv" data-git-status><dt>状态</dt><dd>正在读取…</dd></dl>
+          <pre class="codeblock" data-git-changes hidden></pre>
+          <p class="small" data-git-feedback role="status" hidden></p>
+          <div class="btn-group"><button type="button" class="btn" data-git-fetch>{{ icon('refresh-cw') }}检查更新</button><button type="button" class="btn btn-primary" data-operation="git_update">{{ icon('download') }}执行更新</button></div>
+          <p class="xs muted">更新要求工作区干净且能快进；会安装依赖、合并并校验配置、升级数据库并恢复各服务原来的运行状态。</p>
+        </div>
+      </section>
+    </aside>
+  </div>
+  {% endif %}
 </div>
-{% endif %}
-<script src="/static/management.js" defer></script>
+{% endblock %}
+{% block overlay %}
+<dialog class="modal" id="operation-dialog">
+  {{ modal_head('确认操作', none, 'server', 'warn') }}
+  <div class="modal-body"><p data-operation-text></p><p class="small muted">服务操作没有强制终止：排空 Supervisor 时会等待正在执行的任务结束。提交后跳转到操作详情页查看进度。</p><div class="form-error" data-operation-error hidden></div></div>
+  <div class="modal-foot"><button type="button" class="btn" data-close-dialog>取消</button><button type="button" class="btn btn-primary" data-operation-confirm>确认</button></div>
+</dialog>
 {% endblock %}

@@ -1,0 +1,44 @@
+{% extends "v1/base.html" %}
+{% block title %}日志 ▪ EH Archive控制台{% endblock %}
+{% block content %}
+<div class="page-head"><div><p class="eyebrow">运行记录</p><h1>日志</h1><p>点击文件夹逐层浏览，日志按更新时间从新到旧排列。</p></div></div>
+<nav class="log-breadcrumbs" aria-label="日志目录" hx-boost="false">
+  <a href="/v1/logs">日志根目录</a>{% for crumb in breadcrumbs %}<span aria-hidden="true">/</span>{% if loop.last %}<span aria-current="page">{{ crumb.name }}</span>{% else %}<a href="/v1/logs?directory={{ crumb.url }}">{{ crumb.name }}</a>{% endif %}{% endfor %}
+</nav>
+<form action="/v1/logs" method="get" class="filter-panel" hx-boost="false">
+  <input type="hidden" name="directory" value="{{ directory }}">
+  <label>筛选当前目录<input name="q" value="{{ q }}" placeholder="文件夹或日志名称"></label>
+  <button class="primary">筛选</button><a class="button" href="/v1/logs?{{ reset_query }}" hx-boost="false">重置</a>
+  {% if directory %}<a class="button" href="/v1/logs?{{ parent_query }}" hx-boost="false">返回上一级</a>{% endif %}
+</form>
+{% if available %}
+<div class="section-head"><button type="button" class="button primary" data-open-dialog="logs-archive-dialog">打包下载整个日志目录（ZIP）</button></div>
+<p>包含 log_dir 下所有普通文件及子目录，不受当前路径或筛选影响；跳过链接，保留原文。文件较多时，打包完成后开始下载。</p>
+<dialog id="logs-archive-dialog" class="status-dialog">
+  <div class="status-dialog-form">
+    <div class="dialog-head"><div><p class="eyebrow">日志归档</p><h2>确认打包下载日志？</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
+    <p>将打包下载 log_dir 下的全部普通文件和子目录，当前目录与筛选条件不会影响范围。日志较多时可能需要等待一段时间。</p>
+    <div class="dialog-actions"><button type="button" data-close-dialog>取消</button><a class="button primary" href="/api/logs/archive" hx-boost="false">确认打包并下载</a></div>
+  </div>
+</dialog>
+{% endif %}
+{% if not available %}<p class="alert warning">日志目录尚不存在或不可访问。</p>{% endif %}
+{% if truncated %}<p class="alert warning">目录条目超过扫描上限，当前只显示部分文件。</p>{% endif %}
+<section class="panel" style="overflow-x:auto">
+<table><thead><tr><th>文件名</th><th>大小</th><th>更新时间</th><th>操作</th></tr></thead>
+<tbody>{% for row in rows %}
+<tr>
+{% if row.is_directory %}
+<td class="mono"><a href="/v1/logs?directory={{ row.url }}" hx-boost="false">📁 {{ row.filename }}/</a></td>
+<td>文件夹</td><td>{{ row.modified|datetime }}</td><td><a href="/v1/logs?directory={{ row.url }}" hx-boost="false">打开目录</a></td>
+{% else %}
+<td class="mono"><a href="/v1/logs/view?file={{ row.url }}" hx-boost="false" title="{{ row.name }}">{{ row.filename }}</a></td>
+<td>{{ row.size|filesize }}</td><td>{{ row.modified|datetime }}</td>
+<td><a href="/api/logs/download?file={{ row.url }}" hx-boost="false">下载</a></td>
+{% endif %}
+</tr>{% else %}<tr><td colspan="4" class="empty">当前目录没有符合条件的文件夹或日志</td></tr>{% endfor %}</tbody></table>
+</section>
+<div class="pagination"><span>当前目录共 {{ total }} 项 · {{ page }}/{{ pages }} 页</span>
+{% if page > 1 %}<a class="button" href="/v1/logs?{{ filter_query }}&page={{ page - 1 }}" hx-boost="false">上一页</a>{% endif %}
+{% if page < pages %}<a class="button" href="/v1/logs?{{ filter_query }}&page={{ page + 1 }}" hx-boost="false">下一页</a>{% endif %}</div>
+{% endblock %}

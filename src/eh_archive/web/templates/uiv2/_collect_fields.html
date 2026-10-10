@@ -1,6 +1,0 @@
-<div class="form-grid">
-  <div class="field"><label for="collect-base-url">站点入口</label><input class="input" id="collect-base-url" name="base_url" type="url" value="{{ collect_default_base }}" placeholder="https://exhentai.org/" required><span class="help">配置仅预填默认值；本轮选择创建后固定。</span></div>
-  <div class="field"><label for="collect-account">采集账号</label><select class="select" id="collect-account" name="account" required><option value="">请选择已配置账号</option>{% for account in collect_accounts %}<option value="{{ account }}" {{ 'selected' if account == collect_default_account }}>{{ account }}</option>{% endfor %}</select></div>
-  <div class="field"><label for="collect-start-id">起始 ID</label><input class="input mono" id="collect-start-id" name="start_id" type="number" min="1" step="1" placeholder="1000" required><span class="help">直接填入首次请求的 next 参数，不要求该档案存在。</span></div>
-  <div class="field"><label for="collect-end-id">结束 ID</label><input class="input mono" id="collect-end-id" name="end_id" type="number" min="0" step="1" placeholder="0" required><span class="help">包含此下界；必须小于起始 ID。0 表示采集到站点末页。</span></div>
-</div>

@@ -1,13 +1,55 @@
-{% extends "base.html" %}
-{% block title %}{{ module.label }} ▪ EH Archive控制台{% endblock %}
-{% block content %}
-<div class="page-head"><div><a class="back" href="/special">← 返回模块目录</a><p class="eyebrow mono">{{ module.kind }}</p><h1>{{ module.label }}</h1></div><span class="badge large {{ 'healthy' if module_health.available else 'warning' }}">{{ '已启用' if module_health.available else '未启用' }}</span></div>
-{% if notice == 'batch-dispatched' %}<div class="alert success">批量检查已排队：找到 {{ batch_found }}，新排队 {{ batch_queued }}，跳过 {{ batch_skipped }}。</div>{% endif %}
-{% if notice == 'cleanup-dispatched' %}<div class="alert success">源文件清理已排队：找到 {{ batch_found }}，新排队 {{ batch_queued }}，跳过 {{ batch_skipped }}。</div>{% endif %}
-<section class="panel"><div class="section-head"><div><p class="eyebrow">模块操作</p><h2>视频种子下载与整合</h2></div></div>
-  <p>所有特殊任务都由用户手动排队。下载检查只筛选 <span class="mono">active / downloading</span>；源文件清理只筛选已经完成普通上传流程且仍待清理的档案。每个档案都会创建独立 job。</p>
-  {% if module_health.available %}<div class="panel-actions"><form method="post" action="/special/video-archive/collect-ready"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="primary">批量检查已下载的视频档案</button></form><form method="post" action="/special/video-archive/cleanup-completed"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">批量清理已完成档案的源文件（{{ cleanup_pending }}）</button></form></div>{% else %}<div class="alert warning">{{ module_health.reason }}</div>{% endif %}
-  {% if cleanup_waiting %}<p class="field-help">另有 {{ cleanup_waiting }} 个工作流已整合，但对应档案尚未进入 completed，暂不能清理源文件。</p>{% endif %}
+{% extends "special/_dash.html" %}
+{% from "_macros.html" import icon, csrf, run_pill, status_pill, empty, manga_link, simple_pager with context %}
+{% from "special/_wf.html" import module_head with context %}
+{% block dash %}
+{{ module_head(module, kind, module_health) }}
+{% if notice in ['batch-dispatched', 'cleanup-dispatched'] %}
+<div class="note" data-tone="ok" style="margin-bottom:16px">{{ icon('circle-check') }}<div><strong>{{ '批量检查已排队' if notice == 'batch-dispatched' else '源文件清理已排队' }}</strong><div class="xs">找到 {{ batch_found }}，新排队 {{ batch_queued }}，跳过 {{ batch_skipped }}。</div></div></div>
+{% endif %}
+
+<div class="cols">
+  <section class="card">
+    <div class="card-head"><h2>{{ icon('scan-search') }}批量检查已下载的视频档案</h2></div>
+    <div class="card-body form-stack">
+      <p class="small">只筛选 <span class="mono">active / downloading</span> 的工作流，为每个档案创建独立的 <span class="mono">check_and_compose_if_ready</span> job。两个 Torrent 都完成时继续安全解压、转换、打包和校验；未完成的只更新快照并继续等待，不会自动再次检查。</p>
+      {% if module_health.available %}
+      <form method="post" action="/video-archive/collect-ready" hx-post="/video-archive/collect-ready" hx-swap="none" hx-disabled-elt="find button">{{ csrf() }}
+        <button type="submit" class="btn btn-primary">{{ icon('scan-search') }}批量检查已下载的视频档案</button></form>
+      {% endif %}
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>{{ icon('eraser') }}批量清理已完成档案的源文件</h2><div class="actions"><span class="pill" data-tone="{{ 'warn' if cleanup_pending else 'muted' }}">待清理 {{ cleanup_pending }}</span></div></div>
+    <div class="card-body form-stack">
+      <p class="small">只筛选已经完成普通上传流程且仍待清理的档案。源清理只接受同时匹配 workflow 中 hash、模块专用 category 和数字 ID 保存路径的任务；被人工改动时整次清理失败，不会误删。</p>
+      {% if cleanup_waiting %}<p class="xs muted">另有 {{ cleanup_waiting }} 个工作流已整合，但对应档案尚未进入 completed，暂不能清理源文件。</p>{% endif %}
+      {% if module_health.available %}
+      <form method="post" action="/video-archive/cleanup-completed" hx-post="/video-archive/cleanup-completed" hx-swap="none" hx-disabled-elt="find button">{{ csrf() }}
+        <button type="submit" class="btn">{{ icon('eraser') }}批量清理已完成档案的源文件（{{ cleanup_pending }}）</button></form>
+      {% endif %}
+    </div>
+  </section>
+</div>
+
+<section class="card mt16">
+  <div class="card-head"><h2>视频档案处理记录</h2><span class="meta">共 {{ total }} 个 · 每页 200 个 · 每个档案一个工作流 · 从人工复核中的 <span class="mono">video_torrent</span> 档案进入</span>
+    <div class="actions"><span class="pill" data-tone="idle">排队 {{ job_counts.queued }}</span><span class="pill" data-tone="run">运行 {{ job_counts.running }}</span><span class="pill" data-tone="{{ 'danger' if job_counts.failed else 'muted' }}">失败 {{ job_counts.failed }}</span></div></div>
+  <div class="table-wrap"><table class="table table-link">
+    <thead><tr><th>工作流</th><th>档案</th><th>普通状态</th><th>特殊状态</th><th>阶段</th><th>源文件清理</th><th>更新</th></tr></thead>
+    <tbody>
+    {% for item in workflows %}{% set cleanup = (item.payload or {}).get('source_cleanup') or {} %}{% set mid = item.manga_bindings[0].manga_id %}
+    <tr>
+      <td><a class="mono" href="/workflows/video_archive/{{ item.id }}">#{{ item.id }}</a></td>
+      <td class="mono xs">{{ manga_link(mid) }}</td>
+      <td>{% if manga_statuses.get(mid) %}{{ status_pill(manga_statuses.get(mid)) }}{% else %}—{% endif %}</td>
+      <td>{{ run_pill(item.status) }}</td>
+      <td class="small">{{ item.phase|special_phase_label }}</td>
+      <td>{% set cs = cleanup.get('status') if cleanup is mapping else cleanup %}{% if cs %}{{ run_pill(cs) }}{% else %}<span class="faint">—</span>{% endif %}</td>
+      <td class="num muted" title="{{ item.updated_at|datetime }}">{{ item.updated_at|ui_clock }}</td>
+    </tr>
+    {% else %}<tr><td colspan="7">{{ empty('暂无视频档案处理工作流', 'film') }}</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% if total > 200 or page > 1 %}{{ simple_pager(page, page * 200 < total, total) }}{% endif %}
 </section>
-<section class="panel table-panel"><div class="section-head"><div><p class="eyebrow">工作流</p><h2>视频档案处理记录</h2></div><span>queued {{ job_counts.queued }} · running {{ job_counts.running }} · failed {{ job_counts.failed }}</span></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>档案</th><th>普通状态</th><th>特殊状态</th><th>阶段</th><th>源文件清理</th><th>更新</th></tr></thead><tbody>{% for item in workflows %}{% set cleanup = (item.payload or {}).get('source_cleanup') or {} %}<tr><td><a href="/special/workflows/{{ item.id }}">#{{ item.id }}</a></td><td class="mono"><a href="/manga/{{ item.manga_bindings[0].manga_id }}">{{ item.manga_bindings[0].manga_id }}</a></td><td><span class="badge">{{ manga_statuses.get(item.manga_bindings[0].manga_id, '—') }}</span></td><td><span class="badge {{ item.status }}">{{ item.status }}</span></td><td>{{ item.phase|special_phase_label }}</td><td>{{ cleanup.get('status', '—') if cleanup is mapping else cleanup }}</td><td>{{ item.updated_at|datetime }}</td></tr>{% else %}<tr><td colspan="7" class="empty">暂无视频档案处理工作流</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}

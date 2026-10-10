@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon with context %}
+{% set nav = 'workflows' %}
+{% block title %}{{ module.label }}{% endblock %}
+{% block crumbs %}<a href="/workflows">工作流</a>{{ icon('chevron-right') }}<span class="current">{{ module.label }}</span>{% endblock %}
+{% block main %}
+<div class="page" data-error-scope>
+  <div class="form-error page-error" data-form-error hidden></div>
+  {% block dash %}{% endblock %}
+</div>
+{% endblock %}

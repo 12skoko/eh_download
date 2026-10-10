@@ -1,0 +1,10 @@
+{% extends "v1/base.html" %}
+{% block title %}操作详情 · EH Archive{% endblock %}
+{% block content %}
+<div class="page-head"><h1>操作详情</h1><a href="/v1/system">系统</a></div>
+<div id="system-error" class="alert warning" role="alert" hidden></div>
+<section data-operation-detail="{{ operation.id }}">
+  {% include "v1/_system_operation_body.html" %}
+</section>
+<script src="/static/v1/management.js" defer></script>
+{% endblock %}

@@ -1,44 +1,55 @@
 {% extends "base.html" %}
-{% block title %}日志 ▪ EH Archive控制台{% endblock %}
-{% block content %}
-<div class="page-head"><div><p class="eyebrow">运行记录</p><h1>日志</h1><p>点击文件夹逐层浏览，日志按更新时间从新到旧排列。</p></div></div>
-<nav class="log-breadcrumbs" aria-label="日志目录" hx-boost="false">
-  <a href="/logs">日志根目录</a>{% for crumb in breadcrumbs %}<span aria-hidden="true">/</span>{% if loop.last %}<span aria-current="page">{{ crumb.name }}</span>{% else %}<a href="/logs?directory={{ crumb.url }}">{{ crumb.name }}</a>{% endif %}{% endfor %}
-</nav>
-<form action="/logs" method="get" class="filter-panel" hx-boost="false">
-  <input type="hidden" name="directory" value="{{ directory }}">
-  <label>筛选当前目录<input name="q" value="{{ q }}" placeholder="文件夹或日志名称"></label>
-  <button class="primary">筛选</button><a class="button" href="/logs?{{ reset_query }}" hx-boost="false">重置</a>
-  {% if directory %}<a class="button" href="/logs?{{ parent_query }}" hx-boost="false">返回上一级</a>{% endif %}
-</form>
+{% from "_macros.html" import icon, empty, modal_head with context %}
+{% set nav = 'logs' %}
+{% block title %}日志{% endblock %}
+{% block crumbs %}<span>观测</span>{{ icon('chevron-right') }}<a href="/logs" hx-boost="false" {% if not directory %}class="current"{% endif %}>日志</a>{% for crumb in breadcrumbs %}{{ icon('chevron-right') }}{% if loop.last %}<span class="current mono">{{ crumb.name }}</span>{% else %}<a class="mono" href="/logs?directory={{ crumb.url }}" hx-boost="false">{{ crumb.name }}</a>{% endif %}{% endfor %}{% endblock %}
+{% block main %}
+<div class="page page-narrow" style="max-width:1240px">
+  <div class="page-head"><div class="grow"><h1>日志</h1><p>点击文件夹逐层浏览，日志按更新时间从新到旧排列。</p></div>
+    {% if available %}<div class="page-head-actions"><button type="button" class="btn" data-open-dialog="logs-archive-dialog">{{ icon('file-archive') }}打包下载全部日志（ZIP）</button></div>{% endif %}</div>
+  {% if not available %}<div class="note" data-tone="warn">{{ icon('folder') }}<div>日志目录尚不存在或不可访问。</div></div>{% endif %}
+  {% if truncated %}<div class="note" data-tone="warn" style="margin-bottom:12px">{{ icon('triangle-alert') }}<div>目录条目超过扫描上限，当前只显示部分文件。</div></div>{% endif %}
+
+  <section class="card">
+    <form class="list-toolbar" method="get" action="/logs" hx-boost="false">
+      <input type="hidden" name="directory" value="{{ directory }}">
+      {% if directory %}<a class="btn btn-sm btn-ghost" href="/logs?{{ parent_query }}" hx-boost="false">{{ icon('arrow-up', 'icon-sm') }}上一级</a>{% endif %}
+      <div class="input-icon">{{ icon('search', 'icon-sm') }}<input class="input" type="search" name="q" value="{{ q }}" placeholder="筛选当前目录：文件夹或日志名称" aria-label="筛选当前目录"></div>
+      <button class="btn btn-primary" type="submit">筛选</button>
+      {% if q %}<a class="btn btn-ghost" href="/logs?{{ 'directory=' ~ (directory|urlencode) if directory else '' }}" hx-boost="false">重置</a>{% endif %}
+      <span class="grow"></span><span class="xs muted">当前目录共 {{ total }} 项</span>
+    </form>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>名称</th><th class="col-num">大小</th><th>更新时间</th><th></th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+      <tr>
+        {% if row.is_directory %}
+        <td><a class="file-link" href="/logs?directory={{ row.url }}" hx-boost="false">{{ icon('folder', 'icon-sm') }}<span class="mono">{{ row.filename }}/</span></a></td>
+        <td class="col-num muted">文件夹</td><td class="num muted">{{ row.modified|datetime }}</td><td class="right"><a class="btn btn-sm btn-ghost" href="/logs?directory={{ row.url }}" hx-boost="false">打开</a></td>
+        {% else %}
+        <td><a class="file-link" href="/logs/view?file={{ row.url }}" hx-boost="false" title="{{ row.name }}">{{ icon('file-text', 'icon-sm') }}<span class="mono">{{ row.filename }}</span></a></td>
+        <td class="col-num">{{ row.size|filesize }}</td><td class="num muted">{{ row.modified|datetime }}</td>
+        <td class="right"><a class="btn btn-sm btn-ghost" href="/logs/view?file={{ row.url }}" hx-boost="false">{{ icon('eye', 'icon-sm') }}查看</a><a class="btn btn-sm btn-ghost" href="/api/logs/download?file={{ row.url }}" hx-boost="false">{{ icon('download', 'icon-sm') }}下载</a></td>
+        {% endif %}
+      </tr>
+      {% else %}<tr><td colspan="4">{{ empty('当前目录没有符合条件的文件夹或日志', 'folder-open') }}</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    <nav class="pager"><span class="total">第 {{ page }} / {{ pages }} 页</span>
+      {% if page > 1 %}<a href="/logs?{{ filter_query }}&page={{ page - 1 }}" hx-boost="false" aria-label="上一页">{{ icon('chevron-left', 'icon-sm') }}</a>{% endif %}
+      <span class="page" aria-current="page">{{ page }}</span>
+      {% if page < pages %}<a href="/logs?{{ filter_query }}&page={{ page + 1 }}" hx-boost="false" aria-label="下一页">{{ icon('chevron-right', 'icon-sm') }}</a>{% endif %}
+    </nav>
+  </section>
+</div>
+{% endblock %}
+{% block overlay %}
 {% if available %}
-<div class="section-head"><button type="button" class="button primary" data-open-dialog="logs-archive-dialog">打包下载整个日志目录（ZIP）</button></div>
-<p>包含 log_dir 下所有普通文件及子目录，不受当前路径或筛选影响；跳过链接，保留原文。文件较多时，打包完成后开始下载。</p>
-<dialog id="logs-archive-dialog" class="status-dialog">
-  <div class="status-dialog-form">
-    <div class="dialog-head"><div><p class="eyebrow">日志归档</p><h2>确认打包下载日志？</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
-    <p>将打包下载 log_dir 下的全部普通文件和子目录，当前目录与筛选条件不会影响范围。日志较多时可能需要等待一段时间。</p>
-    <div class="dialog-actions"><button type="button" data-close-dialog>取消</button><a class="button primary" href="/api/logs/archive" hx-boost="false">确认打包并下载</a></div>
-  </div>
+<dialog class="modal" id="logs-archive-dialog">
+  {{ modal_head('打包下载日志？', '日志归档', 'file-archive') }}
+  <div class="modal-body"><p>将打包下载 <span class="mono">log_dir</span> 下的全部普通文件和子目录，当前目录与筛选条件不会影响范围；跳过链接，保留原文、未做脱敏。日志较多时打包完成后才开始下载。</p></div>
+  <div class="modal-foot"><button type="button" class="btn" data-close-dialog>取消</button><a class="btn btn-primary" href="/api/logs/archive" hx-boost="false" data-close-dialog>{{ icon('download') }}确认打包并下载</a></div>
 </dialog>
 {% endif %}
-{% if not available %}<p class="alert warning">日志目录尚不存在或不可访问。</p>{% endif %}
-{% if truncated %}<p class="alert warning">目录条目超过扫描上限，当前只显示部分文件。</p>{% endif %}
-<section class="panel" style="overflow-x:auto">
-<table><thead><tr><th>文件名</th><th>大小</th><th>更新时间</th><th>操作</th></tr></thead>
-<tbody>{% for row in rows %}
-<tr>
-{% if row.is_directory %}
-<td class="mono"><a href="/logs?directory={{ row.url }}" hx-boost="false">📁 {{ row.filename }}/</a></td>
-<td>文件夹</td><td>{{ row.modified|datetime }}</td><td><a href="/logs?directory={{ row.url }}" hx-boost="false">打开目录</a></td>
-{% else %}
-<td class="mono"><a href="/logs/view?file={{ row.url }}" hx-boost="false" title="{{ row.name }}">{{ row.filename }}</a></td>
-<td>{{ row.size|filesize }}</td><td>{{ row.modified|datetime }}</td>
-<td><a href="/api/logs/download?file={{ row.url }}" hx-boost="false">下载</a></td>
-{% endif %}
-</tr>{% else %}<tr><td colspan="4" class="empty">当前目录没有符合条件的文件夹或日志</td></tr>{% endfor %}</tbody></table>
-</section>
-<div class="pagination"><span>当前目录共 {{ total }} 项 · {{ page }}/{{ pages }} 页</span>
-{% if page > 1 %}<a class="button" href="/logs?{{ filter_query }}&page={{ page - 1 }}" hx-boost="false">上一页</a>{% endif %}
-{% if page < pages %}<a class="button" href="/logs?{{ filter_query }}&page={{ page + 1 }}" hx-boost="false">下一页</a>{% endif %}</div>
 {% endblock %}

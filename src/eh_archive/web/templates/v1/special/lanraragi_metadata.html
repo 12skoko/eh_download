@@ -1,0 +1,35 @@
+{% extends "v1/base.html" %}
+{% block title %}LANraragi 元数据更新 ▪ EH Archive{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/v1/lanraragi-metadata.css">
+<div class="page-head"><div><a class="back" href="/v1/special">← 特殊模块</a><h1>LANraragi 元数据更新</h1></div></div>
+<section class="panel">
+  <h2>选择档案并预览差异</h2>
+  <p>检查远端文件并用本地数据修复标题和标签，先预览再确认，不重新上传文件。支持已完成档案及因上传错误进入人工复核的档案；文件不存在或身份不符时保留人工复核。</p>
+  {% if module_health.available %}
+  <form method="post" action="{{ module_url }}/start" class="stack-form" data-metadata-selection>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label data-metadata-raw>完整档案 ID<textarea name="manga_ids" rows="5" placeholder="4194902/07c0c45119，每行一个，也可用逗号分隔">{{ request.query_params.get('manga_id', '') }}</textarea></label>
+    <div class="metadata-picker" data-metadata-picker hidden>
+      <div class="metadata-picker-head"><strong data-selection-count aria-live="polite">已选择 0 个档案</strong><button type="button" class="link-button" data-clear-selection>清空</button></div>
+      <div class="metadata-picker-box">
+        <ul class="metadata-chips" data-selection-chips aria-label="已选档案"></ul>
+        <p class="metadata-empty" data-selection-empty>尚未选择档案</p>
+        <div class="metadata-entry"><input type="text" data-selection-entry aria-label="输入或粘贴档案 ID" placeholder="输入 ID 后按回车，或粘贴多个 ID" autocomplete="off"><button type="button" data-add-entry>加入</button></div>
+      </div>
+    </div>
+    <div class="panel-actions"><button type="button" data-add-mismatches data-url="{{ module_url }}/mismatch-ids">加入上传出错的待复核档案</button></div>
+    <p class="field-help" data-selection-status role="status" aria-live="polite"></p>
+    <label>LANraragi 档案 ID（可选，仅限单个档案）<input name="archive_id" pattern="[0-9a-fA-F]{40}" maxlength="40" placeholder="无法自动定位时，填写远端档案的 40 位 ID"></label>
+    <p class="field-help">默认从主记录、当前文件版本的上传记录或远端来源标签定位。手动 ID 仍需核对文件名、大小和来源，不能覆盖已有的不一致 ID。</p>
+    <button class="primary" type="submit">生成差异预览</button>
+  </form>
+  {% else %}<div class="alert warning">{{ module_health.reason }}</div>{% endif %}
+</section>
+<section class="panel table-panel"><h2>处理历史（{{ total }}）</h2>
+<div class="table-wrap"><table><thead><tr><th>工作流</th><th>阶段</th><th>档案数量</th><th>创建时间</th></tr></thead><tbody>
+{% for item in workflows %}<tr><td><a href="/v1/special/workflows/{{ item.id }}">#{{ item.id }}</a></td><td>{{ phase_labels.get(item.phase, item.phase) }}</td><td>{{ item.payload.get('count', 0) }}</td><td>{{ item.created_at|datetime }}</td></tr>{% else %}<tr><td colspan="4">暂无记录</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="pagination">{% if page > 1 %}<a href="?page={{ page - 1 }}">上一页</a>{% endif %}<span>第 {{ page }} 页</span>{% if page * 50 < total %}<a href="?page={{ page + 1 }}">下一页</a>{% endif %}</div></section>
+<script src="/static/v1/lanraragi-metadata.js" defer></script>
+{% endblock %}

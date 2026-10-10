@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon with context %}
+{% set nav = 'inbox' if row.status in ['manual_review', 'quarantined'] else 'archives' %}
+{% block title %}[{{ row.manga_id|manga_tab_id }}] {{ row.name or row.manga_id }}{% endblock %}
+{% block crumbs %}
+{% if nav == 'inbox' %}<a href="/inbox?status={{ row.status }}">待处理</a>{% else %}<a href="/archives">档案</a>{% endif %}
+{{ icon('chevron-right') }}<span class="current mono">{{ row.manga_id }}</span>
+{% endblock %}
+{% block main %}
+<div class="page">
+  {% include "_dossier.html" %}
+</div>
+{% endblock %}

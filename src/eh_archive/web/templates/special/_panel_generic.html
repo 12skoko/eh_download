@@ -1,0 +1,33 @@
+{% from "_macros.html" import icon, csrf with context %}
+{% from "special/_wf.html" import act, hero, notices, expired_dialog, history, outputs, metrics with context %}
+{% set actions = '/workflow/' ~ workflow.id ~ '/actions/' %}
+{% set labels = phase_labels|default({}) %}
+{% set busy = history_active_job is not none %}
+<div id="wf-panel" class="stack" {% if busy %}hx-get="{{ ui_panel_url }}" hx-trigger="every 4s [archiveUICanPoll() && archiveUIWorkflowCanPoll()]" hx-swap="outerHTML"{% endif %}>
+  {% call hero(workflow, kind, labels.get(workflow.phase, workflow.phase), none, 'danger' if workflow.status == 'failed' or workflow.phase == 'failed' else 'ok' if workflow.status == 'completed' else '') %}
+    {% if workflow.status == 'active' %}
+      {% if workflow.phase == 'failed' and module_health.available %}{{ act(actions ~ 'retry', '重试失败操作', workflow, 'btn btn-primary', 'rotate-cw') }}{% endif %}
+      {{ act(actions ~ 'cancel', '取消运行', workflow, 'btn btn-danger-quiet', 'circle-stop') }}
+    {% endif %}
+    {% if module_health.available %}
+    <form method="post" action="/workflows/{{ workflow.kind }}/create" hx-post="/workflows/{{ workflow.kind }}/create" hx-swap="none" hx-disabled-elt="find button">{{ csrf() }}
+      <button type="submit" class="btn">{{ icon('plus') }}{{ rerun_label|default('创建新的运行') }}</button></form>
+    {% endif %}
+  {% endcall %}
+
+  {{ notices(workflow, '；历史和输出仍可查看。') }}
+  {% if workflow.cancel_requested_at and workflow.status == 'active' %}<div class="note" data-tone="warn">{{ icon('circle-stop') }}<div>已请求取消，等待安全检查点。</div></div>{% endif %}
+  {% if busy %}<div class="note" data-tone="info">{{ icon('loader-circle', 'spin') }}<div>任务排队或执行中，页面每 4 秒刷新。</div></div>{% endif %}
+  {% if expired_job %}{{ expired_dialog(workflow, actions ~ 'release-expired', '先确认旧 Worker 已停止，再解除租约。解除后仍需手动重试或取消。') }}{% endif %}
+
+  <section class="card">
+    <div class="card-head"><h2>结果概况</h2>{% if payload.get('lanraragi_collected_at') %}<span class="meta">LANraragi 采集 {{ payload.lanraragi_collected_at|collected_at }} · 数据库采集 {{ payload.database_collected_at|collected_at }}</span>{% endif %}</div>
+    <div class="card-body form-stack">
+      {% if payload.get('summary') %}{{ metrics(display_summary|default(payload.summary), summary_labels|default({})) }}{% endif %}
+      {% if kind == 'lanraragi_compare' %}<p class="xs muted">核对范围为数据库 completed 档案与 LANraragi 标签中 EH / EX Gallery URL 提取的数字 GID。GID 相同不证明内容相同；两端采集时间分别记录，不属于跨系统原子快照。核对不修改任何档案。</p>{% endif %}
+      {% call outputs(workflow, payload, {'report': '核对报告'}) %}<p class="small muted">尚无报告。</p>{% endcall %}
+    </div>
+  </section>
+
+  {{ history(workflow) }}
+</div>

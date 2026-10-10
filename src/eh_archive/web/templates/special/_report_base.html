@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon with context %}
+{% set nav = 'workflows' %}
+{% block title %}{{ report_title }} #{{ workflow.id }}{% endblock %}
+{% block crumbs %}<a href="/workflows">工作流</a>{{ icon('chevron-right') }}<a href="{{ module_url }}">{{ ui_kind_labels.get(kind, kind) }}</a>{{ icon('chevron-right') }}<a href="/workflows/{{ kind }}/{{ workflow.id }}">#{{ workflow.id }}</a>{{ icon('chevron-right') }}<span class="current">{{ report_title }}</span>{% endblock %}
+{% block main %}
+<div class="page">
+  <div class="page-head">
+    <div class="grow"><div class="eyebrow">{{ ui_kind_labels.get(kind, kind) }} · 工作流 #{{ workflow.id }}</div><h1>{{ report_title }}</h1><p class="mono xs">{{ output.name }} · {{ output.size_bytes|filesize }} · 生成于 {{ output.created_at }}</p></div>
+    <div class="page-head-actions">
+      <a class="btn" href="/workflows/{{ kind }}/{{ workflow.id }}">{{ icon('arrow-left') }}返回工作流</a>
+      <a class="btn btn-primary" href="/special/workflows/{{ workflow.id }}/outputs/{{ output.id }}/download" hx-boost="false" download>{{ icon('download') }}下载完整 JSON</a>
+    </div>
+  </div>
+  {% block report %}{% endblock %}
+</div>
+{% endblock %}

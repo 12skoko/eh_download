@@ -4,17 +4,12 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..management import ManagementError
-from ..management.config import (
-    DEFAULT_CONFIG,
-    SUPERVISOR_UNIT,
-    WEB_UNIT,
-    load_management_config,
-)
+from ..management.config import DEFAULT_CONFIG, SUPERVISOR_UNIT, WEB_UNIT, load_management_config
 from ..management.git import GitRepository
 from ..management.service import cancel, submit
 from ..management.state import OperationStore, read_json, tail
@@ -64,25 +59,6 @@ def register(app, templates, context, database, management_path: Path = DEFAULT_
             "unsupported_platform": 503,
         }.get(exc.code, 400)
         return JSONResponse({"detail": str(exc), "code": exc.code}, status_code=status)
-
-    @app.get("/system", response_class=HTMLResponse)
-    def system_page(request: Request):
-        error = None
-        try:
-            config()
-        except ManagementError as exc:
-            error = str(exc)
-        return templates.TemplateResponse(
-            request=request, name="system.html", context=context(request, management_error=error)
-        )
-
-    @app.get("/system/operations/{identifier}", response_class=HTMLResponse)
-    def operation_page(request: Request, identifier: str):
-        return templates.TemplateResponse(
-            request=request,
-            name="system_operation.html",
-            context=context(request, operation=detail(identifier)),
-        )
 
     @app.get("/api/system/status")
     def status():

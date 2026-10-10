@@ -415,11 +415,12 @@ eharchive-supervisor --config-dir config
 局域网部署在 `app.toml` 设置 `web_host = "0.0.0.0"`，浏览器访问：
 
 - `http://服务器局域网IP:8787/`：中文管理控制台；
-- `/manga`：档案队列和搜索；
-- `/review`：人工复核和隔离工作台；
-- `/special`：特殊工作流、视频档案状态与人工批量检查；
+- `/archives`：档案队列和搜索；
+- `/inbox`：人工复核和隔离工作台；
+- `/workflows`：特殊工作流、视频档案状态与人工批量检查；
 - `/events`：事件与错误；
-- `/config`：查看非敏感配置并修改允许从网页维护的字段；
+- `/settings`：查看非敏感配置并修改允许从网页维护的字段；
+- `/v1/`：原版备用界面，与主界面提供双向切换入口；
 - `/docs`：FastAPI Swagger API 文档；
 - `/health`：数据库、组件、健康快照和状态计数 JSON。
 
@@ -546,7 +547,7 @@ python scripts/cleanup_download_artifacts.py --config-dir config --apply
 
 进入特殊流程后，在候选页分别选择一个图片 torrent 和一个视频 torrent。带有无 Seeder、过时、红色日期或重采样标记的候选必须按角色确认风险。Web 只保存内部候选 ID；一次性 worker 会重新加载页面、确认候选没有过期，再把两个 torrent 提交给专用 qBittorrent category。两个 hash 保存成功后 worker 退出，下载由 qBittorrent 后台继续。
 
-认为下载接近完成时，打开 `/special` 并点击“批量检查已下载的视频档案”。也可以运行同一个服务层的 CLI：
+认为下载接近完成时，打开 `/workflows` 并点击“批量检查已下载的视频档案”。也可以运行同一个服务层的 CLI：
 
 ```powershell
 eharchive --config-dir config special video-archive collect-ready
@@ -556,7 +557,7 @@ eharchive --config-dir config special video-archive collect-ready
 
 工作流页面只在存在 `queued/running` job 时每 4 秒刷新数据库进度，并只读取模块的声明式启用配置；它不会读取下载目录、运行 ffmpeg 或查询 qBittorrent。ffmpeg、WebP 编码器和工作目录在用户手动创建 `check_and_compose_if_ready` job、且两个 Torrent 都完成后才检查。排队但尚未领取的 job 可以直接“取消排队并清理”，也可以选择“保留资源并退出”；后者会先取消排队 job，但不会删除外部任务或工作目录。取消或退出后会恢复进入前保存的 `video_torrent` 人工复核原因，因此之后仍可从档案详情重新进入模块。
 
-最终 ZIP 使用固定时间、权限和稳定成员顺序。即使出现“ZIP 已原子提升、数据库登记事务失败”，重试生成的 ZIP 仍有相同 SHA-1，可以安全接续登记而不会误判成 generation 冲突。整合完成时不会删除源 Torrent；普通 validate/upload/cleanup 完全不理解特殊模块。Manga 到达 `completed` 后，在 `/special` 点击“批量清理已完成档案的源文件”，或运行 `eharchive --config-dir config special video-archive cleanup-completed`。这次人工操作为每个档案创建独立 `cleanup_sources_after_complete` job；Supervisor 不会自动创建。源清理只接受同时匹配 workflow 中 hash、模块专用 category 和数字 ID 保存路径的任务；category 或路径被人工改动时整次清理失败，不会误删，之后可以人工重试。
+最终 ZIP 使用固定时间、权限和稳定成员顺序。即使出现“ZIP 已原子提升、数据库登记事务失败”，重试生成的 ZIP 仍有相同 SHA-1，可以安全接续登记而不会误判成 generation 冲突。整合完成时不会删除源 Torrent；普通 validate/upload/cleanup 完全不理解特殊模块。Manga 到达 `completed` 后，在 `/workflows` 点击“批量清理已完成档案的源文件”，或运行 `eharchive --config-dir config special video-archive cleanup-completed`。这次人工操作为每个档案创建独立 `cleanup_sources_after_complete` job；Supervisor 不会自动创建。源清理只接受同时匹配 workflow 中 hash、模块专用 category 和数字 ID 保存路径的任务；category 或路径被人工改动时整次清理失败，不会误删，之后可以人工重试。
 
 `video_archive.toml` 中影响输出内容的质量、布局和是否保留 MP4 会在创建 workflow 时固化；之后修改配置不会静默改变正在重试的工作流。视频模块直接复用 `app.qbit_torrent_path` 和 `app.roots.torrent_download`；工作根、ffmpeg 路径和凭据仍在每次 worker 启动时读取当前配置。Remark 中显示的模块、阶段和进度只是数据库镜像，修改或删除它不会启动、暂停或改变任务。
 
@@ -610,7 +611,7 @@ aria2 必须由外部进程运行；EH Archive 只提交、轮询和清理任务
 Authorization: Bearer <web_secret>
 ```
 
-除 `/login`、`/static/*` 和最小存活探针 `/health/live` 外，查询和写入均需要认证。常用接口：
+除 `/login`、`/v1/login`、`/static/*` 和最小存活探针 `/health/live` 外，查询和写入均需要认证。常用接口：
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |

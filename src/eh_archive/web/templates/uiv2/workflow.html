@@ -1,6 +1,0 @@
-{% extends "uiv2/base.html" %}
-{% from "uiv2/_macros.html" import icon with context %}
-{% set nav='workflows' %}
-{% block title %}{{ module_label }} #{{ workflow.id }}{% endblock %}
-{% block crumbs %}<a href="/uiv2/workflows">工作流</a>{{ icon('chevron-right') }}<a href="/uiv2/workflows/{{ workflow.kind }}">{{ module_label }}</a>{{ icon('chevron-right') }}<span class="current mono">#{{ workflow.id }}</span>{% endblock %}
-{% block main %}<div class="page">{% include 'uiv2/_workflow_panel.html' %}</div>{% endblock %}

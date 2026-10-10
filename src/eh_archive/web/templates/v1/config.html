@@ -1,0 +1,47 @@
+{% extends "v1/base.html" %}
+{% block title %}配置 ▪ EH Archive控制台{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/v1/configuration.css">
+<div class="page-head"><div><p class="eyebrow">运行配置</p><h1>配置</h1><p class="muted">按文件管理设置，保存后按字段标记生效。</p></div></div>
+<div data-config-editor>
+  <div id="config-status" class="alert {{ 'error' if config_error else 'success' }}" role="alert" tabindex="-1" {% if not config_error and not notice %}hidden{% endif %}>
+    <span data-status-message>{{ config_error or notice or '' }}</span>
+    {% if saved_policy in ['web', 'supervisor', 'web_and_supervisor'] %}<a class="button" href="/v1/system#services">{{ policy_labels[saved_policy] }} →</a>{% endif %}
+  </div>
+  <div class="config-layout">
+    <nav class="config-file-nav" aria-label="配置文件">
+      {% for section in sections %}<a href="/v1/config?section={{ section.name }}" hx-boost="false" {% if section.name == active_section.name %}aria-current="page"{% endif %}><strong>{{ section.filename }}</strong><small>{{ section.title }}{% if section.error %} · 读取错误{% endif %}</small></a>{% endfor %}
+    </nav>
+    {% set section = active_section %}
+    <section class="panel config-editor-panel">
+      <div class="section-head"><div><p class="eyebrow">{{ section.filename }}</p><h2>{{ section.title }}</h2></div></div>
+      {% if section.name == 'supervisor' %}<p class="config-note">模块开关决定重启后的自动调度；临时暂停请使用总览页面。定时模块到期启动，其他普通模块有待处理工作时启动。</p>{% endif %}
+      {% if section.name == 'secrets' %}<p class="config-note">敏感值不会回显。留空保留已有内容，只提交需要替换的凭据。</p>{% endif %}
+      {% if section.fields %}
+      <form method="post" action="/v1/config/{{ section.name }}" class="stack-form" hx-boost="false" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="revision" value="{{ section.revision }}">
+        {% for advanced in [false, true] %}
+          {% set visible_fields = section.fields | selectattr('advanced', 'equalto', advanced) | list %}
+          {% if visible_fields %}
+          {% if advanced %}<details class="config-advanced" {% if visible_fields | selectattr('error') | list %}open{% endif %}><summary>高级设置 <small>连接、限制与低频选项 · {{ visible_fields | length }} 项</small></summary>{% else %}<div class="config-ordinary"><h3>普通设置</h3>{% endif %}
+          {% set grouped_fields = visible_fields | groupby('group') %}
+          {% if section.name == 'full_collect' %}
+            {% set grouped_fields = (grouped_fields | selectattr('grouper', 'equalto', '范围与启停') | list) + (grouped_fields | rejectattr('grouper', 'equalto', '范围与启停') | list) %}
+          {% endif %}
+          {% for group, fields in grouped_fields %}
+          <fieldset class="config-group"><legend>{{ group }}</legend><div class="config-field-grid">
+            {% for field in fields %}{% include 'v1/_config_field.html' %}{% endfor %}
+          </div></fieldset>
+          {% endfor %}
+          {% if advanced %}</details>{% else %}</div>{% endif %}
+          {% endif %}
+        {% endfor %}
+        <div class="config-save-bar"><span data-dirty-note>保存只写入当前文件，不会自动重启服务。</span><button class="primary" type="submit">保存 {{ section.filename }}</button></div>
+      </form>
+      {% endif %}
+    </section>
+  </div>
+</div>
+<script src="/static/v1/configuration.js" defer></script>
+{% endblock %}

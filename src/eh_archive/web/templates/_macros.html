@@ -1,0 +1,102 @@
+{% macro icon(name, cls='') -%}
+<svg class="icon {{ cls }}" aria-hidden="true"><use href="/static/icons.svg?v={{ ui_asset }}#i-{{ name }}"/></svg>
+{%- endmacro %}
+
+{% macro status_pill(status, lg=false) -%}
+<span class="pill status-tone{{ ' pill-lg' if lg }}" data-tone="{{ status|ui_tone }}" title="{{ status }}">{{ status|status_label }}</span>
+{%- endmacro %}
+
+{% macro run_pill(status, label=none) -%}
+<span class="pill" data-tone="{{ status|ui_run_tone }}" title="{{ status }}">{{ label or (status|ui_run_label) }}</span>
+{%- endmacro %}
+
+{% macro csrf() -%}
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+{%- endmacro %}
+
+{% macro when(value, mode='ago') -%}
+{%- if value -%}<time class="num" datetime="{{ value.isoformat() if value.isoformat is defined else value }}" title="{{ value|datetime }}">{{ value|ui_ago if mode == 'ago' else value|ui_clock if mode == 'clock' else value|datetime }}</time>{%- else -%}<span class="faint">—</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro form_error() -%}
+<div class="form-error" data-form-error hidden></div>
+{%- endmacro %}
+
+{% macro empty(text, name='inbox') -%}
+<div class="empty">{{ icon(name) }}<span>{{ text }}</span></div>
+{%- endmacro %}
+
+{% macro manga_link(manga_id, name=none, cls='') -%}
+<a class="{{ cls }}" href="{{ manga_id|ui_manga_url }}">{{ name or manga_id }}</a>
+{%- endmacro %}
+
+{% macro modal_head(title, sub=none, glyph='info', tone='') -%}
+<div class="modal-head">
+  <span class="icon-badge" {% if tone %}data-tone="{{ tone }}"{% endif %}>{{ icon(glyph) }}</span>
+  <div class="grow"><h2>{{ title }}</h2>{% if sub %}<p>{{ sub }}</p>{% endif %}</div>
+  <button type="button" class="btn btn-ghost btn-icon" data-close-dialog aria-label="关闭">{{ icon('x') }}</button>
+</div>
+{%- endmacro %}
+
+{% macro pager(page, url, target=none, select=none) -%}
+{%- if page.total > 0 or caller is defined -%}
+<nav class="pager{{ ' with-controls' if caller is defined }}" aria-label="分页">
+  <span class="total">共 {{ page.total }} 条{% if page.total_pages > 1 %} · 第 {{ page.page }} / {{ page.total_pages }} 页{% endif %}</span>
+  {% if caller is defined %}{{ caller() }}{% endif %}
+  {%- if page.total_pages > 1 -%}
+    {%- set sep = '&' if '?' in url else '?' -%}
+    {% if page.has_prev %}<a href="{{ url }}{{ sep }}page={{ page.page - 1 }}" {% if target %}hx-get="{{ url }}{{ sep }}page={{ page.page - 1 }}" hx-target="#{{ target }}" hx-swap="outerHTML" hx-push-url="true"{% if select %} hx-select="{{ select }}"{% endif %}{% endif %} aria-label="上一页">{{ icon('chevron-left', 'icon-sm') }}</a>{% endif %}
+    {% for p in page.page_numbers() %}{% if p is none %}<span class="gap">…</span>{% elif p == page.page %}<span class="page" aria-current="page">{{ p }}</span>{% else %}<a href="{{ url }}{{ sep }}page={{ p }}" {% if target %}hx-get="{{ url }}{{ sep }}page={{ p }}" hx-target="#{{ target }}" hx-swap="outerHTML" hx-push-url="true"{% if select %} hx-select="{{ select }}"{% endif %}{% endif %}>{{ p }}</a>{% endif %}{% endfor %}
+    {% if page.has_next %}<a href="{{ url }}{{ sep }}page={{ page.page + 1 }}" {% if target %}hx-get="{{ url }}{{ sep }}page={{ page.page + 1 }}" hx-target="#{{ target }}" hx-swap="outerHTML" hx-push-url="true"{% if select %} hx-select="{{ select }}"{% endif %}{% endif %} aria-label="下一页">{{ icon('chevron-right', 'icon-sm') }}</a>{% endif %}
+  {%- endif -%}
+</nav>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro simple_pager(page, has_next, total=none, per=50, query='') -%}
+<nav class="pager" aria-label="分页">
+  <span class="total">{% if total is not none %}共 {{ total }} 条 · {% endif %}第 {{ page }} 页</span>
+  {% if page > 1 %}<a href="?{{ query }}page={{ page - 1 }}" aria-label="上一页">{{ icon('chevron-left', 'icon-sm') }}</a>{% endif %}
+  <span class="page" aria-current="page">{{ page }}</span>
+  {% if has_next %}<a href="?{{ query }}page={{ page + 1 }}" aria-label="下一页">{{ icon('chevron-right', 'icon-sm') }}</a>{% endif %}
+</nav>
+{%- endmacro %}
+
+{% macro event_item(event, show_manga=false) -%}
+<li>
+  <span class="tl-dot" data-tone="{{ 'danger' if event.error_code else 'ok' if event.to_status in ['completed', 'uploaded', 'upload_pending'] else '' }}"></span>
+  <div class="min0">
+    <div class="tl-head">
+      <strong>{{ event.event_type }}</strong>
+      {% if event.from_status or event.to_status %}<span class="transition">{{ event.from_status or '—' }} {{ icon('arrow-right') }} {{ event.to_status or '—' }}</span>{% endif %}
+      <time title="{{ event.created_at|datetime }}">{{ event.created_at|datetime }}</time>
+    </div>
+    <div class="tl-sub">
+      <span class="mono">{{ event.component }} / {{ event.operation or '—' }}</span> · actor={{ event.actor }}
+      {% if show_manga and event.manga_id %} · {{ manga_link(event.manga_id, cls='mono') }}{% endif %}
+      {% if event.error_code %} · <span class="code">{{ event.error_code }}</span>{% endif %}
+    </div>
+    {% if event.detail %}<details class="more"><summary>结构化详情</summary><pre class="codeblock">{{ event.detail|safe_detail|tojson(indent=2) }}</pre></details>{% endif %}
+  </div>
+</li>
+{%- endmacro %}
+
+{% macro job_table(jobs, labels={}, log_prefix=none) -%}
+<div class="table-wrap"><table class="table compact">
+  <thead><tr><th>Job</th><th>操作</th><th>尝试</th><th>状态</th><th>来源</th><th>开始</th><th>结束</th><th>错误</th></tr></thead>
+  <tbody>
+  {% for job in jobs %}
+  <tr>
+    <td class="mono">{% if log_prefix %}<a href="{{ log_prefix }}{{ job.id }}" title="查看此批次日志">#{{ job.id }}</a>{% else %}#{{ job.id }}{% endif %}</td>
+    <td><span class="mono xs">{{ job.operation }}</span>{% if labels.get(job.operation) %}<div class="xs muted">{{ labels.get(job.operation) }}</div>{% endif %}</td>
+    <td class="num">{{ job.attempt_no }}</td>
+    <td>{{ run_pill(job.status) }}</td>
+    <td class="xs muted">{{ job.trigger_source }} / {{ job.requested_by }}</td>
+    <td class="num muted">{{ job.started_at|datetime }}</td>
+    <td class="num muted">{{ job.finished_at|datetime }}</td>
+    <td>{% if job.error_code %}<span class="code">{{ job.error_code }}</span>{% endif %}{% if job.error_detail %}<div class="xs muted break">{{ job.error_detail }}</div>{% endif %}{% if not job.error_code and not job.error_detail %}<span class="faint">—</span>{% endif %}</td>
+  </tr>
+  {% else %}<tr><td colspan="8">{{ empty('暂无任务', 'list') }}</td></tr>{% endfor %}
+  </tbody>
+</table></div>
+{%- endmacro %}

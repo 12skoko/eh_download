@@ -1,0 +1,6 @@
+{% set oob = true %}
+{% include "_sup_pill.html" %}
+{% if scope == 'overview' %}
+{% include "_master.html" %}
+{% for name, unit in units.items() %}{% include "_module_unit.html" %}{% endfor %}
+{% endif %}

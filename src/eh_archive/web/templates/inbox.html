@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon with context %}
+{% set nav = 'inbox' %}
+{% block title %}待处理{% endblock %}
+{% block crumbs %}<span class="current">待处理</span>{{ icon('chevron-right') }}<span>{{ selected_status|status_label }}</span>{% endblock %}
+{% block main %}
+<div class="workspace with-facets with-pane page-flush" data-workspace data-list="inbox-list" data-pane-persistent>
+  {% include "_inbox_facets.html" %}
+  <section class="listcol" aria-label="待处理列表">
+    <form id="inbox-filter" class="list-toolbar" method="get" action="/inbox"
+          hx-get="/inbox" hx-target="#inbox-list" hx-swap="outerHTML" hx-push-url="true" hx-sync="this:replace" data-auto-filter>
+      {% include "_inbox_state.html" %}
+      <div class="input-icon">{{ icon('search', 'icon-sm') }}<input class="input" type="search" name="q" value="{{ q }}" placeholder="标题、文件名或 manga ID" data-debounce aria-label="搜索待处理档案"></div>
+      <span class="grow"></span>
+      <span class="muted small hide-mobile">按进入时间 · 新→旧</span>
+      <noscript><button class="btn btn-primary" type="submit">筛选</button></noscript>
+    </form>
+    {% include "_inbox_list.html" %}
+  </section>
+  <section class="pane" data-pane aria-label="档案详情">
+    <div id="pane-body" class="pane-scroll">{% include "_pane_empty.html" %}</div>
+  </section>
+</div>
+{% include "_bulk.html" %}
+{% endblock %}

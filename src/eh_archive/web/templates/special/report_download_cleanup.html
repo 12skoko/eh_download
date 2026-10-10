@@ -1,0 +1,31 @@
+{% extends "special/_report_base.html" %}
+{% from "_macros.html" import icon, empty, manga_link with context %}
+{% from "special/_wf.html" import metrics, section_tabs, report_pager with context %}
+{% set report_title = '扫描预览' if output.id == 'preview' else '清理结果' %}
+{% block report %}
+<section class="card">
+  <div class="card-body form-stack">
+    {{ metrics(report_summary, action_labels) }}
+    <p class="xs muted">预览中的“待清理”表示符合扫描时的条件。确认执行后会重新检查状态和目标身份，跳过发生变化的条目。</p>
+  </div>
+</section>
+<section class="card mt16">
+  {{ section_tabs(sections, section, report_labels) }}
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>ID</th><th>来源</th><th>目标</th><th>扫描时状态</th><th>结果</th><th>说明</th></tr></thead>
+    <tbody>
+    {% for row in report_rows %}
+    <tr>
+      <td class="mono">{% if row.database_manga_id %}{{ manga_link(row.database_manga_id, row.numeric_id) }}{% else %}{{ row.numeric_id or '—' }}{% endif %}</td>
+      <td class="small">{{ source_labels.get(row.source, row.source) }}</td>
+      <td class="mono xs break">{{ row.target }}</td>
+      <td class="mono xs">{{ row.database_status or '—' }}</td>
+      <td><span class="tag" data-tone="{{ 'warn' if row.action == 'would_delete' else 'ok' if row.action in ['deleted', 'already_missing'] else 'danger' if row.action in ['delete_failed', 'torrent_delete_failed'] else '' }}">{{ action_labels.get(row.action, row.action) }}</span></td>
+      <td class="xs muted break">{{ '—' if row.action == 'status_skipped' and row.detail == 'status is ' ~ row.database_status else row.detail or '—' }}</td>
+    </tr>
+    {% else %}<tr><td colspan="6">{{ empty('本分组没有记录', 'list') }}</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {{ report_pager(report_total, report_page, section) }}
+</section>
+{% endblock %}

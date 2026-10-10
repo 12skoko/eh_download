@@ -1,42 +1,70 @@
+{% from "_macros.html" import icon, csrf with context %}
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="csrf-token" content="{{ csrf_token }}">
-  <title>{% block title %}EH Archive控制台{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css?v={{ css_version }}">
-  <script src="/static/htmx.min.js" defer></script>
-  <script src="/static/app.js" defer></script>
-  <script src="/static/bulk-status.js" defer></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token }}">
+<title>{% block title %}EH Archive{% endblock %} · EH Archive</title>
+<script>
+  (() => {
+    const mode = localStorage.getItem("archiveUI-theme") || "auto";
+    const dark = mode === "dark" || (mode === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    document.documentElement.dataset.themeMode = mode;
+  })();
+</script>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css?v={{ ui_asset }}">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js?v={{ ui_asset }}" defer></script>
+<script src="/static/pages.js?v={{ ui_asset }}" defer></script>
 </head>
 <body hx-boost="true">
-  <header class="topbar">
-    <a class="brand" href="/">
-      <span class="brand-mark">EH</span>
-      <span><strong>EH Archive</strong><small>归档控制台</small></span>
-    </a>
-    <nav aria-label="主导航">
-      <a class="{{ 'active' if request.url.path == '/' else '' }}" href="/">总览</a>
-      <a class="{{ 'active' if request.url.path.startswith('/manga') else '' }}" href="/manga">档案队列</a>
-      <a class="{{ 'active' if request.url.path == '/review' else '' }}" href="/review">人工复核</a>
-      <a class="{{ 'active' if request.url.path.startswith('/special') else '' }}" href="/special">特殊模块</a>
-      <a class="{{ 'active' if request.url.path == '/events' else '' }}" href="/events">事件与错误</a>
-      <a class="{{ 'active' if request.url.path.startswith('/logs') else '' }}" href="/logs" hx-boost="false">日志</a>
-      <a class="{{ 'active' if request.url.path == '/config' else '' }}" href="/config">配置</a>
-      <a class="{{ 'active' if request.url.path.startswith('/system') else '' }}" href="/system"><span>系统<span class="update-dot" data-update-dot hidden role="img" aria-label="有新更新" title="有新更新"></span></span></a>
+{% set nav = nav|default('') %}
+<div class="app" data-app>
+  <aside class="sidebar" id="sidebar" aria-label="主导航">
+    <a class="brand" href="/"><span class="seal" aria-hidden="true">档</span><span class="brand-text"><strong>EH Archive</strong><small>归档控制台</small></span></a>
+    <nav class="nav-group">
+      <a class="nav-item" href="/" {% if nav == 'overview' %}aria-current="page"{% endif %}>{{ icon('layout-dashboard') }}<span class="nav-text">概览</span></a>
+      <a class="nav-item" href="/archives" {% if nav == 'archives' %}aria-current="page"{% endif %}>{{ icon('library') }}<span class="nav-text">档案</span></a>
+      <a class="nav-item" href="/inbox" {% if nav == 'inbox' %}aria-current="page"{% endif %}>{{ icon('inbox') }}<span class="nav-text">待处理</span>{% if ui_inbox_count %}<span class="nav-count" title="人工复核与已隔离">{{ ui_inbox_count }}</span>{% endif %}</a>
+      <a class="nav-item" href="/workflows" {% if nav == 'workflows' %}aria-current="page"{% endif %}>{{ icon('workflow') }}<span class="nav-text">工作流</span></a>
     </nav>
-    <form action="/logout" method="post" class="logout-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <span class="user">{{ identity.username }}</span>
-      <button class="link-button" type="submit">退出</button>
-    </form>
+    <div class="nav-label">观测</div>
+    <nav class="nav-group">
+      <a class="nav-item" href="/events" {% if nav == 'events' %}aria-current="page"{% endif %}>{{ icon('activity') }}<span class="nav-text">事件</span></a>
+      <a class="nav-item" href="/logs" hx-boost="false" {% if nav == 'logs' %}aria-current="page"{% endif %}>{{ icon('scroll-text') }}<span class="nav-text">日志</span></a>
+    </nav>
+    <div class="nav-label">运维</div>
+    <nav class="nav-group">
+      <a class="nav-item" href="/settings" hx-boost="false" {% if nav == 'settings' %}aria-current="page"{% endif %}>{{ icon('sliders-horizontal') }}<span class="nav-text">配置</span></a>
+      <a class="nav-item" href="/system" hx-boost="false" {% if nav == 'system' %}aria-current="page"{% endif %}>{{ icon('server') }}<span class="nav-text">系统</span><span class="nav-dot" data-update-dot hidden role="img" aria-label="有新更新" title="有新更新"></span></a>
+    </nav>
+    <div class="sidebar-foot">
+      <a class="nav-item" href="{{ ui_v1_url }}" hx-boost="false" title="打开 V1 备用界面中的对应页面">{{ icon('undo-2') }}<span class="nav-text">进入 V1</span></a>
+      <button type="button" class="nav-item nav-button" data-theme-toggle>{{ icon('monitor', 'theme-auto') }}{{ icon('sun', 'theme-light') }}{{ icon('moon', 'theme-dark') }}<span class="nav-text" data-theme-label>主题：跟随系统</span></button>
+      <form method="post" action="/logout" class="nav-form">{{ csrf() }}
+        <button type="submit" class="nav-item nav-button" title="退出登录">{{ icon('log-out') }}<span class="nav-text">{{ identity.username }} · 退出</span></button>
+      </form>
+    </div>
+  </aside>
+  <div class="nav-scrim" data-nav-close></div>
+  <header class="topbar">
+    <button type="button" class="btn btn-ghost btn-icon nav-toggle" data-nav-toggle aria-label="打开导航" aria-controls="sidebar">{{ icon('menu') }}</button>
+    <nav class="crumbs" aria-label="位置">{% block crumbs %}{% endblock %}</nav>
+    <button class="search-trigger" type="button" data-open-palette>{{ icon('search', 'icon-sm') }}<span>搜索档案 ID、标题，或跳转页面…</span><span class="kbd">Ctrl K</span></button>
+    {% set supervisor = ui_supervisor %}{% set supervisor_state = ui_supervisor_state %}{% set scope = 'overview' if nav == 'overview' else 'pill' %}
+    {% include "_sup_pill.html" %}
   </header>
-  <main id="main" class="shell">
-    {% block content %}{% endblock %}
+  <main class="main" id="main" tabindex="-1">
+    {% if ui_database_error %}<div class="page"><div class="note" data-tone="danger">{{ icon('database') }}<div><strong>数据库暂时不可用</strong><div class="xs">页面中依赖数据库的内容无法显示，请稍后刷新。</div></div></div></div>{% endif %}
+    {% block main %}{% endblock %}
   </main>
-  <template id="system-operation-shell">
-    {% include "_system_operation_body.html" %}
-  </template>
+</div>
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+{% if ui_toast %}<template data-initial-toast data-tone="ok">{{ ui_toast }}</template>{% endif %}
+{% include "_palette.html" %}
+{% block overlay %}{% endblock %}
 </body>
 </html>

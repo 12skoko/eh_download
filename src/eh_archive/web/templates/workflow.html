@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon with context %}
+{% set nav = 'workflows' %}
+{% block title %}{{ ui_kind_labels.get(kind, kind) }} #{{ workflow.id }}{% endblock %}
+{% block crumbs %}<a href="/workflows">工作流</a>{{ icon('chevron-right') }}<a href="{{ module_url }}">{{ ui_kind_labels.get(kind, kind) }}</a>{{ icon('chevron-right') }}<span class="current">#{{ workflow.id }}</span>{% endblock %}
+{% block main %}
+<div class="page" data-error-scope>
+  <div class="form-error page-error" data-form-error hidden></div>
+  {% include ui_panel %}
+</div>
+{% endblock %}

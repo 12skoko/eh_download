@@ -1,0 +1,52 @@
+{% from "_macros.html" import icon, csrf, form_error, manga_link with context %}
+{% from "special/_wf.html" import act, hero, notices, expired_dialog, history, outputs, metrics with context %}
+{% set actions = '/workflow/' ~ workflow.id ~ '/actions/' %}
+{% set progress = workflow.progress or {} %}
+<div id="wf-panel" class="stack" {% if active_metadata_job %}hx-get="{{ ui_panel_url }}" hx-trigger="every 4s [archiveUICanPoll() && archiveUIWorkflowCanPoll()]" hx-swap="outerHTML"{% endif %}>
+  {% call hero(workflow, kind, phase_labels.get(workflow.phase, workflow.phase), 'tag', 'danger' if workflow.phase == 'failed' else 'warn' if workflow.phase == 'completed_with_errors' else 'ok' if workflow.status == 'completed' else '') %}
+    {% if workflow.phase == 'failed' and not active_metadata_job and not workflow.cancel_requested_at and module_health.available %}{{ act(actions ~ 'retry', '重新生成预览', workflow, 'btn btn-primary', 'rotate-cw') }}{% endif %}
+    {% if workflow.status == 'active' and not workflow.cancel_requested_at %}{{ act(actions ~ 'cancel', '停止处理', workflow, 'btn btn-danger-quiet', 'circle-stop') }}{% endif %}
+    <a class="btn btn-ghost" href="{{ module_url }}">{{ icon('plus') }}新建预览</a>
+  {% endcall %}
+
+  {{ notices(workflow) }}
+  {% if workflow.cancel_requested_at %}<div class="note" data-tone="warn">{{ icon('circle-stop') }}<div>已请求停止。已确认成功的结果保留，其余档案需要重新预览；停止不撤销远端已经发生的写入。</div></div>{% endif %}
+  {% if expired_job %}{{ expired_dialog(workflow, actions ~ 'release-expired', '先确认旧 Worker 已停止。解除后重新预览，核实远端已经发生的更新。') }}{% endif %}
+
+  <div class="cols-main">
+    <div class="stack">
+      <section class="card">
+        <div class="card-head"><h2>预览与结果</h2>{% if progress %}<span class="meta">已处理 {{ progress.get('completed', 0) }} / {{ progress.get('total', payload.get('count', 0)) }}</span>{% endif %}{% if active_metadata_job %}<div class="actions"><span class="live"><span class="dot" data-tone="run" data-live></span>运行中 · 每 4 秒</span></div>{% endif %}</div>
+        <div class="card-body form-stack">
+          {% if progress and progress.get('total') %}<div class="progress"><span style="width:{{ (progress.get('completed', 0) / progress.get('total') * 100)|round(1) }}%"></span></div>{% endif %}
+          {{ metrics(payload.get('summary', {}), action_labels) }}
+          {% call outputs(workflow, payload, {'preview': '差异预览', 'result': '处理结果'}) %}<p class="small muted">预览生成后会在这里出现报告。</p>{% endcall %}
+        </div>
+        {% if workflow.phase == 'awaiting_confirmation' and not active_metadata_job and not workflow.cancel_requested_at and module_health.available %}
+        <form class="card-body form-stack confirm-zone" method="post" action="{{ actions }}confirm" hx-post="{{ actions }}confirm" hx-target="#wf-panel" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
+          {{ csrf() }}<input type="hidden" name="row_version" value="{{ workflow.row_version }}">
+          <h3>确认更新并校验</h3>
+          <p class="small">将以本地数据更新有差异的标题和标签。内容一致的档案只做复核；校验通过后补齐 LANraragi ID，并恢复对应上传任务。预览中无法核实的档案会保留。不重新抓取 E 站，也不上传文件。</p>
+          <label class="confirm-box"><input type="checkbox" name="confirmed" value="yes" required><span>已查看差异，确认更新和恢复可处理的档案</span></label>
+          {{ form_error() }}
+          <div><button type="submit" class="btn btn-primary">{{ icon('circle-check') }}确认更新并校验</button></div>
+        </form>
+        {% endif %}
+      </section>
+      {% if confirmed_items %}
+      <section class="card">
+        <div class="card-head"><h2>已确认成功的档案</h2><span class="meta">即使后续任务失败或停止，这些结果也已保存</span></div>
+        <ul class="ilist compact-list">{% for item in confirmed_items %}<li><a class="row-link" href="{{ item.manga_id|ui_manga_url }}"><span class="grow mono small">{{ item.manga_id }}</span><span class="tag" data-tone="ok">{{ action_labels.get(item.action, item.action) }}</span></a></li>{% endfor %}</ul>
+      </section>
+      {% endif %}
+      {{ history(workflow, {'scan': '预览', 'apply': '更新并校验'}) }}
+    </div>
+    <aside class="stack">
+      <section class="card"><div class="card-head"><h3>说明</h3></div>
+        <div class="card-body small muted form-stack">
+          <p>预览与确认之间会检查本地行版本、产物 generation 和元数据指纹，执行时再次检查远端预览快照；有变化需要新预览。</p>
+          <p>过期 Worker 必须先确认已停止，再解除租约；重试总是重新生成预览，不自动重放写入。</p>
+        </div></section>
+    </aside>
+  </div>
+</div>

@@ -1,6 +1,0 @@
-{% extends "base.html" %}
-{% block title %}全量采集 #{{ workflow.id }} ▪ EH Archive{% endblock %}
-{% block content %}
-<div class="page-head"><div><a class="back" href="/special/modules/full_collect">← 全量采集</a><h1>{{ "旧日期轮次" if legacy_round else "ID 区间采集" }} #{{ workflow.id }}</h1></div></div>
-<div hx-get="/partials/special-workflows/{{ workflow.id }}" hx-trigger="every 10s [!document.activeElement.closest('form')]" hx-swap="innerHTML">{% include "special/_full_collect_panel.html" %}</div>
-{% endblock %}

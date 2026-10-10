@@ -1,10 +1,33 @@
 {% extends "base.html" %}
-{% block title %}操作详情 · EH Archive{% endblock %}
-{% block content %}
-<div class="page-head"><h1>操作详情</h1><a href="/system">系统</a></div>
-<div id="system-error" class="alert warning" role="alert" hidden></div>
-<section data-operation-detail="{{ operation.id }}">
-  {% include "_system_operation_body.html" %}
-</section>
-<script src="/static/management.js" defer></script>
+{% from "_macros.html" import icon with context %}
+{% set nav = 'system' %}
+{% block title %}操作详情{% endblock %}
+{% block crumbs %}<span>运维</span>{{ icon('chevron-right') }}<a href="/system" hx-boost="false">系统</a>{{ icon('chevron-right') }}<span class="current">操作详情</span>{% endblock %}
+{% block main %}
+<div class="page page-narrow" data-operation-detail="{{ identifier }}">
+  <div class="note" data-tone="danger" data-system-error role="alert" {% if not management_error %}hidden{% endif %} style="margin-bottom:16px">{{ icon('circle-alert') }}<div data-system-error-text>{{ management_error or '' }}</div></div>
+  <section class="card">
+    <div class="phase-hero">
+      <span class="glyph" data-op-glyph>{{ icon('server') }}</span>
+      <div class="grow min0"><div class="eyebrow mono">{{ identifier }}</div><h2 data-op-kind>正在读取…</h2>
+        <div class="sub"><span class="pill" data-op-status data-tone="muted">—</span><span data-op-phase class="mono xs"></span><span>· 已等待 <span data-op-elapsed>—</span></span><span>· 发起者 <span data-op-actor class="mono xs">—</span></span></div></div>
+      <div class="btn-group"><button type="button" class="btn btn-warn-quiet" data-cancel-drain hidden>{{ icon('circle-stop') }}取消 drain</button><a class="btn btn-ghost" href="/system" hx-boost="false">{{ icon('arrow-left') }}返回系统</a></div>
+    </div>
+    <div class="card-body form-stack" style="border-top:1px solid var(--line)">
+      <dl class="kv"><dt>版本</dt><dd class="mono xs" data-op-commits>—</dd></dl>
+      <a class="btn btn-sm" data-op-address hidden href="#">{{ icon('external-link', 'icon-sm') }}<span>新 Web 地址</span></a>
+      <div class="note" data-tone="danger" data-op-error hidden>{{ icon('circle-alert') }}<div data-op-error-text></div></div>
+    </div>
+  </section>
+  <section class="card mt16" data-tabs>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="events" aria-selected="true">步骤</button>
+      <button type="button" role="tab" data-tab="log" aria-selected="false">日志</button>
+      <button type="button" role="tab" data-tab="config" aria-selected="false">配置发布</button>
+    </div>
+    <div data-tab-panel="events" class="card-body"><pre class="codeblock tall" data-op-events></pre></div>
+    <div data-tab-panel="log" class="card-body" hidden><pre class="codeblock tall" data-op-log></pre></div>
+    <div data-tab-panel="config" class="card-body" hidden><pre class="codeblock tall" data-op-config></pre></div>
+  </section>
+</div>
 {% endblock %}
