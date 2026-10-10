@@ -97,7 +97,7 @@
         <section class="stage" style="grid-column: {{ col.n }} / span {{ span }}" aria-label="{{ title }}">
           <div class="stage-head">{{ icon(glyph, 'icon-sm') }}{{ title }}</div>
           <div class="counts{{ ' cols2' if span == 2 }}">
-            {% for status in statuses %}{% set n = counts.get(status, 0) %}{% set tone = flow_tones.get(status) %}
+            {% for status in statuses %}{% set n = counts.get(status, 0) %}{% set tone = flow_tones.get(status) if n or status not in ['manual_review', 'quarantined'] else none %}
             <a class="count-row{{ ' status-tone' if tone }}{{ ' zero' if not n and not tone }}" href="/uiv3/{{ 'inbox?status=' ~ status if status in ['manual_review', 'quarantined'] else 'archives?status=' ~ status }}" {% if tone %}data-tone="{{ tone }}"{% endif %}>{{ status|status_label }}<span class="n">{{ '{:,}'.format(n) }}</span></a>
             {% endfor %}
           </div>
