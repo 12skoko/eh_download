@@ -68,7 +68,7 @@
           <div class="torrent">
             <div class="row center gap8"><span class="glyph-sm">{{ icon('image' if item.role == 'image' else 'video', 'icon-sm') }}</span><strong class="small">{{ {'image': '图片', 'video': '视频'}.get(item.role, item.role) }}</strong>{{ run_pill(item.status, item.status) }}<span class="grow"></span><span class="num small"><strong>{{ '%.1f'|format(pct) }}%</strong></span></div>
             <div class="progress mt8"><span style="width:{{ pct }}%"></span></div>
-            <div class="progress-meta"><span>{{ item.speed_bps|filesize }}/s</span><span>更新 {{ item.updated_at|ui_ago if item.updated_at else '—' }}</span></div>
+            <div class="progress-meta"><span>{{ (item.speed_bps|filesize ~ '/s') if item.get('speed_bps') is not none else '—' }}</span><span>更新 {{ item.updated_at|ui_ago if item.updated_at else '—' }}</span></div>
           </div>
           {% endfor %}
           <p class="xs muted">下载进度不是实时值；只有“立即检查”或模块页的批量检查才访问 qBittorrent 并更新。未完成时回到下载中，不会自动安排下一次检查。</p>
