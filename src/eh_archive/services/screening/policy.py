@@ -132,7 +132,12 @@ def screen_group_id(real_name: str) -> str:
 
 def screen_priority(manga: Manga) -> float:
     chinese = "chinese" in manga.tags_raw.lower()
-    uncensored = "無修正" in manga.name or "无修正" in manga.name
+    uncensored = (
+        "無修正" in manga.name
+        or "无修正" in manga.name
+        or _contains_key(manga.name.casefold(), "uncensored")
+        or "other:uncensored" in normalized_eh_tags(manga.tags_raw)
+    )
     rating = manga.rating or 0
     if uncensored:
         if chinese:
