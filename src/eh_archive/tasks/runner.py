@@ -132,7 +132,7 @@ def _info(record: Any):
         fetched_at=value.fetched_at,
         tags_raw=value.tags_raw,
         tags_translated_raw=value.tags_translated_raw,
-        archive_url=None,
+        archive_url=value.archive_url,
         parent_id=None,
     )
 
@@ -824,15 +824,8 @@ class TaskExecutor:
             return
         info = _info(record)
         if info is None or not info.is_complete():
-            info = self._details(record, role="browse")
-            self._upsert_info_fenced(repository, claim, info)
-            repository.mark_parent_outdated(info.parent_id, record.manga_id)
-        if not info.is_complete():
-            raise ArchiveError(
-                "incomplete_details",
-                "gallery details are incomplete before torrent selection",
-                ErrorClass.ITEM,
-            )
+            repository.finish(claim, owner=self.owner, event="require_details")
+            return
         http = self._http_session("browse")
         browse_network = self.secrets.network(self.app.browse_session)
         service = TorrentService(
@@ -1058,8 +1051,33 @@ class TaskExecutor:
     ) -> None:
         info = self._details(record, role="browse")
         self._upsert_info_fenced(repository, claim, info)
+        if info.latest_version_id or record.superseded_by_id:
+            target = repository.set_discovered_replacement(
+                record, info.latest_version_id or record.superseded_by_id
+            )
+            repository.mark_parent_outdated(info.parent_id, record.manga_id)
+            repository.finish(claim, owner=self.owner, event="outdate", detail={
+                "source": "gallery_newer_versions", "superseded_by_id": target,
+                "candidates": info.newer_versions,
+            })
+            return
+        if not info.is_complete():
+            raise ArchiveError("incomplete_details", "画廊详情不完整", ErrorClass.ITEM)
+        if not record.torrent_link and record.download_method in {None, "torrent"}:
+            if self.app.fallback_method == "none":
+                self._block_download(repository, claim, record, fallback_reason="no_torrent",
+                                     fallback_detail="gallery has no torrent")
+                return
+            record.download_method = self.app.fallback_method
+        archive_route = record.download_method in {"direct", "hah", "aria2"} or (
+            record.download_method is None and not record.torrent_link
+            and self.app.fallback_method != "none"
+        )
+        if archive_route and not info.archive_url:
+            raise ArchiveError("missing_archive_url", "画廊缺少所需归档入口", ErrorClass.ITEM)
         repository.mark_parent_outdated(info.parent_id, record.manga_id)
-        repository.finish(claim, owner=self.owner)
+        repository.finish(claim, owner=self.owner, event="details_ready",
+                          detail={"source": "gallery_details", "newer_versions": []})
 
     def _upsert_info_fenced(
         self, repository: ArchiveRepository, claim: ClaimedAttempt, info: Any
@@ -1091,14 +1109,9 @@ class TaskExecutor:
             )
             return
         info = _info(record)
-        if info is None or not info.archive_url:
-            info = self._details(record)
-            self._upsert_info_fenced(repository, claim, info)
-            repository.mark_parent_outdated(info.parent_id, record.manga_id)
-        if not info.archive_url:
-            raise ArchiveError(
-                "missing_archive_url", "details page has no archive URL", ErrorClass.ITEM
-            )
+        if info is None or not info.is_complete() or not info.archive_url:
+            repository.finish(claim, owner=self.owner, event="require_details")
+            return
         method = record.download_method or self.app.fallback_method
         if method == "hah" and not self.app.hah_enabled:
             raise ArchiveError("hah_disabled", "H@H adapter is disabled", ErrorClass.SYSTEM)
@@ -1525,10 +1538,6 @@ class TaskExecutor:
     ) -> None:
         info = _info(record)
         if info is None or not info.is_complete():
-            info = self._details(record)
-            self._upsert_info_fenced(repository, claim, info)
-            repository.mark_parent_outdated(info.parent_id, record.manga_id)
-        if not info.is_complete():
             raise ArchiveError("missing_mangainfo", "MangaInfo is incomplete", ErrorClass.ITEM)
         if (
             not record.artifact_location
@@ -1868,6 +1877,10 @@ class TaskExecutor:
         self, repository: ArchiveRepository, claim: ClaimedAttempt, exc: Exception
     ) -> None:
         info = classify_exception(exc)
+        if claim.operation == "details" and info.code == "details_page_structure_invalid":
+            repository.finish(claim, owner=self.owner, event="review",
+                              error_code=info.code, error_detail=info.message)
+            return
         from ..services.downloader.torrent.review import TorrentReviewRequired
 
         if isinstance(exc, TorrentReviewRequired):
@@ -1992,21 +2005,12 @@ class TaskExecutor:
                 return
         else:
             event = "review"
-            if claim.operation == "details":
-                # Details are auxiliary until upload. Keep the download
-                # route runnable and retry metadata independently.
-                record = repository.get(claim.manga_id)
-                if record:
-                    record.next_retry_at = utcnow() + timedelta(
-                        seconds=min(3600, 2 ** min(record.attempt_count, 8))
-                    )
-                event = "details_retry"
             # Only an explicit response from the gallery page is permanent
             # evidence that the gallery itself is unavailable. Archive files
             # are served from separate download hosts, so a 404/410 from those
             # hosts needs manual review instead of permanently suppressing the
             # gallery.
-            if claim.operation != "details" and info.code == "gallery_unavailable":
+            if info.code == "gallery_unavailable":
                 event = "unavailable"
             finish_error_code = info.code
             finish_error_detail = info.message

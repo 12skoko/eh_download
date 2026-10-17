@@ -56,7 +56,7 @@ class ScreeningService:
             elif eligibility.action == ScreenAction.QUEUE:
                 self._apply_single(
                     row,
-                    Status.DOWNLOAD_PENDING,
+                    Status.DETAILS_PENDING,
                     eligibility.reason,
                     result,
                     actor=actor,
@@ -142,14 +142,14 @@ class ScreeningService:
                 priority: float | None = None
                 group_id: str | None = None
             elif eligibility.action == ScreenAction.QUEUE:
-                status = Status.DOWNLOAD_PENDING
+                status = Status.DETAILS_PENDING
                 reason = eligibility.reason
                 selected = True
                 priority = screen_priority(_manga(row))
                 group_id = relation
             else:
                 selected = row.manga_id in selected_ids
-                status = Status.DOWNLOAD_PENDING if selected else Status.SKIPPED
+                status = Status.DETAILS_PENDING if selected else Status.SKIPPED
                 reason = "version_selected" if selected else "version_rejected"
                 priority = screen_priority(_manga(row))
                 group_id = relation

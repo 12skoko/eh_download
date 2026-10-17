@@ -1,5 +1,5 @@
 {% from "_macros.html" import icon, csrf, form_error, status_pill with context %}
-{% set advance_group = ['discovered', 'download_pending', 'downloaded', 'completed'] %}
+{% set advance_group = ['discovered', 'details_pending', 'downloaded', 'completed'] %}
 <dialog class="modal wide" id="status-dialog" data-status-dialog aria-labelledby="status-dialog-title">
   <div class="modal-head">
     <span class="icon-badge">{{ icon('square-pen') }}</span>
@@ -32,12 +32,12 @@
         {{ csrf() }}<input type="hidden" name="row_version" value="{{ row.row_version }}"><input type="hidden" name="mode" value="{{ mode }}">
         <p class="desc">{{ target.description }}</p>
         <div class="shift">{{ status_pill(row.status) }}<span class="mono xs muted">{{ row.status }}</span>{{ icon('arrow-right') }}{{ status_pill(target.status) }}<span class="mono xs muted">{{ target.status }}</span></div>
-        {% if target.status in ['download_pending', 'downloaded'] %}
+        {% if target.status in ['details_pending', 'downloaded'] %}
         <div class="field"><label>下载方式<span class="req">*</span></label>
           <select class="select" name="download_method" required {% if target.status == 'downloaded' %}data-artifact-method{% endif %}>
             <option value="">请选择</option>
             {% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}" data-artifact-directory="{{ artifact_directories.get(method, '') }}" {% if row.download_method == method %}selected{% endif %}>{{ method }}</option>{% endfor %}
-            {% if target.status == 'download_pending' %}<option value="manual_torrent">手动选择种子（进入特殊模块，暂不加载）</option>{% endif %}
+            {% if target.status == 'details_pending' %}<option value="manual_torrent">手动选择种子（进入特殊模块，暂不加载）</option>{% endif %}
           </select></div>
         {% endif %}
         {% if target.status == 'downloaded' %}

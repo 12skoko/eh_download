@@ -4,7 +4,7 @@
   function updateFields(form) {
     const target = form.elements.target_status;
     const option = target.selectedOptions[0];
-    const needsMethod = target.value === 'download_pending';
+    const needsMethod = target.value === 'details_pending';
     form.querySelector('[data-bulk-method-label]').hidden = !needsMethod;
     form.elements.download_method.disabled = !needsMethod;
     form.elements.download_method.required = needsMethod;

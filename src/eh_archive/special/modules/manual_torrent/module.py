@@ -80,6 +80,8 @@ def create(service, inputs):
     )
     if row is None or row.row_version != inputs.get("row_version"):
         raise SpecialConflict("档案不存在或页面已变化，请刷新")
+    if row.superseded_by_id:
+        raise SpecialInvalidRequest(f"当前档案已有新版 {row.superseded_by_id}，不能提交旧版下载")
     if inputs.get("from_queue") is True:
         if row.status == "special_processing":
             raise SpecialConflict("档案已由特殊模块接管")
@@ -217,7 +219,7 @@ def exit_workflow(service, workflow, inputs, *, direct=False):
         raise SpecialConflict("可能已提交 qBittorrent，请先重试核实，不能直接退出")
     b = binding(workflow)
     row = DEFINITION.integration.records(service.session, workflow)[0]
-    row.status = "download_pending" if direct else b.resume_status
+    row.status = "details_pending" if direct else b.resume_status
     if direct:
         row.download_method, row.queue_source = "direct", "manual"
         row.next_retry_at = row.defer_until = None
@@ -267,7 +269,7 @@ class ManualIntegration(MangaIntegration):
         row = self.records(repository.session, workflow)[0]
         if event == "succeeded" and workflow.status == "completed":
             result = workflow.payload["result"]
-            row.status = "downloading" if result.get("hash") else "download_pending"
+            row.status = "downloading" if result.get("hash") else "details_pending"
             row.download_method = "torrent" if result.get("hash") else "direct"
             row.external_download_id = result.get("hash")
             row.next_retry_at = row.defer_until = None
@@ -402,6 +404,10 @@ class ManualTorrentExecutor:
             )
             info, _, _ = parse_info(BeautifulSoup(html, "lxml"), EhTagTranslation())
             info.manga_id, info.link = manga_id, link
+            if info.latest_version_id:
+                raise ArchiveError("gallery_outdated",
+                                   f"画廊已有新版 {info.latest_version_id}，请退出并交由普通详情流程处理",
+                                   ErrorClass.ITEM)
             if not info.is_complete():
                 raise ArchiveError(
                     "incomplete_details", "画廊信息不完整，请重试加载", ErrorClass.ITEM

@@ -4,6 +4,9 @@
 <div class="page-head detail-head"><div><a class="back" href="/v1/manga">← 返回队列</a><p class="eyebrow mono detail-manga-id">{{ row.manga_id }}</p><h1>{{ row.name or row.real_name or row.manga_id }}</h1><p class="muted">{{ row.real_name }}</p></div><span class="badge large status-{{ row.status }}">{{ row.status|status_label }}</span></div>
 {% if notice %}<div class="alert success">操作已完成，页面显示的是数据库最新状态。</div>{% endif %}
 {% include "v1/_direct_download_progress.html" %}
+{% if row.superseded_by_id %}
+<div class="alert warning">替代档案：{% if replacement %}<a href="/v1/manga/{{ replacement.manga_id }}">{{ replacement.manga_id }}</a> · {{ replacement.status|status_label }}{% else %}<span class="mono">{{ row.superseded_by_id }}</span> · 新版尚未收录，等待正常采集{% endif %}</div>
+{% endif %}
 
 {% if upload_blockers %}
 <section class="panel"><h2>上传等待旧档案删除</h2><p>以下档案全部标记为已删除后，上传调度才会放行。删除失败或进入人工复核时仍会等待。</p><ul>{% for old in upload_blockers %}<li><a href="/v1/manga/{{ old.manga_id }}">{{ old.name or old.manga_id }}（{{ old.manga_id }}）</a> · {{ old.status|status_label }}{% if old.last_error_code %} · {{ old.last_error_code }}{% endif %}</li>{% endfor %}</ul></section>
@@ -113,8 +116,8 @@
         <div class="dialog-head"><div><p class="eyebrow">人工状态调整</p><h2>{{ target.label }}</h2></div><button type="button" class="dialog-close" data-close-dialog aria-label="关闭">×</button></div>
         <p>{{ target.description }}</p>
         <dl class="transition-preview"><div><dt>当前状态</dt><dd>{{ row.status }} / {{ row.status|status_label }}</dd></div><div><dt>目标状态</dt><dd>{{ target.status }} / {{ target.status|status_label }}</dd></div></dl>
-        {% if target.status in ['download_pending', 'downloaded'] %}
-        <label>下载方式（必填）<select name="download_method" required {% if target.status == 'downloaded' %}data-artifact-method{% endif %}><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}" data-artifact-directory="{{ artifact_directories.get(method, '') }}" {% if row.download_method == method %}selected{% endif %}>{{ method }}</option>{% endfor %}{% if target.status == 'download_pending' %}<option value="manual_torrent">手动选择种子（进入特殊模块，暂不加载）</option>{% endif %}</select></label>
+        {% if target.status in ['details_pending', 'downloaded'] %}
+        <label>下载方式（必填）<select name="download_method" required {% if target.status == 'downloaded' %}data-artifact-method{% endif %}><option value="">请选择</option>{% for method in ['torrent', 'direct', 'hah', 'aria2'] %}<option value="{{ method }}" data-artifact-directory="{{ artifact_directories.get(method, '') }}" {% if row.download_method == method %}selected{% endif %}>{{ method }}</option>{% endfor %}{% if target.status == 'details_pending' %}<option value="manual_torrent">手动选择种子（进入特殊模块，暂不加载）</option>{% endif %}</select></label>
         {% endif %}
         {% if target.status == 'downloaded' %}
         <label>文件名（必填）<input name="artifact_filename" value="{{ row.artifact_filename or '' }}" placeholder="服务器下载目录中的文件名" data-artifact-filename required></label>

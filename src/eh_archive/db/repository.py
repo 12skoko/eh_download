@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from sqlalchemy import and_, desc, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ..domain.errors import ArchiveError, ErrorClass
 from ..domain.models import MangaInfo
 from ..domain.states import (
     REPLACEMENT_DELETE_READY_STATUSES,
@@ -38,13 +40,10 @@ OPERATION_STATES: dict[str, tuple[tuple[str, ...], str | None]] = {
     "screen": ((Status.DISCOVERED.value,), None),
     "details": (
         (
+            Status.DETAILS_PENDING.value,
             Status.DOWNLOAD_PENDING.value,
-            Status.DOWNLOADING.value,
-            Status.DOWNLOADED.value,
-            Status.VALIDATING.value,
-            Status.UPLOAD_PENDING.value,
         ),
-        None,
+        Status.DETAILS_PENDING.value,
     ),
     "torrent_download": (
         (Status.DOWNLOAD_PENDING.value, Status.DOWNLOADING.value),
@@ -111,6 +110,19 @@ def upload_blockers_clause(replacement_id):
     )
 
 
+def _download_details_missing_clause():
+    archive_missing = ~exists().where(
+        MangaInfoRecord.manga_id == MangaRecord.manga_id,
+        MangaInfoRecord.archive_url.is_not(None),
+        MangaInfoRecord.archive_url != "",
+    )
+    archive_route = or_(
+        MangaRecord.download_method.in_(("direct", "hah", "aria2")),
+        and_(MangaRecord.download_method.is_(None), MangaRecord.torrent_link == ""),
+    )
+    return or_(_details_missing_clause(), and_(archive_route, archive_missing))
+
+
 def _delete_ready_clause():
     """Keep ordinary outdated rows queued until their replacement is underway."""
 
@@ -137,10 +149,6 @@ def _retry_ready_clause(operation: str, now: datetime):
             MangaRecord.last_error_operation.is_(None),
             MangaRecord.last_error_operation != "details",
         )
-    if operation in {"torrent_download", "torrent_check"}:
-        # A details backoff must not stop qBittorrent from being submitted or
-        # polled. Other operation backoffs remain authoritative.
-        return or_(ready, MangaRecord.last_error_operation == "details")
     return ready
 
 
@@ -338,6 +346,7 @@ class ArchiveRepository:
             "roman_name": info.roman_name,
             "real_name": info.real_name,
             "link": info.link,
+            "archive_url": info.archive_url,
             "category": info.category,
             "uploader": info.uploader,
             "posted_at": info.posted_at,
@@ -359,6 +368,70 @@ class ArchiveRepository:
         )
         return record
 
+    def replacement_target(self, source_id: str, target_id: str) -> str:
+        """Follow known successors; absent targets are intentional until collect finds them."""
+        seen = {source_id}
+        while True:
+            if not re.fullmatch(r"[0-9]+/[0-9a-fA-F]+", target_id) or target_id in seen:
+                raise ArchiveError("replacement_invalid", "替代 ID 无效或存在循环关系", ErrorClass.ITEM)
+            seen.add(target_id)
+            target = self.session.get(MangaRecord, target_id, populate_existing=True)
+            if target is None or not target.superseded_by_id:
+                return target_id
+            target_id = target.superseded_by_id
+
+    def set_discovered_replacement(self, row: MangaRecord, target_id: str) -> str:
+        # Never block while another details transaction may own row locks.
+        if self.session.get_bind().dialect.name == "postgresql" and not self.session.scalar(
+            select(func.pg_try_advisory_xact_lock(834019227))
+        ):
+            raise ArchiveError("replacement_busy", "替代关系正在更新，稍后重试",
+                               ErrorClass.TEMPORARY, retryable=True)
+        target_id = self.replacement_target(row.manga_id, target_id)
+        if row.superseded_by_id:
+            previous_target = self.replacement_target(row.manga_id, row.superseded_by_id)
+            if previous_target != target_id:
+                raise ArchiveError("replacement_conflict", "已有不同替代关系，需人工核对", ErrorClass.ITEM)
+        row.superseded_by_id = target_id
+        return target_id
+
+    def advance_replacement_chains(self, *, limit: int = 100) -> None:
+        """Retry chain advancement skipped while an old row was leased."""
+        successor = MangaRecord.__table__.alias("successor")
+        rows = self.session.scalars(
+            select(MangaRecord).where(
+                or_(
+                    MangaRecord.status == Status.OUTDATED.value,
+                    and_(MangaRecord.status == Status.MANUAL_REVIEW.value,
+                         or_(MangaRecord.last_error_code.is_(None),
+                             MangaRecord.last_error_code != "replacement_invalid")),
+                ),
+                MangaRecord.lease_until.is_(None),
+                MangaRecord.active_attempt_id.is_(None),
+                exists().where(
+                    successor.c.manga_id == MangaRecord.superseded_by_id,
+                    successor.c.superseded_by_id.is_not(None),
+                ),
+            ).order_by(MangaRecord.updated_at).with_for_update(skip_locked=True).limit(limit)
+        )
+        for row in rows:
+            previous = row.superseded_by_id
+            try:
+                target = self.replacement_target(row.manga_id, previous)
+            except ArchiveError as exc:
+                if row.status == Status.MANUAL_REVIEW.value and row.last_error_code == exc.info.code:
+                    continue
+                row.status = Status.MANUAL_REVIEW.value
+                row.last_error_code, row.last_error_detail = exc.info.code, str(exc)
+                row.last_error_operation, row.last_error_at = "details", utcnow()
+            else:
+                row.superseded_by_id = target
+            row.row_version += 1
+            row.updated_at = row.status_updated_at = utcnow()
+            self._event(row.manga_id, "replacement_advanced", actor="supervisor",
+                        detail={"previous": previous, "superseded_by_id": row.superseded_by_id,
+                                "status": row.status})
+
     def mark_parent_outdated(
         self, parent_id: str | None, replacement_id: str, *, actor: str = "details"
     ) -> int:
@@ -370,16 +443,18 @@ class ArchiveRepository:
                     MangaRecord.manga_id.like(f"{parent_id}/%"),
                     MangaRecord.manga_id != replacement_id,
                     MangaRecord.status.in_((Status.UPLOADED.value, Status.COMPLETED.value)),
-                )
+                    MangaRecord.superseded_by_id.is_(None),
+                    MangaRecord.lease_until.is_(None),
+                    MangaRecord.active_attempt_id.is_(None),
+                ).with_for_update(skip_locked=True)
             )
         )
         for row in rows:
-            if row.status == Status.OUTDATED.value and row.superseded_by_id == replacement_id:
-                continue
+            target_id = self.replacement_target(row.manga_id, replacement_id)
             previous = row.status
             row.status, row.superseded_by_id, row.row_version = (
                 Status.OUTDATED.value,
-                replacement_id,
+                target_id,
                 row.row_version + 1,
             )
             row.status_updated_at = row.updated_at = utcnow()
@@ -389,7 +464,7 @@ class ArchiveRepository:
                 actor=actor,
                 from_status=previous,
                 to_status=Status.OUTDATED.value,
-                detail={"superseded_by_id": replacement_id},
+                detail={"superseded_by_id": target_id},
             )
         return len(rows)
 
@@ -517,13 +592,19 @@ class ArchiveRepository:
         if operation == "screen":
             query = query.where(~MangaRecord.manga_id.like("picacg/%"))
         elif operation == "details":
-            query = query.where(_details_missing_clause())
+            query = query.where(
+                MangaRecord.external_download_id.is_(None),
+                ~MangaRecord.manga_id.like("picacg/%"),
+                or_(MangaRecord.status == Status.DETAILS_PENDING.value,
+                    _download_details_missing_clause()),
+            )
         elif operation == "torrent_download":
             query = query.where(
                 or_(
                     MangaRecord.download_method.is_(None), MangaRecord.download_method == "torrent"
                 ),
                 MangaRecord.external_download_id.is_(None),
+                ~_details_missing_clause(),
             )
         elif operation == "torrent_check":
             query = query.where(
@@ -532,6 +613,8 @@ class ArchiveRepository:
             )
         elif operation == "direct_download":
             query = query.where(
+                or_(MangaRecord.external_download_id.is_not(None),
+                    ~_download_details_missing_clause()),
                 or_(
                     MangaRecord.download_method.in_(("direct", "hah", "aria2")),
                     and_(MangaRecord.download_method.is_(None), MangaRecord.torrent_link == ""),
@@ -541,6 +624,9 @@ class ArchiveRepository:
             query = query.where(_delete_ready_clause())
         elif operation == "upload":
             query = query.where(~upload_blockers_clause(MangaRecord.manga_id))
+        if operation in {"torrent_download", "direct_download"}:
+            query = query.where(or_(MangaRecord.external_download_id.is_not(None),
+                                    MangaRecord.superseded_by_id.is_(None)))
         return query
 
     def has_work(self, operation: str) -> bool:

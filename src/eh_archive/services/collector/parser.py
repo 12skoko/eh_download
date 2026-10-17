@@ -6,6 +6,7 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from ...domain.errors import ArchiveError, ErrorClass
 from ...domain.models import Manga, MangaInfo
@@ -146,6 +147,52 @@ def parse_metadata(tr_soup: Any) -> Manga:
     )
 
 
+def parse_newer_versions(soup: Any) -> list[dict[str, str]]:
+    panel = soup.select_one("#gnd")
+    if panel is None:
+        return []
+    def invalid() -> ArchiveError:
+        return ArchiveError(
+            "newer_versions_invalid", "新版提示或链接、添加时间无法可靠解析", ErrorClass.ITEM
+        )
+    if not re.search(
+        r"There (?:is a newer version|are newer versions) of this gallery available\s*:",
+        panel.get_text(" ", strip=True), re.IGNORECASE,
+    ):
+        raise invalid()
+    versions = {}
+    for anchor in panel.select("a[href]"):
+        url = str(anchor["href"])
+        try:
+            parsed = urlsplit(url)
+        except ValueError as exc:
+            raise invalid() from exc
+        match = re.fullmatch(r"/g/([0-9]+/[0-9a-fA-F]+)/?", parsed.path)
+        if (parsed.scheme != "https" or parsed.netloc not in {"exhentai.org", "e-hentai.org"}
+                or not match or parsed.query or parsed.fragment):
+            raise invalid()
+        following = []
+        for sibling in anchor.next_siblings:
+            if getattr(sibling, "name", None) in {"a", "br"}:
+                break
+            following.append(sibling.get_text(" ", strip=True) if hasattr(sibling, "get_text") else str(sibling))
+        date_match = re.search(r"added\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?)", " ".join(following))
+        date = _parse_datetime(date_match.group(1)) if date_match else None
+        if date is None:
+            raise invalid()
+        identifier = match.group(1)
+        candidate = {"manga_id": identifier, "url": url, "added_at": date.isoformat()}
+        if identifier in versions and versions[identifier] != candidate:
+            raise invalid()
+        versions[identifier] = candidate
+    if not versions:
+        raise invalid()
+    latest = max(item["added_at"] for item in versions.values())
+    if sum(item["added_at"] == latest for item in versions.values()) != 1:
+        raise invalid()
+    return list(versions.values())
+
+
 def parse_info(
     soup: Any, tag_translation: EhTagTranslation | None = None
 ) -> tuple[MangaInfo, str, str | None]:
@@ -194,7 +241,7 @@ def parse_info(
     archive_url = None
     archive = soup.find("a", string=lambda value: value and "Archive Download" in value)
     if archive and archive.get("onclick"):
-        match = re.search(r"popUp\('(https://exhentai\.org/archiver\.php.*?)',", archive["onclick"])
+        match = re.search(r"popUp\('(https://(?:exhentai|e-hentai)\.org/archiver\.php[^']*)',", archive["onclick"])
         archive_url = match.group(1) if match else None
     parent = details[1] if len(details) > 1 and details[1] != "None" else None
     info = MangaInfo(
@@ -216,6 +263,7 @@ def parse_info(
         tags_translated_raw=tags_translated,
         archive_url=archive_url,
         parent_id=parent,
+        newer_versions=parse_newer_versions(soup),
     )
     return info, archive_url or "", parent
 

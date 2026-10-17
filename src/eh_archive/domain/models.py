@@ -59,6 +59,13 @@ class MangaInfo:
     tags_translated_raw: str = ""
     archive_url: str | None = None
     parent_id: str | None = None
+    newer_versions: list[dict[str, str]] = field(default_factory=list)
+
+    @property
+    def latest_version_id(self) -> str | None:
+        if not self.newer_versions:
+            return None
+        return max(self.newer_versions, key=lambda item: item["added_at"])["manga_id"]
 
     def is_complete(self) -> bool:
         required_text = (

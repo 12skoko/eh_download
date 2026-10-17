@@ -8,6 +8,9 @@
 {% set review_ready = review.get('scope') and review.get('warnings') and row.last_error_code in review.get('warnings', []) %}
 {% set dup_codes = ['lrr_409', 'lrr_duplicate', 'smb_final_conflict'] %}
 {% set code_lower = (row.last_error_code or '')|lower %}
+{% if row.superseded_by_id %}
+<div class="alert warning">替代档案：{% if replacement %}<a href="/archives/{{ replacement.manga_id }}">{{ replacement.manga_id }}</a> · {{ replacement.status|status_label }}{% else %}<span class="mono">{{ row.superseded_by_id }}</span> · 新版尚未收录，等待正常采集{% endif %}</div>
+{% endif %}
 
 {# ============================ 解决方式（按错误上下文出现） ============================ #}
 {% set resolutions %}
@@ -31,7 +34,7 @@
     <label class="confirm-box"><input type="checkbox" name="allow_personalized" value="yes" {% if review.get('allow_personalized_next_attempt') %}checked{% endif %}><span>允许尝试带账号信息的备用链接，此方式下载将计入账号下载统计</span></label>
     {{ form_error() }}
     <div class="resolve-actions"><button type="submit" class="btn">确认选择</button>
-      <button type="button" class="btn btn-ghost" data-open-dialog="status-dialog" data-target="download_pending">{{ icon('square-pen') }}然后：更改为等待下载…</button></div>
+      <button type="button" class="btn btn-ghost" data-open-dialog="status-dialog" data-target="details_pending">{{ icon('square-pen') }}然后：更改为等待详情…</button></div>
     <p class="xs muted">保存不会重新排队。确认后通过“更改状态 → 等待下载”并选择 torrent，才会开始重试。</p>
   </form>
   {% endif %}

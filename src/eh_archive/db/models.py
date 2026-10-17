@@ -33,6 +33,7 @@ class Base(DeclarativeBase):
 STATUS_VALUES = (
     "discovered",
     "deferred",
+    "details_pending",
     "download_pending",
     "download_blocked",
     "downloading",
@@ -142,7 +143,7 @@ class MangaRecord(Base):
     last_error_detail: Mapped[str | None] = mapped_column(Text)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     superseded_by_id: Mapped[str | None] = mapped_column(
-        ForeignKey("manga.manga_id", ondelete="RESTRICT")
+        String(100)
     )
     row_version: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
@@ -186,6 +187,7 @@ class MangaInfoRecord(Base):
     roman_name: Mapped[str] = mapped_column(Text, default="")
     real_name: Mapped[str] = mapped_column(Text, default="")
     link: Mapped[str] = mapped_column(Text, default="")
+    archive_url: Mapped[str | None] = mapped_column(Text)
     category: Mapped[str] = mapped_column(Text, default="")
     uploader: Mapped[str] = mapped_column(Text, default="")
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

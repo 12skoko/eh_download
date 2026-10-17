@@ -45,6 +45,7 @@ DUPLICATE_UPLOAD_ERROR_CODES = frozenset(
 STATUS_LABELS = {
     Status.DISCOVERED.value: "已发现",
     Status.DEFERRED.value: "观察等待",
+    Status.DETAILS_PENDING.value: "等待详情",
     Status.DOWNLOAD_PENDING.value: "等待下载",
     Status.DOWNLOAD_BLOCKED.value: "下载受阻",
     Status.DOWNLOADING.value: "下载中",
@@ -94,9 +95,9 @@ MANUAL_STATUS_TARGETS = (
         "description": "停止当前流程并退回已发现状态；不会自动进入下载队列。",
     },
     {
-        "status": Status.DOWNLOAD_PENDING.value,
-        "label": "等待下载",
-        "description": "保存指定下载方式，等待 Supervisor 安排下载。",
+        "status": Status.DETAILS_PENDING.value,
+        "label": "等待详情（重新下载）",
+        "description": "保存指定下载方式，先检查详情和新版本，通过后安排下载。",
     },
     {
         "status": Status.DOWNLOADED.value,
@@ -171,7 +172,7 @@ MANUAL_STATUS_TARGETS = (
 MANUAL_STATUS_VALUES = frozenset(target["status"] for target in MANUAL_STATUS_TARGETS)
 BULK_STATUS_VALUES = frozenset({
     "discovered", "manual_review", "skipped", "download_blocked",
-    "unavailable", "quarantined", "download_pending", "outdated",
+    "unavailable", "quarantined", "details_pending", "outdated",
 })
 BULK_STATUS_TARGETS = tuple(
     target for target in MANUAL_STATUS_TARGETS if target["status"] in BULK_STATUS_VALUES
@@ -201,6 +202,7 @@ _ACTION_EVENTS: dict[str, dict[str, str]] = {
             Status.DISCOVERED,
             Status.DEFERRED,
             Status.DOWNLOAD_PENDING,
+            Status.DETAILS_PENDING,
             Status.DOWNLOAD_BLOCKED,
             Status.DOWNLOADING,
             Status.DOWNLOADED,
@@ -423,7 +425,7 @@ class WebService:
                     or not set(review["warnings"]).issubset(warnings)):
                 raise InvalidRequest("请确认当前全部种子告警")
             review["accepted_warnings"] = sorted(set(warnings))
-            row.status, row.download_method, row.queue_source = "download_pending", "torrent", "manual"
+            row.status, row.download_method, row.queue_source = "details_pending", "torrent", "manual"
             row.status_updated_at = utcnow()
             row.next_retry_at = row.defer_until = None
             row.last_error_operation = row.last_error_code = row.last_error_detail = row.last_error_at = None
@@ -453,6 +455,10 @@ class WebService:
             if not archive_id or not re.fullmatch(r"[0-9a-fA-F]{40}", archive_id):
                 raise InvalidRequest("archive ID 必须是 40 位 SHA1")
             confirmed_id = archive_id.lower()
+        if transition_target(row.status, event) == Status.DETAILS_PENDING and (
+            row.active_attempt_id or row.lease_token or row.lease_until or row.external_download_id
+        ):
+            raise Conflict("档案仍有活动任务或外部下载，请先核实，不能重新入队")
         previous = row.status
         row.status = transition_target(row.status, event).value
         if confirmed_id:
@@ -492,7 +498,10 @@ class WebService:
     ) -> MangaRecord:
         """Apply an explicit, audited administrator status override."""
 
-        manual_torrent = target_status == "download_pending" and download_method == "manual_torrent"
+        # Older API clients also pass through the mandatory details gate.
+        if target_status == "download_pending":
+            target_status = "details_pending"
+        manual_torrent = target_status == "details_pending" and download_method == "manual_torrent"
         if manual_torrent:
             from ..special.core.repository import SpecialRepository
 
@@ -513,6 +522,8 @@ class WebService:
             raise InvalidRequest("档案已经处于目标状态")
         if row.active_attempt_id is not None or row.lease_owner or row.lease_token:
             raise Conflict("档案仍有活动任务或租约，不能人工修改状态")
+        if target_status == Status.DETAILS_PENDING.value and row.external_download_id:
+            raise Conflict("已有外部下载任务，请先核实并处理该任务，不能重新入队")
         if row.status == Status.SPECIAL_PROCESSING.value:
             raise Conflict("档案由活动的特殊工作流控制，不能使用通用状态修改")
 
@@ -551,7 +562,7 @@ class WebService:
         if target_status == Status.DOWNLOAD_BLOCKED.value:
             row.download_method = None
             row.external_download_id = None
-        if target_status in {Status.DOWNLOAD_PENDING.value, Status.DOWNLOADED.value}:
+        if target_status in {Status.DETAILS_PENDING.value, Status.DOWNLOADED.value}:
             if clean_method not in DOWNLOAD_METHOD_VALUES:
                 raise InvalidRequest("必须选择有效的下载方式")
             row.download_method = clean_method
@@ -989,6 +1000,8 @@ def bulk_override_status(
     config_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Commit each archive independently; failed items must leave no partial writes."""
+    if target_status == "download_pending":
+        target_status = "details_pending"
     if target_status not in BULK_STATUS_VALUES:
         raise InvalidRequest("这个状态不支持批量修改")
     if not 1 <= len(items) <= 100:
@@ -1007,14 +1020,14 @@ def bulk_override_status(
             raise InvalidRequest("替代档案不能包含在本次选中的档案中")
     if target_status in {"unavailable", "quarantined"} and not reason:
         raise InvalidRequest("这个状态必须填写操作原因")
-    if target_status == "download_pending" and download_method not in (*DOWNLOAD_METHOD_VALUES, "manual_torrent"):
+    if target_status in {"details_pending", "download_pending"} and download_method not in (*DOWNLOAD_METHOD_VALUES, "manual_torrent"):
         raise InvalidRequest("必须选择有效的下载方式")
     batch_id = str(uuid.uuid4())
     results = []
     for manga_id, version in items:
         try:
             with database.session() as session:
-                if target_status == "download_pending" and download_method == "manual_torrent":
+                if target_status in {"details_pending", "download_pending"} and download_method == "manual_torrent":
                     from ..special.core.repository import SpecialRepository
 
                     SpecialRepository(session).scheduling_lock()
@@ -1258,6 +1271,7 @@ def manga_detail(session: Session, manga_id: str) -> dict[str, Any]:
     )
     return {
         "row": row,
+        "replacement": session.get(MangaRecord, row.superseded_by_id) if row.superseded_by_id else None,
         "attempts": attempts,
         "events": events,
         "upload_blockers": list(session.scalars(

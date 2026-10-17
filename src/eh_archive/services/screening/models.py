@@ -28,7 +28,7 @@ class ScreeningBatchResult:
         self.processed += 1
         self.decisions.append(decision)
         counter = {
-            "download_pending": "queued",
+            "details_pending": "queued",
             "filtered_out": "filtered_out",
             "skipped": "skipped",
             "manual_review": "manual_review",

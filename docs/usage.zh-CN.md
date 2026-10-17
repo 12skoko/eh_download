@@ -461,7 +461,7 @@ Screen 不按固定周期运行。Supervisor 发现数据库中存在 `discovere
 eharchive --config-dir config task screen --limit 100
 ```
 
-Screen 命中名称或标签关键词时进入 `download_pending`；不符合分类、语言、评分等基本收录规则时进入 `filtered_out`；符合规则但在同名版本比较中落选时进入 `skipped`；胜出版本进入 `download_pending`。`filtered_out` 表示未通过筛选准入，`skipped` 只表示参加版本比较后落选。
+Screen 命中名称或标签关键词时进入 `details_pending`；不符合分类、语言、评分等基本收录规则时进入 `filtered_out`；符合规则但在同名版本比较中落选时进入 `skipped`；胜出版本进入 `details_pending`。`filtered_out` 表示未通过筛选准入，`skipped` 只表示参加版本比较后落选。
 
 ### 7.2 手工加入单个画廊
 
@@ -478,7 +478,8 @@ Screen 命中名称或标签关键词时进入 `download_pending`；不符合分
 
 ```text
 collect -> deferred --再次采集且观察期已到--> discovered
-discovered -> screen -> filtered_out / skipped / download_pending / manual_review
+discovered -> screen -> filtered_out / skipped / details_pending / manual_review
+details_pending -> details -> download_pending / outdated / unavailable / manual_review
 download_pending
         -> downloading -> downloaded
         -> download_blocked（torrent 不可用且 fallback_method=none）
@@ -487,6 +488,12 @@ download_pending
 ```
 
 所有普通模块均由 `eh_archive.tasks.runner --operation <模块名>` 启动。Supervisor 根据统一注册表中的调度模式运行模块：`collect` 和 `torrent_check` 定时触发，其余普通模块在满足数据库任务条件时触发。两种模式共用启停、暂停、单模块不重叠、退出冷却和故障处理；严重错误会让 Supervisor 收尾退出。特殊处理仍使用自己的调度和故障隔离机制。
+
+`details_pending` 是普通下载的必经步骤。details 保存完整 MangaInfo，并检查画廊 `#gnd` 的新版提示；明确有新版时按添加时间选择最新版，直接设为 `outdated`，将完整 `gid/token` 写入 `superseded_by_id`。新版可以尚未入库，页面显示等待收录；程序不主动补采，仍由正常 collect 收录。没有新版且详情满足下载要求后才进入 `download_pending`。临时请求失败保持等待详情并退避重试，无法可靠解析新版信息或缺少必要入口时转人工复核。已完成档案不会被自动重新巡检。
+
+归档申请入口保存在 `mangainfo.archive_url`。种子、direct、H@H、aria2 下载模块不再请求画廊详情；归档申请、种子候选和实际文件下载仍由下载模块处理。种子不要求归档入口；回退到归档下载时若入口缺失，由 details 重新领取并补齐，成功后一律回到 `download_pending`，不设恢复状态字段。成功读取合法详情页后仍缺少所需入口则转人工复核，避免反复切换队列。普通网络失败使用原下载重试，不自动刷新归档入口。上传缺少 MangaInfo 时进入人工复核并保留文件。
+
+升级到 `0022_details_pending` 前须停止普通任务领取并等待活动任务结束，清理或核实遗留租约。迁移会拒绝有普通任务租约的数据库，将尚无外部任务 ID 的普通等待下载记录转入等待详情；已有外部下载、后续处理和完成记录保持原流程。迁移仅移除 `superseded_by_id` 的外键，不影响 MangaInfo 外键。回退迁移前必须先处理指向未入库新版的 ID。连续版本关系由 Supervisor 在无活动租约时推进，循环关系进入人工复核。
 
 定时模块无需有待处理记录即可启动，每轮结束后退出。计时从实际启动时刻计算，暂停或上一轮未结束时不会重复启动，也不会积攒补跑次数。`torrent_check` 每轮默认检查启动时所有符合条件的种子记录，每条最多一次；CLI 的 `--limit` 可限制本轮数量。它保留每条记录的租约、错误退避和完成后文件校验。种子提交模块只领取尚无 hash 的记录，检测模块只领取已有 hash 的种子下载记录；关闭提交模块不影响已有种子的定时检测。
 
@@ -667,9 +674,9 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
 
 配置页面不会读取或展示 `secrets.toml`、数据库连接字符串，也不允许修改 Web 监听地址和服务器路径。可编辑字段以类型化表单保存；保存前会重新校验完整配置、检查页面版本以防并发覆盖，并将原文件备份到 `config/backups/web-config-<UTC时间戳>/`，保留相对路径和多次历史。备份失败时不会覆盖原配置；新建文件没有旧内容，不生成备份。配置保存不会从网页自动重启进程，页面会标明需要重启 Web、Supervisor 或两者；审计事件只记录文件名和修改字段，不记录配置值。
 
-维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为普通人工目标状态。`download_pending` 必须指定 `download_method`；`download_blocked` 会清空 `download_method` 和外部下载 ID，并且必须填写原因；`downloaded` 还必须填写文件名，Web 会根据下载方式自动登记 `artifact_location`，但不会在此处检查文件是否存在，后续由 `validate` 模块统一校验；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定数据库中存在且不是当前档案自身的替代档案，不限制替代档案当时的状态；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。`force_delete_pending` 只允许从 `uploaded`、`completed`、`outdated` 或 `manual_review` 进入，必须填写原因并再次输入当前档案 ID；界面默认把原因写为 `outdated`，不要求已有 LANraragi archive ID。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
+维护结束时把 `state` 改为 `running`。详情页的人工控制对可人工设置的关键状态显示同一套入口，每次操作都会先打开确认弹窗；`downloading`、`validating`、`preparing`、`upload_pending`、`uploading`、`uploaded`、`cancel_requested`、`deferred` 和 `cancelled` 不作为普通人工目标状态。`details_pending` 必须指定 `download_method`（旧 API 的 `download_pending` 请求也会转入等待详情）；`download_blocked` 会清空 `download_method` 和外部下载 ID，并且必须填写原因；`downloaded` 还必须填写文件名，Web 会根据下载方式自动登记 `artifact_location`，但不会在此处检查文件是否存在，后续由 `validate` 模块统一校验；`completed` 必须填写 40 位 LANraragi archive ID；`outdated` 必须指定数据库中存在且不是当前档案自身的替代档案，不限制替代档案当时的状态；`unavailable`、`quarantined` 和 `deleted` 必须填写原因。`force_delete_pending` 只允许从 `uploaded`、`completed`、`outdated` 或 `manual_review` 进入，必须填写原因并再次输入当前档案 ID；界面默认把原因写为 `outdated`，不要求已有 LANraragi archive ID。其他目标状态的原因可选。所有成功调整都会以 `status_override` 写入该档案的审计轨迹。
 
-旧的 `/actions/*` 和 `/archive-confirmation` API 为兼容既有脚本继续保留。新的管理界面使用 `/status/{target_status}`；它只修改数据库状态和关联字段，不在 Web 请求中直接运行子模块。`force_delete_pending` 和 `rename_pending` 都被限制为管理网页发起，通用状态 API 不能直接设置；前者交给 `delete`，后者交给 `validate` 执行实体操作。Supervisor 后续根据 `download_pending`、`downloaded`、`rename_pending`、`upload_pending`、`uploaded`、`outdated` 和 `force_delete_pending` 等状态安排相应模块。
+旧的 `/actions/*` 和 `/archive-confirmation` API 为兼容既有脚本继续保留。新的管理界面使用 `/status/{target_status}`；它只修改数据库状态和关联字段，不在 Web 请求中直接运行子模块。`force_delete_pending` 和 `rename_pending` 都被限制为管理网页发起，通用状态 API 不能直接设置；前者交给 `delete`，后者交给 `validate` 执行实体操作。Supervisor 后续根据 `details_pending`、`download_pending`、`downloaded`、`rename_pending`、`upload_pending`、`uploaded`、`outdated` 和 `force_delete_pending` 等状态安排相应模块。
 
 数据库升级会自动执行 `CREATE EXTENSION IF NOT EXISTS pg_trgm`，并为几十万条记录创建标题、归档文件名搜索索引，以及档案队列和人工复核局部索引。正常情况下不需要单独在 Docker PostgreSQL 中启用扩展；只有 migration 账号缺少数据库 `CREATE` 权限时，才需要由 PostgreSQL 管理员提前启用。
 

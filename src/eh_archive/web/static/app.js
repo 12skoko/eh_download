@@ -607,7 +607,7 @@
     // 下拉框本身跟随所选目标状态的配色；未选择时恢复正文色。
     if (option?.dataset.tone) target.dataset.tone = option.dataset.tone;
     else delete target.dataset.tone;
-    const needsMethod = target.value === "download_pending";
+    const needsMethod = target.value === "details_pending";
     const needsReplacement = target.value === "outdated";
     form.querySelector("[data-bulk-method]").hidden = !needsMethod;
     form.elements.download_method.disabled = !needsMethod;

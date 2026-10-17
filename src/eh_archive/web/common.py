@@ -24,7 +24,7 @@ from ..db.models import MangaRecord, SystemControl
 PREFIX = ""
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-# 流水线分组：(键, 标题, 状态, 所属模块)。24 个状态全部出现且只出现一次。
+# 流水线分组：(键, 标题, 状态, 所属模块)。所有状态全部出现且只出现一次。
 # 模块只挂在主流程上；旁路分组只展示档案数量，特殊处理与档案删除归入“完成”。
 # 这两组只决定概览的排布，每组第一个状态在概览中显示为大字。
 PIPELINE = (
@@ -37,7 +37,7 @@ PIPELINE = (
     (
         "download",
         "下载",
-        ("download_pending", "downloading", "download_blocked"),
+        ("details_pending", "download_pending", "downloading", "download_blocked"),
         ("details", "torrent_download", "torrent_check", "direct_download"),
     ),
     (
@@ -62,7 +62,7 @@ SIDE_GROUPS = (
 # 档案页筛选弹层的分组独立于概览排布，保持原有分组。
 STATUS_GROUPS = (
     ("采集与筛选", ("deferred", "discovered")),
-    ("下载", ("download_pending", "downloading", "download_blocked")),
+    ("下载", ("details_pending", "download_pending", "downloading", "download_blocked")),
     ("校验与打包", ("downloaded", "rename_pending", "validating", "preparing")),
     ("上传", ("upload_pending", "uploading", "uploaded")),
     ("完成", ("completed",)),
@@ -116,6 +116,7 @@ _STATUS_TONES = {
     "deferred": "warn",
     "discovered": "warn",
     "download_pending": "warn",
+    "details_pending": "warn",
     "downloaded": "warn",
     "rename_pending": "warn",
     "upload_pending": "warn",
@@ -338,6 +339,7 @@ _STAGE_OF_STATUS = {
     "deferred": 0,
     "discovered": 0,
     "download_pending": 1,
+    "details_pending": 1,
     "downloading": 1,
     "download_blocked": 1,
     "downloaded": 2,

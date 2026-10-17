@@ -6,6 +6,7 @@ from enum import StrEnum
 class Status(StrEnum):
     DISCOVERED = "discovered"
     DEFERRED = "deferred"
+    DETAILS_PENDING = "details_pending"
     DOWNLOAD_PENDING = "download_pending"
     DOWNLOAD_BLOCKED = "download_blocked"
     DOWNLOADING = "downloading"
@@ -63,13 +64,23 @@ REPLACEMENT_DELETE_READY_STATUSES = frozenset(
 TRANSITIONS: dict[str, dict[str, str]] = {
     Status.DISCOVERED: {
         "defer": Status.DEFERRED,
-        "queue": Status.DOWNLOAD_PENDING,
+        "queue": Status.DETAILS_PENDING,
         "skip": Status.SKIPPED,
         "unavailable": Status.UNAVAILABLE,
         "review": Status.MANUAL_REVIEW,
     },
     Status.DEFERRED: {"resume": Status.DISCOVERED, "cancel": Status.CANCEL_REQUESTED},
+    Status.DETAILS_PENDING: {
+        "block": Status.DOWNLOAD_BLOCKED,
+        "details_ready": Status.DOWNLOAD_PENDING,
+        "details_retry": Status.DETAILS_PENDING,
+        "outdate": Status.OUTDATED,
+        "unavailable": Status.UNAVAILABLE,
+        "review": Status.MANUAL_REVIEW,
+        "cancel": Status.CANCEL_REQUESTED,
+    },
     Status.DOWNLOAD_PENDING: {
+        "require_details": Status.DETAILS_PENDING,
         "download_started": Status.DOWNLOADING,
         "details_retry": Status.DOWNLOAD_PENDING,
         "block": Status.DOWNLOAD_BLOCKED,
@@ -77,6 +88,7 @@ TRANSITIONS: dict[str, dict[str, str]] = {
         "cancel": Status.CANCEL_REQUESTED,
     },
     Status.DOWNLOADING: {
+        "require_details": Status.DETAILS_PENDING,
         "downloaded": Status.DOWNLOADED,
         "fallback": Status.DOWNLOAD_PENDING,
         "block": Status.DOWNLOAD_BLOCKED,
@@ -129,21 +141,21 @@ TRANSITIONS: dict[str, dict[str, str]] = {
         "review": Status.MANUAL_REVIEW,
     },
     Status.RENAME_PENDING: {"validate": Status.VALIDATING},
-    Status.SKIPPED: {"override": Status.DOWNLOAD_PENDING, "cancel": Status.CANCEL_REQUESTED},
+    Status.SKIPPED: {"override": Status.DETAILS_PENDING, "cancel": Status.CANCEL_REQUESTED},
     Status.DOWNLOAD_BLOCKED: {
-        "retry": Status.DOWNLOAD_PENDING,
+        "retry": Status.DETAILS_PENDING,
         "cancel": Status.CANCEL_REQUESTED,
     },
-    Status.UNAVAILABLE: {"retry": Status.DOWNLOAD_PENDING, "cancel": Status.CANCEL_REQUESTED},
+    Status.UNAVAILABLE: {"retry": Status.DETAILS_PENDING, "cancel": Status.CANCEL_REQUESTED},
     Status.QUARANTINED: {
-        "redownload": Status.DOWNLOAD_PENDING,
+        "redownload": Status.DETAILS_PENDING,
         "replace": Status.VALIDATING,
         "cancel": Status.CANCEL_REQUESTED,
     },
     Status.MANUAL_REVIEW: {
         "special_start": Status.SPECIAL_PROCESSING,
         "rename": Status.RENAME_PENDING,
-        "resume_download": Status.DOWNLOAD_PENDING,
+        "resume_download": Status.DETAILS_PENDING,
         "resume_validate": Status.VALIDATING,
         "resume_upload": Status.UPLOAD_PENDING,
         "resume_outdated": Status.OUTDATED,
@@ -152,7 +164,7 @@ TRANSITIONS: dict[str, dict[str, str]] = {
     },
     Status.FILTERED_OUT: {
         "rescreen": Status.DISCOVERED,
-        "override": Status.DOWNLOAD_PENDING,
+        "override": Status.DETAILS_PENDING,
         "cancel": Status.CANCEL_REQUESTED,
     },
     Status.SPECIAL_PROCESSING: {
@@ -161,7 +173,7 @@ TRANSITIONS: dict[str, dict[str, str]] = {
     },
     Status.CANCEL_REQUESTED: {"cancelled": Status.CANCELLED, "review": Status.MANUAL_REVIEW},
     Status.CANCELLED: {
-        "resume": Status.DOWNLOAD_PENDING,
+        "resume": Status.DETAILS_PENDING,
         "resume_validate": Status.VALIDATING,
         "resume_upload": Status.UPLOAD_PENDING,
         "resume_uploaded": Status.UPLOADED,

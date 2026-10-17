@@ -808,6 +808,7 @@ class Supervisor:
     def _complete_cancellations(self) -> None:
         with self.database.session() as session:
             ArchiveRepository(session).complete_cancellations(limit=self.config.batch_size)
+            ArchiveRepository(session).advance_replacement_chains(limit=self.config.batch_size)
 
 
 def main(argv: list[str] | None = None) -> int:

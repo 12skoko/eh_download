@@ -152,7 +152,7 @@ input:where([type="checkbox"], [type="radio"]):focus-visible { outline: 2px soli
 .metric-card:hover { color: var(--text); border-color: #aebec8; transform: translateY(-1px); }
 .metric-card.status-downloading, .metric-card.status-uploading, .metric-card.status-validating, .metric-card.status-preparing, .metric-card.status-special_processing { border-top-color: var(--blue); }
 .metric-card.status-downloaded, .metric-card.status-uploaded, .metric-card.status-completed { border-top-color: var(--green); }
-.metric-card.status-discovered, .metric-card.status-deferred, .metric-card.status-download_pending, .metric-card.status-upload_pending, .metric-card.status-rename_pending, .metric-card.status-force_delete_pending, .metric-card.status-outdated, .metric-card.status-cancel_requested { border-top-color: var(--amber); }
+.metric-card.status-discovered, .metric-card.status-deferred, .metric-card.status-details_pending, .metric-card.status-download_pending, .metric-card.status-upload_pending, .metric-card.status-rename_pending, .metric-card.status-force_delete_pending, .metric-card.status-outdated, .metric-card.status-cancel_requested { border-top-color: var(--amber); }
 
 .risk-confirmations { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .45rem .8rem; margin: 1rem 0; padding: .9rem; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); }
 .risk-confirmations p { grid-column: 1 / -1; margin: 0; }
