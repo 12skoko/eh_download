@@ -51,6 +51,21 @@ def retry_after(value, now):
         return now
 
 
+def is_ip_ban_page(html):
+    """EH can return its temporary IP ban notice with HTTP 200."""
+    if "banned" not in html.casefold():
+        return False
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    if soup.select_one("table.itg.glte") is not None:
+        return False
+    text = " ".join((soup.body or soup).get_text(" ", strip=True).split()).casefold()
+    return text.startswith(
+        "this ip address has been temporarily banned due to an excessive request rate"
+    )
+
+
 class FullCollectExecutor:
     def __init__(self, database, *, config_dir, claim):
         self.database, self.config_dir, self.claim = database, config_dir, claim
@@ -536,6 +551,15 @@ class FullCollectExecutor:
                 if status != 200:
                     return self._issue(f"http_{status}_requires_repair")
                 self._archive_page(response.text, data["cursor"], received_at)
+                if is_ip_ban_page(response.text):
+                    supplied = response.headers.get("Retry-After")
+                    if self._issue(
+                        "http_rate_limited",
+                        temporary=True,
+                        cooldown=retry_after(supplied, utcnow()) if supplied else None,
+                    ):
+                        return
+                    continue
                 try:
                     page = parse_collection_page(response.text, data["cursor"])
                     if self.context.stop_requested():
