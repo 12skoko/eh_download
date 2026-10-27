@@ -88,6 +88,7 @@ class RoleSession:
                     502,
                     503,
                     504,
+                    520,
                 }:
                     last_error = RuntimeError(
                         f"E-Hentai/ExHentai returned HTTP {response.status_code}"

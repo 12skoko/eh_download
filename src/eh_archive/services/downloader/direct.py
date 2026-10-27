@@ -118,7 +118,7 @@ class DirectDownloader:
                     raise ArchiveError(
                         "archive_unavailable", f"download returned HTTP {status}", ErrorClass.ITEM
                     )
-                if status in {408, 425, 429, 500, 502, 503, 504}:
+                if status in {408, 425, 429, 500, 502, 503, 504, 520}:
                     raise ArchiveError(
                         "download_http_temporary",
                         f"download returned HTTP {status}",

@@ -5,6 +5,8 @@ from enum import StrEnum
 from errno import EACCES, EDQUOT, ENOSPC, EROFS
 from typing import Any
 
+from requests.exceptions import HTTPError
+
 EH_SITE_UNAVAILABLE_EXIT_CODE = 4
 
 
@@ -49,7 +51,7 @@ def classify_exception(exc: BaseException) -> ErrorInfo:
     except ImportError:
         pass
     status = getattr(getattr(exc, "response", None), "status_code", None)
-    if status in {408, 425, 429, 500, 502, 503, 504}:
+    if status in {408, 425, 429, 500, 502, 503, 504, 520}:
         return ErrorInfo(
             "http_temporary",
             str(exc),
@@ -61,6 +63,9 @@ def classify_exception(exc: BaseException) -> ErrorInfo:
         return ErrorInfo("http_forbidden", str(exc), ErrorClass.SYSTEM, status_code=int(status))
     if status in {404, 410}:
         return ErrorInfo("http_unavailable", str(exc), ErrorClass.ITEM, status_code=int(status))
+    # Requests' HTTPError inherits from OSError; classify it before filesystem failures.
+    if isinstance(exc, HTTPError) or (status is not None and 400 <= status < 600):
+        return ErrorInfo("http_error", str(exc), ErrorClass.ITEM, status_code=status)
     name = type(exc).__name__.lower()
     if "proxy" in name:
         return ErrorInfo("proxy_unavailable", str(exc), ErrorClass.SYSTEM)
