@@ -59,6 +59,12 @@ def supervisor_v2_to_v3(document):
     document.pop("max_concurrency", None)
 
 
+def supervisor_v3_to_v4(document):
+    """Database downtime tolerance ends with the maintenance window."""
+    document.pop("maintenance_retry_seconds", None)
+    document.pop("maintenance_recovery_timeout_seconds", None)
+
+
 def video_archive_v1_to_v2(document):
     """Remove the unused automatic-entry setting; entry remains manual."""
     document.pop("auto_start", None)
@@ -76,7 +82,12 @@ def full_collect_v1_to_v2(document):
 # Keys are source versions; each function advances exactly one version.
 MIGRATIONS = {
     "app.toml": {0: establish_version, 1: app_v1_to_v2},
-    "supervisor.toml": {0: establish_version, 1: supervisor_v1_to_v2, 2: supervisor_v2_to_v3},
+    "supervisor.toml": {
+        0: establish_version,
+        1: supervisor_v1_to_v2,
+        2: supervisor_v2_to_v3,
+        3: supervisor_v3_to_v4,
+    },
     "crawl.toml": {0: establish_version},
     "secrets.toml": {0: establish_version},
     "special/video_archive.toml": {0: establish_version, 1: video_archive_v1_to_v2},

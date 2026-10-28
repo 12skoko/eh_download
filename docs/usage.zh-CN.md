@@ -310,7 +310,7 @@ latest = "https://e-hentai.org/?f_search=..."
 - `request_timeout_seconds`：普通网络请求的连接和读取超时，默认 30 秒；
 - `upload_timeout_seconds`：上传 ZIP 后等待 LANraragi 响应的超时，默认 1800 秒；上传连接超时仍使用 `request_timeout_seconds`；
 - `maintenance_start` / `maintenance_end`：每日维护窗口，按 `app.toml` 的时区解释，支持跨午夜；窗口内不启动新模块，普通 Worker 不再领取下一条任务，直链下载在检查点暂停；
-- 数据库不可用仅在维护窗口内可容忍；窗口结束后的首次数据库心跳失败即按事故处理。旧配置 `maintenance_retry_seconds`、`maintenance_recovery_timeout_seconds` 仍可读取，但不再生效；
+- 数据库不可用仅在维护窗口内可容忍；窗口结束后的首次数据库心跳失败即按事故处理。旧版本配置中的 `maintenance_retry_seconds`、`maintenance_recovery_timeout_seconds` 在读取时忽略，正式迁移到 `config_version = 4` 时备份并移除；版本 4 配置不再接受这两个字段；
 - `[modules]`：控制 Supervisor 是否自动调度各业务模块；
 - 普通模块每类最多运行一个 Worker；版本 3 已移除未使用的 `[max_concurrency]` 配置，升级时自动删除旧表；特殊处理的并发配置仍然有效；
 
@@ -804,6 +804,7 @@ Web 的“系统”页面提供服务控制、更新检查、更新执行和操�
 
 `eharchive update check` 检查登记的 Git 分支，`eharchive update apply` 提交更新。
 更新结束后，原来运行的服务恢复运行，原来停止的保持停止。
+升级预检只在临时副本中验证配置迁移；数据库升级成功后，新版本的 systemd 刷新子进程使用现有配置迁移机制备份并发布实际配置，再由升级器恢复服务并检查健康状态。这样仍在运行的旧版本升级器也不会在恢复服务时读到已经废弃的配置字段。Web / Supervisor 启动仍会执行同一套幂等迁移。
 drain 可以取消，但没有强制停止并重启功能。迁移失败或 Web 无法启动时，
 通过 `eharchive operation show <操作ID>`、`journalctl` 和操作日志手工排查。
 

@@ -22,10 +22,6 @@ def validate_structure(filename: str, values: dict) -> None:
         schema.update(
             maintenance_start="",
             maintenance_end="",
-            # Retired options remain valid in existing files, but no longer
-            # extend database downtime tolerance beyond the maintenance window.
-            maintenance_retry_seconds=30,
-            maintenance_recovery_timeout_seconds=900,
             collect_initial_delay_seconds=60,
             collect_interval_seconds=10800,
             torrent_poll_seconds=60,

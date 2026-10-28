@@ -18,6 +18,7 @@ from .config import (
     load_management_config,
     write_management_config,
 )
+from .config_migrations import migrate_configuration
 from .lock import deployment_lock
 from .state import atomic_write
 from .systemd import CommandRunner, Systemd, require_linux_root
@@ -107,6 +108,20 @@ def repair(
         runner.run(["systemctl", "restart", UPDATE_CHECK_TIMER])
     else:
         runner.run(["systemctl", "disable", "--now", UPDATE_CHECK_TIMER])
+
+
+def refresh_after_update(config: ManagementConfig, management_path: Path = DEFAULT_CONFIG) -> None:
+    """Run in the new interpreter before an old executor restores services.
+
+    Old executors already invoke this module after database upgrade. Publish
+    the versioned configuration migration here so their subsequent load_config
+    calls cannot see retired keys through an outdated in-memory validator.
+    Service startup retains its own idempotent migration as well.
+    """
+    repair(config, management_path)
+    changed = migrate_configuration(config.config_dir)
+    if changed:
+        print("Configuration migrated before service restoration: " + ", ".join(changed))
 
 
 def install(config_dir: str | Path, *, start=False, management_path: Path = DEFAULT_CONFIG):
@@ -211,4 +226,4 @@ if __name__ == "__main__":
     parser.add_argument("--management-config", type=Path, default=DEFAULT_CONFIG)
     args = parser.parse_args()
     # Internal update step: the parent Executor owns the deployment lock.
-    repair(load_management_config(args.management_config), args.management_config)
+    refresh_after_update(load_management_config(args.management_config), args.management_config)

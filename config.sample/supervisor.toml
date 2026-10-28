@@ -1,4 +1,4 @@
-config_version = 3
+config_version = 4
 poll_seconds = 5
 health_check_interval_seconds = 60
 batch_size = 10
@@ -13,8 +13,8 @@ shutdown_grace_seconds = 30
 # Optional daily maintenance window, interpreted in app.toml's timezone.
 # maintenance_start = "05:30"
 # maintenance_end = "06:30"
-# Database downtime is tolerated only inside the window. The old
-# maintenance_retry_seconds / maintenance_recovery_timeout_seconds are ignored.
+# Database downtime is tolerated only inside the window. Configuration migration
+# to version 4 removes maintenance_retry_seconds / maintenance_recovery_timeout_seconds.
 
 # Ordinary timed modules use the same scheduler. No work is required to start.
 # Each interval is measured from the actual start; overlapping runs are skipped.

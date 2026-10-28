@@ -54,6 +54,13 @@ def effective_values(filename: str, overrides: dict) -> dict:
         version = overrides.get("config_version", 0)
         if type(version) is int and version < 3:
             overrides = {key: value for key, value in overrides.items() if key != "max_concurrency"}
+        # Update-time CLI readers must accept old files without publishing a
+        # migration. Version 4 files must not contain these retired options.
+        if type(version) is int and version < 4:
+            overrides = {
+                key: value for key, value in overrides.items()
+                if key not in {"maintenance_retry_seconds", "maintenance_recovery_timeout_seconds"}
+            }
         # Until a service has migrated old files, CLI readers still preserve
         # the legacy timings instead of hiding them behind new defaults.
         for old, module, field in (
