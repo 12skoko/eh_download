@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ...domain.errors import ArchiveError, ErrorClass, classify_exception
+from ...domain.maintenance import MaintenancePaused
 
 
 class DownloadCancelled(ArchiveError):
@@ -66,6 +68,7 @@ class DirectDownloader:
         started: Callable[[int, int | None], None] | None = None,
         progress: Callable[[int], None] | None = None,
         checkpoint: Callable[[], None] | None = None,
+        resume_identity: str | None = None,
     ) -> DownloadResult:
         if self.session is None:
             import requests
@@ -76,6 +79,7 @@ class DirectDownloader:
         destination = Path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         part = destination.with_name(destination.name + ".part")
+        metadata_path = part.with_name(part.name + ".json")
         last_error: Exception | None = None
         network_failure = False
         for attempt in range(1, self.retries + 1):
@@ -83,6 +87,20 @@ class DirectDownloader:
                 checkpoint()
             response = None
             existing = part.stat().st_size if part.exists() else 0
+            metadata = {}
+            if resume_identity is not None and existing:
+                try:
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                except (FileNotFoundError, ValueError):
+                    metadata = {}
+                if (
+                    not isinstance(metadata, dict)
+                    or metadata.get("identity") != resume_identity
+                    or not metadata.get("validator")
+                ):
+                    part.unlink(missing_ok=True)
+                    metadata_path.unlink(missing_ok=True)
+                    existing, metadata = 0, {}
             if expected_size and existing >= expected_size:
                 if existing == expected_size:
                     if started:
@@ -90,12 +108,15 @@ class DirectDownloader:
                     if progress:
                         progress(existing)
                     os.replace(part, destination)
+                    metadata_path.unlink(missing_ok=True)
                     return DownloadResult(destination, existing, True, attempt - 1)
                 part.unlink(missing_ok=True)
                 existing = 0
             request_headers = dict(headers or {})
             if existing:
                 request_headers["Range"] = f"bytes={existing}-"
+                if resume_identity is not None:
+                    request_headers["If-Range"] = metadata["validator"]
             try:
                 request_kwargs = {
                     "headers": request_headers,
@@ -141,6 +162,27 @@ class DirectDownloader:
                     )
                 response.raise_for_status()
                 resumed = existing > 0 and status == 206
+                if resumed and resume_identity is not None:
+                    content_range = re.fullmatch(
+                        r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("content-range", "")
+                    )
+                    validator = response.headers.get(metadata.get("validator_header", "etag"))
+                    if (
+                        content_range is None
+                        or int(content_range[1]) != existing
+                        or int(content_range[2]) < existing
+                        or int(content_range[2]) >= int(content_range[3])
+                        or validator != metadata.get("validator")
+                        or metadata.get("total") != int(content_range[3])
+                    ):
+                        part.unlink(missing_ok=True)
+                        metadata_path.unlink(missing_ok=True)
+                        raise ArchiveError(
+                            "download_resume_rejected",
+                            "resume response does not match the saved archive",
+                            ErrorClass.TEMPORARY,
+                            retryable=True,
+                        )
                 if existing and not resumed:
                     existing = 0
                     part.unlink(missing_ok=True)
@@ -153,7 +195,22 @@ class DirectDownloader:
                     if expected_response
                     else None
                 )
+                if resume_identity is not None:
+                    etag = response.headers.get("etag")
+                    strong_etag = etag and not etag.startswith("W/")
+                    validator_header = "etag" if strong_etag else "last-modified"
+                    metadata_path.write_text(
+                        json.dumps({
+                            "identity": resume_identity,
+                            "validator_header": validator_header,
+                            "validator": response.headers.get(validator_header),
+                            "total": expected_total,
+                        }),
+                        encoding="utf-8",
+                    )
                 written = existing
+                if checkpoint and resume_identity is not None:
+                    checkpoint()
                 if started:
                     started(written, expected_total)
                 if progress:
@@ -182,8 +239,13 @@ class DirectDownloader:
                         retryable=True,
                     )
                 os.replace(part, destination)
+                metadata_path.unlink(missing_ok=True)
                 return DownloadResult(destination, written, resumed, attempt)
+            except MaintenancePaused:
+                raise
             except ArchiveError as exc:
+                if exc.info.category == ErrorClass.SYSTEM:
+                    raise
                 if checkpoint:
                     checkpoint()
                 if not exc.info.retryable or attempt >= self.retries:
@@ -198,11 +260,11 @@ class DirectDownloader:
                 network_failure = True
                 time.sleep(self.backoff ** (attempt - 1) + random.random() * self.jitter)
             except Exception as exc:
-                if checkpoint:
-                    checkpoint()
                 info = classify_exception(exc)
                 if info.category == ErrorClass.SYSTEM:
                     raise ArchiveError(info.code, info.message, ErrorClass.SYSTEM) from exc
+                if checkpoint:
+                    checkpoint()
                 last_error = exc
                 network_failure = True
                 if attempt >= self.retries:

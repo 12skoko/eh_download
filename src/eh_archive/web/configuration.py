@@ -195,8 +195,6 @@ SUPERVISOR_FIELDS = (
     FieldSpec(("shutdown_grace_seconds",), "停止宽限时间（秒）", "float", minimum=0),
     FieldSpec(("maintenance_start",), "维护开始时间", "time", help="留空表示不启用维护窗口。"),
     FieldSpec(("maintenance_end",), "维护结束时间", "time", help="开始和结束必须同时填写。"),
-    FieldSpec(("maintenance_retry_seconds",), "维护重试间隔（秒）", "float", minimum=0),
-    FieldSpec(("maintenance_recovery_timeout_seconds",), "维护恢复超时（秒）", "float", minimum=0),
     FieldSpec(("special_processing", "enabled"), "启用特殊处理调度", "bool"),
     FieldSpec(("special_processing", "poll_seconds"), "特殊任务轮询间隔（秒）", "float", minimum=0),
     FieldSpec(

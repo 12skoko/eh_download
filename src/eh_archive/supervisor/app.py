@@ -16,11 +16,13 @@ from ..db import ArchiveRepository, Database
 from ..db.models import SystemControl
 from ..db.repository import utcnow
 from ..domain.errors import (
+    DATABASE_UNAVAILABLE_EXIT_CODE,
     EH_SITE_UNAVAILABLE_EXIT_CODE,
-    ArchiveError,
+    MAINTENANCE_PAUSED_EXIT_CODE,
     ErrorClass,
     classify_exception,
 )
+from ..domain.maintenance import in_maintenance_window
 from ..logging import (
     MAIN_LOG_ENV,
     SUPERVISOR_RUN_ID_ENV,
@@ -86,8 +88,6 @@ class Supervisor:
         self.health_checks_enabled = True
         self.maintenance_active = False
         self.maintenance_idle_logged = False
-        self.maintenance_next_probe_at = 0.0
-        self.maintenance_recovery_started_at: float | None = None
         self.timezone = ZoneInfo(self.app.timezone)
         disabled = [name for name, enabled in self.config.modules.items() if not enabled]
         if disabled:
@@ -265,8 +265,6 @@ class Supervisor:
             if not self.maintenance_active:
                 self.maintenance_active = True
                 self.maintenance_idle_logged = False
-                self.maintenance_next_probe_at = 0.0
-                self.maintenance_recovery_started_at = None
                 log.info(
                     "maintenance window started: start=%s end=%s timezone=%s running_children=%s",
                     self.config.maintenance_start.isoformat(timespec="minutes"),
@@ -283,55 +281,16 @@ class Supervisor:
             return False, False
 
         self._reap_children()
-        now = time.monotonic()
-        if self.maintenance_recovery_started_at is None:
-            self.maintenance_recovery_started_at = now
-        if now < self.maintenance_next_probe_at:
-            return True, False
-        try:
-            self._heartbeat()
-        except Exception as exc:
-            info = classify_exception(exc)
-            if info.code != "database_unavailable":
-                raise
-            elapsed = now - self.maintenance_recovery_started_at
-            if elapsed >= self.config.maintenance_recovery_timeout_seconds:
-                raise ArchiveError(
-                    "database_unavailable",
-                    "database remained unavailable for "
-                    f"{self.config.maintenance_recovery_timeout_seconds:g} seconds after "
-                    "the maintenance window ended",
-                    ErrorClass.SYSTEM,
-                ) from exc
-            self.maintenance_next_probe_at = now + self.config.maintenance_retry_seconds
-            log.warning(
-                "maintenance window ended but database is unavailable; retrying in %s seconds "
-                "elapsed=%s timeout=%s",
-                self.config.maintenance_retry_seconds,
-                round(elapsed, 1),
-                self.config.maintenance_recovery_timeout_seconds,
-            )
-            return True, False
+        # The tolerance ends with the window. A failed heartbeat now is an incident.
+        self._heartbeat()
 
         self.maintenance_active = False
         self.maintenance_idle_logged = False
-        self.maintenance_next_probe_at = 0.0
-        self.maintenance_recovery_started_at = None
         log.info("maintenance window ended: database available; scheduling resumed")
         return False, True
 
     def _in_maintenance_window(self, now: datetime | None = None) -> bool:
-        start = self.config.maintenance_start
-        end = self.config.maintenance_end
-        if start is None or end is None:
-            return False
-        local_now = (
-            now.astimezone(self.timezone) if now is not None else datetime.now(self.timezone)
-        )
-        current = local_now.time().replace(tzinfo=None)
-        if start < end:
-            return start <= current < end
-        return current >= start or current < end
+        return in_maintenance_window(self.config, self.timezone, now)
 
     def run_forever(self) -> int:
         signal.signal(signal.SIGINT, self.stop)
@@ -353,6 +312,10 @@ class Supervisor:
                         break
                 except Exception as exc:
                     info = classify_exception(exc)
+                    if info.code == "database_unavailable" and self._in_maintenance_window():
+                        log.warning("database unavailable during maintenance; waiting for window end")
+                        time.sleep(self.config.poll_seconds)
+                        continue
                     log.exception(
                         "supervisor tick failed; entering drain: code=%s category=%s",
                         info.code,
@@ -546,6 +509,18 @@ class Supervisor:
                         time.monotonic() + self.config.module_restart_delay_seconds
                     )
                 if self.stopping or child.returncode in (0, None):
+                    continue
+                if child.returncode == MAINTENANCE_PAUSED_EXIT_CODE:
+                    log.info("submodule paused for maintenance: operation=%s", operation)
+                    continue
+                if child.returncode == DATABASE_UNAVAILABLE_EXIT_CODE:
+                    if self._in_maintenance_window():
+                        log.warning(
+                            "submodule database unavailable during maintenance: operation=%s",
+                            operation,
+                        )
+                        continue
+                    self._enter_draining(operation, 2, "database unavailable outside maintenance")
                     continue
                 if child.returncode == TEMPORARY_CHILD_EXIT_CODE:
                     log.warning(

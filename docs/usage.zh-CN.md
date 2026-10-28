@@ -309,9 +309,8 @@ latest = "https://e-hentai.org/?f_search=..."
 - `module_restart_delay_seconds`：同一个普通模块的子进程批次结束后，启动下一批前的等待时间，默认 5 秒；
 - `request_timeout_seconds`：普通网络请求的连接和读取超时，默认 30 秒；
 - `upload_timeout_seconds`：上传 ZIP 后等待 LANraragi 响应的超时，默认 1800 秒；上传连接超时仍使用 `request_timeout_seconds`；
-- `maintenance_start` / `maintenance_end`：每日维护窗口，按 `app.toml` 的时区解释；窗口内不启动新模块，也不访问数据库，现有子进程自然结束；
-- `maintenance_retry_seconds`：维护结束后数据库尚未恢复时的重新连接间隔，默认 30 秒；
-- `maintenance_recovery_timeout_seconds`：维护结束后等待数据库恢复的最长时间，默认 900 秒；超时后按数据库严重故障退出；
+- `maintenance_start` / `maintenance_end`：每日维护窗口，按 `app.toml` 的时区解释，支持跨午夜；窗口内不启动新模块，普通 Worker 不再领取下一条任务，直链下载在检查点暂停；
+- 数据库不可用仅在维护窗口内可容忍；窗口结束后的首次数据库心跳失败即按事故处理。旧配置 `maintenance_retry_seconds`、`maintenance_recovery_timeout_seconds` 仍可读取，但不再生效；
 - `[modules]`：控制 Supervisor 是否自动调度各业务模块；
 - 普通模块每类最多运行一个 Worker；版本 3 已移除未使用的 `[max_concurrency]` 配置，升级时自动删除旧表；特殊处理的并发配置仍然有效；
 
@@ -322,11 +321,13 @@ latest = "https://e-hentai.org/?f_search=..."
 ```toml
 maintenance_start = "05:30"
 maintenance_end = "06:30"
-maintenance_retry_seconds = 30
-maintenance_recovery_timeout_seconds = 900
 ```
 
-Supervisor 会在 05:30 停止启动新子模块，等待已有子模块自然结束，然后保持主进程运行且跳过数据库心跳。06:30 后如果数据库仍未恢复，Supervisor 会每 30 秒重试；15 分钟内连接成功就自动恢复正常调度，超过 15 分钟仍未恢复则按 `database_unavailable` 严重错误退出。维护开始时间应早于实际关机时间，给正在运行的子模块留出完成时间。
+Supervisor 会在 05:30 停止启动新子模块，并跳过常规数据库心跳；直链 Worker 自行按相同时间规则在检查点中断传输，关闭响应并保留 `.part`，数据库可用时释放本次任务租约。维护暂停使用独立退出码，不触发 Supervisor draining，其他严重故障仍按原规则处理。已有 HTTP 读取可能等待至当前读取超时才进入检查点，因此维护开始时间应早于实际关机时间。
+
+如果暂停收尾时数据库已不可用，Worker 回滚执行事务，保留原任务身份并等待窗口结束，再用新事务核对租约、代次和取消状态。它只收口自己仍持有的任务，不清除其他执行者的租约；外部上传、删除或文件发布结果不确定时转人工复核。06:30 后数据库仍不可用即按事故处理，不再额外等待 15 分钟。
+
+数据库恢复后，新的直链 attempt 只接续上一条已完成维护收尾、且产物代次相同的 attempt 的断点文件。重新获取下载地址后，核对归档身份、HTTP ETag / Last-Modified 和 Content-Range；缺少可靠校验信息或远端文件已变化时从头下载。用户取消仍按取消规则清理当前任务的临时文件。
 
 归档账号没有下载额度、只允许 torrent 下载时，可以明确关闭备用下载路线：
 

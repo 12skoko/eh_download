@@ -130,6 +130,7 @@ class SupervisorConfig:
     shutdown_grace_seconds: float = 30.0
     maintenance_start: clock_time | None = None
     maintenance_end: clock_time | None = None
+    # Read legacy configuration without extending tolerance beyond the window.
     maintenance_retry_seconds: float = 30.0
     maintenance_recovery_timeout_seconds: float = 900.0
     health_check_interval_seconds: float = 60.0

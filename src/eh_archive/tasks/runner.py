@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -14,6 +15,8 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from ..config import load_config
 from ..db import ArchiveRepository, Database, JobAttempt, MangaRecord
 from ..db.repository import ClaimedAttempt, utcnow
@@ -24,6 +27,7 @@ from ..domain.errors import (
     classify_exception,
     task_exit_code,
 )
+from ..domain.maintenance import MaintenancePaused, check_maintenance, in_maintenance_window
 from ..domain.states import REPLACEMENT_DELETE_READY_STATUSES, Status
 from ..integrations.http import RoleSession
 from ..logging import (
@@ -212,6 +216,87 @@ class TaskExecutor:
         return session
 
     def run_once(self, operation: str, *, manga_id: str | None = None) -> bool:
+        check_maintenance(self.supervisor, self.app.timezone)
+        self.current_claim = None
+        try:
+            return self._run_once(operation, manga_id=manga_id)
+        except Exception as exc:
+            info = classify_exception(exc)
+            if not isinstance(exc, MaintenancePaused) and not (
+                info.code == "database_unavailable"
+                and in_maintenance_window(self.supervisor, self.app.timezone)
+            ):
+                raise
+            if self.current_claim is not None:
+                self._settle_maintenance_attempt(self.current_claim)
+            raise MaintenancePaused() from exc
+
+    def _settle_maintenance_attempt(self, claim: ClaimedAttempt) -> None:
+        """Only the stopped executor may settle its own fenced attempt."""
+        while True:
+            try:
+                with self.database.session() as session:
+                    repository = ArchiveRepository(session, run_id=self.run_id)
+                    session.get(MangaRecord, claim.manga_id, with_for_update=True)
+                    record = repository.fenced(claim, owner=self.owner, require_generation=True)
+                    attempt = session.get(JobAttempt, claim.attempt_id)
+                    if record is None or attempt is None or attempt.status != "running":
+                        return
+                    if record.status == Status.CANCEL_REQUESTED.value:
+                        if record.download_method == "direct":
+                            paths = self.paths.for_attempt(
+                                manga_id=claim.manga_id,
+                                generation=(claim.artifact_generation or 0) + 1,
+                                attempt_id=claim.attempt_id,
+                                location="direct_download",
+                            )
+                            for suffix in ("", ".part", ".part.json"):
+                                paths.temporary.with_name(paths.temporary.name + suffix).unlink(
+                                    missing_ok=True
+                                )
+                        repository.finish(claim, owner=self.owner, event="cancelled")
+                        return
+                    direct = (
+                        claim.operation == "direct_download"
+                        and (record.download_method or self.app.fallback_method) == "direct"
+                        and not record.external_download_id
+                    )
+                    if direct:
+                        info = _info(record)
+                        direct = info is not None and not self.paths.resolve(
+                            "direct_download", direct_archive_filename(record.manga_id, info.name)
+                        ).exists()
+                    if direct or attempt.external_effect_started_at is None:
+                        self._handle_system_error(repository, claim, MaintenancePaused().info)
+                        # Maintenance does not consume the ordinary retry budget.
+                        record.attempt_count = max(0, record.attempt_count - 1)
+                        record.next_retry_at = None
+                    else:
+                        # Upload/delete or a published file may have an uncommitted effect.
+                        repository.finish(
+                            claim,
+                            owner=self.owner,
+                            status=Status.MANUAL_REVIEW,
+                            error_code="maintenance_interrupted",
+                            error_detail="维护期间数据库断开，外部操作结果需要人工核对",
+                        )
+                return
+            except Exception as exc:
+                if classify_exception(exc).code != "database_unavailable" or not (
+                    in_maintenance_window(self.supervisor, self.app.timezone)
+                ):
+                    raise
+                log.warning(
+                    "maintenance settlement deferred until window end: manga_id=%s attempt_id=%s",
+                    claim.manga_id,
+                    claim.attempt_id,
+                )
+                # Do not repeatedly query the offline database. Recheck ownership in a new
+                # transaction after the window; a different owner is never overwritten.
+                while in_maintenance_window(self.supervisor, self.app.timezone):
+                    time.sleep(min(5.0, max(0.1, self.supervisor.poll_seconds)))
+
+    def _run_once(self, operation: str, *, manga_id: str | None = None) -> bool:
         with self.database.session() as session:
             repository = ArchiveRepository(session, run_id=self.run_id)
             claim = repository.claim_next(
@@ -220,6 +305,7 @@ class TaskExecutor:
                 lease_seconds=self.supervisor.lease_seconds,
                 **({"manga_id": manga_id} if manga_id is not None else {}),
             )
+            self.current_claim = claim
         if claim is None:
             return False
         self.current_claim = claim
@@ -464,6 +550,7 @@ class TaskExecutor:
         )
 
     def run_batch(self, operation: str, limit: int | None = None) -> int:
+        check_maintenance(self.supervisor, self.app.timezone)
         count = 0
         if limit is not None and limit < 0:
             raise ValueError("limit must be non-negative")
@@ -1151,9 +1238,11 @@ class TaskExecutor:
         )
         destination = paths.temporary
         self._begin_external_effect(repository, claim)
+        self._adopt_maintenance_partial(repository, claim, destination, generation)
         last_check = float("-inf")
 
         def checkpoint() -> None:
+            check_maintenance(self.supervisor, self.app.timezone)
             nonlocal last_check
             now = time.monotonic()
             if now - last_check < 1.0:
@@ -1183,7 +1272,14 @@ class TaskExecutor:
                 started=self._start_direct_report_transfer,
                 progress=self._update_direct_report_progress,
                 checkpoint=checkpoint,
+                resume_identity=hashlib.sha256(
+                    json.dumps(
+                        [record.manga_id, generation, info.archive_url, info.name, info.pages],
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                ).hexdigest(),
             )
+            checkpoint()
             self._update_direct_report_progress(download_result.size, force=True)
             fingerprint = validate_artifact(destination, expected_kind="zip")
             # Serialize promotion with Web cancellation so an accepted request
@@ -1213,7 +1309,11 @@ class TaskExecutor:
         except DownloadCancelled as exc:
             # Only remove the files owned by this attempt, never registered artifacts.
             cleanup_errors = []
-            for temporary in (destination, destination.with_name(destination.name + ".part")):
+            for temporary in (
+                destination,
+                destination.with_name(destination.name + ".part"),
+                destination.with_name(destination.name + ".part.json"),
+            ):
                 try:
                     temporary.unlink(missing_ok=True)
                 except OSError as cleanup_error:
@@ -1226,6 +1326,53 @@ class TaskExecutor:
                 error_detail=str(exc)
                 + ("；临时文件清理失败：" + "; ".join(cleanup_errors) if cleanup_errors else ""),
             )
+
+    def _adopt_maintenance_partial(
+        self,
+        repository: ArchiveRepository,
+        claim: ClaimedAttempt,
+        destination: Path,
+        generation: int,
+    ) -> None:
+        previous = repository.session.scalar(
+            select(JobAttempt)
+            .where(
+                JobAttempt.manga_id == claim.manga_id,
+                JobAttempt.operation == claim.operation,
+                JobAttempt.id < claim.attempt_id,
+            )
+            .order_by(JobAttempt.id.desc())
+            .limit(1)
+        )
+        if (
+            previous is None
+            or previous.status != "failed"
+            or previous.error_code != "maintenance_paused"
+            or previous.artifact_generation != claim.artifact_generation
+        ):
+            return
+        repository.session.get(MangaRecord, claim.manga_id, with_for_update=True)
+        if repository.fenced(claim, owner=self.owner, require_generation=True) is None:
+            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.SYSTEM)
+        source = self.paths.for_attempt(
+            manga_id=claim.manga_id,
+            generation=generation,
+            attempt_id=previous.id,
+            location="direct_download",
+        ).temporary
+        source_part = source.with_name(source.name + ".part")
+        source_metadata = source.with_name(source.name + ".part.json")
+        target_part = destination.with_name(destination.name + ".part")
+        if (
+            source_part.is_file()
+            and source_metadata.is_file()
+            and not source_part.is_symlink()
+            and not source_metadata.is_symlink()
+            and not target_part.exists()
+        ):
+            os.replace(source_part, target_part)
+            os.replace(source_metadata, destination.with_name(destination.name + ".part.json"))
+        repository.session.commit()
 
     def _start_optional_download(
         self,
@@ -1877,6 +2024,9 @@ class TaskExecutor:
         self, repository: ArchiveRepository, claim: ClaimedAttempt, exc: Exception
     ) -> None:
         info = classify_exception(exc)
+        if isinstance(exc, MaintenancePaused) or info.code == "database_unavailable":
+            # Roll back the execution transaction before using a fresh settlement session.
+            raise exc
         if claim.operation == "details" and info.code == "details_page_structure_invalid":
             repository.finish(claim, owner=self.owner, event="review",
                               error_code=info.code, error_detail=info.message)
@@ -2322,6 +2472,10 @@ def run_records(
         executor.run_batch(operation, limit)
     except Exception as exc:
         error = classify_exception(exc)
+        if isinstance(exc, MaintenancePaused):
+            report.finish({"status": "maintenance_paused", "claimed": len(executor.results)})
+            log.info("task paused for maintenance: operation=%s run_id=%s", operation, run_id)
+            return task_exit_code(error)
         current = executor.current_claim
         report.fatal(
             exc,

@@ -7,6 +7,7 @@ from pathlib import Path
 from ..config import load_config
 from ..db import ArchiveRepository, Database
 from ..domain.errors import classify_exception, task_exit_code
+from ..domain.maintenance import MaintenancePaused, check_maintenance
 from ..logging import RunReport, clean_report_value, configure_logging, get_logger
 from ..services.collector import CollectionResult, Collector
 
@@ -68,7 +69,7 @@ def run(
     operation: str = "collect",
     limit: int | None = None,
 ) -> int:
-    app, _, crawl, secrets = load_config(config_dir)
+    app, supervisor, crawl, secrets = load_config(config_dir)
     run_id = str(uuid.uuid4())
     configure_logging(
         app.log_level,
@@ -85,6 +86,7 @@ def run(
     source_results: list[tuple[str, CollectionResult]] = []
     current_source: str | None = None
     try:
+        check_maintenance(supervisor, app.timezone)
         with database.session() as session:
             repository = ArchiveRepository(session)
             collect_end = (
@@ -124,6 +126,7 @@ def run(
                 "collect_archive_dir": collector.archive_dir or "disabled",
             })
             for url in collection_urls:
+                check_maintenance(supervisor, app.timezone)
                 current_source = url
                 result = collector.collect_url(
                     url, source="automatic", actor="collector", end=collect_end
@@ -132,6 +135,9 @@ def run(
             repository.finish_collect_run("succeeded", detail={"end": collect_end})
     except Exception as exc:
         error = classify_exception(exc)
+        if isinstance(exc, MaintenancePaused):
+            report.finish({"status": "maintenance_paused"})
+            return task_exit_code(error)
         report.fatal(
             exc,
             context={"current_source": current_source or "not_started", "database": "rolled_back"},

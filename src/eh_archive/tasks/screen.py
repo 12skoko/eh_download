@@ -8,6 +8,7 @@ from pathlib import Path
 from ..config import load_config
 from ..db import ArchiveRepository, Database
 from ..domain.errors import classify_exception, task_exit_code
+from ..domain.maintenance import MaintenancePaused, check_maintenance
 from ..logging import RunReport, clean_report_value, configure_logging, get_logger
 from ..services.screening import ScreenDecision, ScreeningService
 
@@ -68,6 +69,7 @@ def run(
     report = RunReport(app.log_dir, "screen", timezone=app.timezone, run_id=run_id)
     report.fields({"batch_limit": batch_limit})
     try:
+        check_maintenance(supervisor, app.timezone)
         with Database(app.database_url).session() as session:
             result = ScreeningService(
                 ArchiveRepository(session, run_id=run_id),
@@ -75,6 +77,9 @@ def run(
             ).run_batch(batch_limit)
     except Exception as exc:
         error = classify_exception(exc)
+        if isinstance(exc, MaintenancePaused):
+            report.finish({"status": "maintenance_paused"})
+            return task_exit_code(error)
         report.fatal(exc, result={"processed": 0})
         log.exception("screen submodule failed: run_id=%s", run_id)
         return task_exit_code(error)

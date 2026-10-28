@@ -13,8 +13,8 @@ shutdown_grace_seconds = 30
 # Optional daily maintenance window, interpreted in app.toml's timezone.
 # maintenance_start = "05:30"
 # maintenance_end = "06:30"
-maintenance_retry_seconds = 30
-maintenance_recovery_timeout_seconds = 900
+# Database downtime is tolerated only inside the window. The old
+# maintenance_retry_seconds / maintenance_recovery_timeout_seconds are ignored.
 
 # Ordinary timed modules use the same scheduler. No work is required to start.
 # Each interval is measured from the actual start; overlapping runs are skipped.

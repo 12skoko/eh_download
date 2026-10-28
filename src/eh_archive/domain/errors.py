@@ -8,6 +8,8 @@ from typing import Any
 from requests.exceptions import HTTPError
 
 EH_SITE_UNAVAILABLE_EXIT_CODE = 4
+MAINTENANCE_PAUSED_EXIT_CODE = 5
+DATABASE_UNAVAILABLE_EXIT_CODE = 6
 
 
 class ErrorClass(StrEnum):
@@ -46,8 +48,21 @@ def classify_exception(exc: BaseException) -> ErrorInfo:
     try:
         from sqlalchemy.exc import DBAPIError, DisconnectionError, OperationalError
 
-        if isinstance(exc, (DBAPIError, DisconnectionError, OperationalError)):
+        if isinstance(exc, DisconnectionError):
             return ErrorInfo("database_unavailable", str(exc), ErrorClass.SYSTEM)
+        if isinstance(exc, DBAPIError):
+            sqlstate = getattr(exc.orig, "sqlstate", None)
+            unavailable = (
+                exc.connection_invalidated
+                or (isinstance(exc, OperationalError) and sqlstate is None)
+                or (sqlstate is not None and sqlstate.startswith("08"))
+                or sqlstate in {"57P01", "57P02", "57P03", "53300"}
+            )
+            return ErrorInfo(
+                "database_unavailable" if unavailable else "database_error",
+                str(exc),
+                ErrorClass.SYSTEM,
+            )
     except ImportError:
         pass
     status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -102,4 +117,8 @@ def task_exit_code(error: ErrorInfo) -> int:
     """One exit-code contract for every ordinary module."""
     if error.code == "eh_site_unavailable":
         return EH_SITE_UNAVAILABLE_EXIT_CODE
+    if error.code == "maintenance_paused":
+        return MAINTENANCE_PAUSED_EXIT_CODE
+    if error.code == "database_unavailable":
+        return DATABASE_UNAVAILABLE_EXIT_CODE
     return {ErrorClass.SYSTEM: 2, ErrorClass.TEMPORARY: 3, ErrorClass.ITEM: 1}[error.category]
