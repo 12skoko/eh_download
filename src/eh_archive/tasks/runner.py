@@ -2029,7 +2029,7 @@ class TaskExecutor:
             raise exc
         if claim.operation == "torrent_download" and info.code == "torrent_submit_conflict":
             repository.finish(
-                claim, owner=self.owner, event="review",
+                claim, owner=self.owner, status=Status.MANUAL_REVIEW,
                 error_code=info.code, error_detail=info.message,
             )
             log.warning(
