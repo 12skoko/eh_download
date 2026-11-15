@@ -20,7 +20,7 @@ from ....config.loader import SessionRole
 from ....db.models import SpecialJob, SpecialWorkflow
 from ....db.repository import ArchiveRepository, utcnow
 from ....domain.errors import ArchiveError
-from ....integrations.http import RoleSession
+from ....integrations.http import RoleSession, is_ip_ban_page
 from ....services.collector.archive import BatchPageArchive
 from ....services.collector.service import manga_record, parse_collection_page
 from ...core.contracts import OperationResult
@@ -49,21 +49,6 @@ def retry_after(value, now):
         return max(now, result.replace(tzinfo=UTC) if result.tzinfo is None else result)
     except (ValueError, TypeError, OverflowError):
         return now
-
-
-def is_ip_ban_page(html):
-    """EH can return its temporary IP ban notice with HTTP 200."""
-    if "banned" not in html.casefold():
-        return False
-    from bs4 import BeautifulSoup
-
-    soup = BeautifulSoup(html, "lxml")
-    if soup.select_one("table.itg.glte") is not None:
-        return False
-    text = " ".join((soup.body or soup).get_text(" ", strip=True).split()).casefold()
-    return text.startswith(
-        "this ip address has been temporarily banned due to an excessive request rate"
-    )
 
 
 class FullCollectExecutor:

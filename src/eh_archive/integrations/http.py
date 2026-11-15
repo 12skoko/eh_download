@@ -7,6 +7,21 @@ from ..config.loader import AppConfig, SecretsConfig, SessionRole
 from ..domain.errors import ArchiveError, ErrorClass, classify_exception
 
 
+def is_ip_ban_page(html: str) -> bool:
+    """Recognize EH's explicit IP ban notice, including HTTP 200 responses."""
+    if "banned" not in html.casefold():
+        return False
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    if soup.select_one("table.itg.glte") is not None:
+        return False
+    text = " ".join((soup.body or soup).get_text(" ", strip=True).split()).casefold()
+    return text.startswith(
+        "this ip address has been temporarily banned due to an excessive request rate"
+    )
+
+
 class RoleSession:
     """Requests session with explicit account/network role selection."""
 
@@ -135,6 +150,12 @@ class RoleSession:
         self, url: str, *, role: str = "browse", timeout: float = 30.0, **kwargs: Any
     ) -> str:
         response = self.request("GET", url, role=role, timeout=timeout, **kwargs)
+        if is_ip_ban_page(response.text):
+            raise ArchiveError(
+                "eh_site_unavailable",
+                "E-Hentai/ExHentai temporarily banned the outgoing IP due to an excessive request rate",
+                ErrorClass.SYSTEM,
+            )
         response.raise_for_status()
         if 300 <= int(getattr(response, "status_code", 0)) < 400:
             raise ValueError("站点返回重定向，请检查登录状态及采集入口")
