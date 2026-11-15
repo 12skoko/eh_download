@@ -22,6 +22,15 @@ def is_ip_ban_page(html: str) -> bool:
     )
 
 
+def raise_for_ip_ban(html: str) -> None:
+    if is_ip_ban_page(html):
+        raise ArchiveError(
+            "eh_site_unavailable",
+            "E-Hentai/ExHentai temporarily banned the outgoing IP due to an excessive request rate",
+            ErrorClass.SYSTEM,
+        )
+
+
 class RoleSession:
     """Requests session with explicit account/network role selection."""
 
@@ -150,12 +159,7 @@ class RoleSession:
         self, url: str, *, role: str = "browse", timeout: float = 30.0, **kwargs: Any
     ) -> str:
         response = self.request("GET", url, role=role, timeout=timeout, **kwargs)
-        if is_ip_ban_page(response.text):
-            raise ArchiveError(
-                "eh_site_unavailable",
-                "E-Hentai/ExHentai temporarily banned the outgoing IP due to an excessive request rate",
-                ErrorClass.SYSTEM,
-            )
+        raise_for_ip_ban(response.text)
         response.raise_for_status()
         if 300 <= int(getattr(response, "status_code", 0)) < 400:
             raise ValueError("站点返回重定向，请检查登录状态及采集入口")

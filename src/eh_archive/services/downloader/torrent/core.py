@@ -494,6 +494,9 @@ class TorrentService:
             proxies=self.proxies,
             timeout=30,
         )
+        from ....integrations.http import raise_for_ip_ban
+
+        raise_for_ip_ban(response.text)
         response.raise_for_status()
         if "This gallery is currently unavailable" in response.text:
             raise ArchiveError("gallery_unavailable", "gallery is unavailable", ErrorClass.ITEM)

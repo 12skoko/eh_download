@@ -6,6 +6,7 @@ import json
 from requests import RequestException
 
 from ....domain.errors import ArchiveError, ErrorClass
+from ....integrations.http import raise_for_ip_ban
 from .core import _parse_size, parse_torrent_options, select_torrent
 
 WARNING_LABELS = {
@@ -115,6 +116,10 @@ def download_torrent(http, choice, *, decision, request_options=None, manual_fal
         # Do not propagate URLs containing account tokens in exception messages.
         try:
             response = http.get(url, **request_options)
+            # A torrent download can return an HTTP 200 ban notice instead of bencode.
+            content = bytes(response.content)
+            if not content.startswith(b"d"):
+                raise_for_ip_ban(content.decode("utf-8", errors="replace"))
             missing = b"The torrent file could not be found" in response.content[:2048]
             if not missing:
                 response.raise_for_status()
@@ -141,7 +146,9 @@ def download_torrent(http, choice, *, decision, request_options=None, manual_fal
 
         try:
             return fetch_validated(choice.url)
-        except ArchiveError:
+        except ArchiveError as exc:
+            if exc.info.code == "eh_site_unavailable":
+                raise
             if not manual_fallback or not choice.personalized_url:
                 raise
         return fetch_validated(choice.personalized_url)
