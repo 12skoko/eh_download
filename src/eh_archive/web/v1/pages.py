@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import Request
+from fastapi import Depends, Request
 
 from ...db.models import SystemControl
 from ...services.downloader.torrent.review import WARNING_LABELS as TORRENT_WARNING_LABELS
@@ -54,6 +54,7 @@ from ..shared import (
     _filter_query,
     _context,
     _validated_form,
+    _login_form,
     _actor,
     _optional_text,
     _optional_int,
@@ -92,8 +93,7 @@ def install_v1(
         )
 
     @app.post("/v1/login")
-    async def login(request: Request):
-        form = await request.form()
+    def login(request: Request, form=Depends(_login_form)):
         username = str(form.get("username", ""))
         password = str(form.get("password", ""))
         next_path = _safe_next(str(form.get("next", "/v1/")))
@@ -124,8 +124,7 @@ def install_v1(
         return response
 
     @app.post("/v1/logout")
-    async def logout(request: Request):
-        await _validated_form(request)
+    def logout(request: Request, form=Depends(_validated_form)):
         response = _redirect_response(request, "/v1/login")
         response.delete_cookie(SESSION_COOKIE, path="/")
         return response
@@ -192,8 +191,7 @@ def install_v1(
         return module_schedule_response(request, component)
 
     @app.post("/v1/control/{component}/release-cooldown")
-    async def release_cooldown_page(request: Request, component: str):
-        form = await _validated_form(request)
+    def release_cooldown_page(request: Request, component: str, form=Depends(_validated_form)):
         try:
             if form.get("confirmed") != "yes":
                 raise ValueError("请先确认解除冷却")
@@ -216,8 +214,7 @@ def install_v1(
         return _redirect_response(request, "/v1/?notice=cooldown-release-requested")
 
     @app.post("/v1/control/{component}/run")
-    async def run_module_page(request: Request, component: str):
-        form = await _validated_form(request)
+    def run_module_page(request: Request, component: str, form=Depends(_validated_form)):
         try:
             if form.get("confirmed") != "yes":
                 raise ValueError("请先确认手动运行")
@@ -478,8 +475,7 @@ def install_v1(
         )
 
     @app.post("/v1/config/{section_name}")
-    async def update_config_page(request: Request, section_name: str):
-        form = await _validated_form(request)
+    def update_config_page(request: Request, section_name: str, form=Depends(_validated_form)):
         try:
             result = update_config_section(
                 config_dir,
@@ -568,8 +564,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/video-archive/collect-ready")
-    async def collect_ready_page(request: Request):
-        await _validated_form(request)
+    def collect_ready_page(request: Request, form=Depends(_validated_form)):
         try:
             with database.session() as session:
                 result = SpecialWorkflowService(
@@ -587,8 +582,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/video-archive/cleanup-completed")
-    async def cleanup_completed_page(request: Request):
-        await _validated_form(request)
+    def cleanup_completed_page(request: Request, form=Depends(_validated_form)):
         try:
             with database.session() as session:
                 result = SpecialWorkflowService(
@@ -606,8 +600,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/start/{manga_id:path}")
-    async def start_special_page(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def start_special_page(request: Request, manga_id: str, form=Depends(_validated_form)):
         try:
             with database.session() as session:
                 workflow = SpecialWorkflowService(
@@ -677,8 +670,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/workflows/{workflow_id}/load")
-    async def special_load_page(request: Request, workflow_id: int):
-        form = await _validated_form(request)
+    def special_load_page(request: Request, workflow_id: int, form=Depends(_validated_form)):
         return _special_page_update(
             request,
             templates,
@@ -693,8 +685,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/workflows/{workflow_id}/select")
-    async def special_select_page(request: Request, workflow_id: int):
-        form = await _validated_form(request)
+    def special_select_page(request: Request, workflow_id: int, form=Depends(_validated_form)):
         return _special_page_update(
             request,
             templates,
@@ -713,8 +704,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/workflows/{workflow_id}/check")
-    async def special_check_page(request: Request, workflow_id: int):
-        form = await _validated_form(request)
+    def special_check_page(request: Request, workflow_id: int, form=Depends(_validated_form)):
         return _special_page_update(
             request,
             templates,
@@ -729,8 +719,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/workflows/{workflow_id}/cleanup-sources")
-    async def special_cleanup_sources_page(request: Request, workflow_id: int):
-        form = await _validated_form(request)
+    def special_cleanup_sources_page(request: Request, workflow_id: int, form=Depends(_validated_form)):
         return _special_page_update(
             request,
             templates,
@@ -745,8 +734,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/workflows/{workflow_id}/retry")
-    async def special_retry_page(request: Request, workflow_id: int):
-        form = await _validated_form(request)
+    def special_retry_page(request: Request, workflow_id: int, form=Depends(_validated_form)):
         return _special_page_update(
             request,
             templates,
@@ -761,8 +749,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/workflows/{workflow_id}/cancel")
-    async def special_cancel_page(request: Request, workflow_id: int):
-        form = await _validated_form(request)
+    def special_cancel_page(request: Request, workflow_id: int, form=Depends(_validated_form)):
         return _special_page_update(
             request,
             templates,
@@ -777,8 +764,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/workflows/{workflow_id}/lease/release-expired")
-    async def special_release_lease_page(request: Request, workflow_id: int):
-        form = await _validated_form(request)
+    def special_release_lease_page(request: Request, workflow_id: int, form=Depends(_validated_form)):
         return _special_page_update(
             request,
             templates,
@@ -796,8 +782,7 @@ def install_v1(
         )
 
     @app.post("/v1/special/workflows/{workflow_id}/exit-without-cleanup")
-    async def special_exit_without_cleanup_page(request: Request, workflow_id: int):
-        form = await _validated_form(request)
+    def special_exit_without_cleanup_page(request: Request, workflow_id: int, form=Depends(_validated_form)):
         return _special_page_update(
             request,
             templates,
@@ -843,8 +828,7 @@ def install_v1(
         )
 
     @app.post("/v1/manga/{manga_id:path}/remark")
-    async def update_remark_page(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def update_remark_page(request: Request, manga_id: str, form=Depends(_validated_form)):
         return _page_update(
             request,
             templates,
@@ -859,8 +843,7 @@ def install_v1(
         )
 
     @app.post("/v1/manga/{manga_id:path}/priority")
-    async def update_priority_page(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def update_priority_page(request: Request, manga_id: str, form=Depends(_validated_form)):
         return _page_update(
             request,
             templates,
@@ -875,8 +858,7 @@ def install_v1(
         )
 
     @app.post("/v1/manga/{manga_id:path}/skip-video")
-    async def skip_video_page(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def skip_video_page(request: Request, manga_id: str, form=Depends(_validated_form)):
         return _page_update(
             request,
             templates,
@@ -890,8 +872,7 @@ def install_v1(
         )
 
     @app.post("/v1/manga/{manga_id:path}/actions/{action}")
-    async def manga_action_page(request: Request, manga_id: str, action: str):
-        form = await _validated_form(request)
+    def manga_action_page(request: Request, manga_id: str, action: str, form=Depends(_validated_form)):
         return _page_update(
             request,
             templates,
@@ -908,8 +889,7 @@ def install_v1(
         )
 
     @app.post("/v1/manga/{manga_id:path}/lease/release-expired")
-    async def release_expired_lease_page(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def release_expired_lease_page(request: Request, manga_id: str, form=Depends(_validated_form)):
         return _page_update(
             request,
             templates,
@@ -925,8 +905,7 @@ def install_v1(
         )
 
     @app.post("/v1/manga/{manga_id:path}/conflict-versions")
-    async def conflict_versions_page(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def conflict_versions_page(request: Request, manga_id: str, form=Depends(_validated_form)):
         return _page_update(
             request,
             templates,
@@ -948,8 +927,7 @@ def install_v1(
         )
 
     @app.post("/v1/manga/{manga_id:path}/conflict-rename")
-    async def conflict_rename_page(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def conflict_rename_page(request: Request, manga_id: str, form=Depends(_validated_form)):
         return _page_update(
             request,
             templates,
@@ -967,8 +945,7 @@ def install_v1(
         )
 
     @app.post("/v1/manga/{manga_id:path}/status/{target_status}")
-    async def override_manga_status_page(request: Request, manga_id: str, target_status: str):
-        form = await _validated_form(request)
+    def override_manga_status_page(request: Request, manga_id: str, target_status: str, form=Depends(_validated_form)):
         return _page_update(
             request,
             templates,
@@ -992,8 +969,7 @@ def install_v1(
         )
 
     @app.post("/v1/manga/{manga_id:path}/torrent-link-permission")
-    async def torrent_link_permission_page(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def torrent_link_permission_page(request: Request, manga_id: str, form=Depends(_validated_form)):
         return _page_update(
             request,
             templates,
@@ -1009,8 +985,7 @@ def install_v1(
         )
 
     @app.post("/v1/manga/{manga_id:path}/torrent-warnings")
-    async def torrent_warnings_page(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def torrent_warnings_page(request: Request, manga_id: str, form=Depends(_validated_form)):
         return _page_update(
             request,
             templates,
@@ -1027,8 +1002,7 @@ def install_v1(
         )
 
     @app.post("/v1/control/{component}")
-    async def control_page(request: Request, component: str):
-        form = await _validated_form(request)
+    def control_page(request: Request, component: str, form=Depends(_validated_form)):
         from ...management.service import control_guard
 
         try:

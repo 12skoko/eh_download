@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from fastapi import Request
+from fastapi import Depends, Request
 from fastapi.responses import FileResponse
 
 from ...special.core.service import ModuleService, SpecialInvalidRequest, SpecialServiceError
@@ -26,8 +26,7 @@ def install_special_routes(app, database, templates, app_config, config_dir):
         )
 
     @app.post("/v1/special/modules/{kind}/create")
-    async def create(request: Request, kind: str):
-        form = await _validated_form(request)
+    def create(request: Request, kind: str, form=Depends(_validated_form)):
         try:
             inputs = json.loads(str(form.get("inputs", "{}")))
             if not isinstance(inputs, dict):
@@ -40,8 +39,7 @@ def install_special_routes(app, database, templates, app_config, config_dir):
             return _special_error_response(request, templates, error)
 
     @app.post("/v1/special/workflows/{workflow_id}/actions/{action}")
-    async def action(request: Request, workflow_id: int, action: str):
-        form = await _validated_form(request)
+    def action(request: Request, workflow_id: int, action: str, form=Depends(_validated_form)):
         try:
             inputs = json.loads(str(form.get("inputs", "{}")))
             if action == "release-expired" and "reason" in form:

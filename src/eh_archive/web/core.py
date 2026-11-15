@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import Request
+from fastapi import Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 
@@ -24,6 +24,7 @@ from .shared import (
     _safe_next,
     _supervisor_status,
     _validated_form,
+    _login_form,
 )
 from .auth import SESSION_COOKIE, SESSION_MAX_AGE_SECONDS
 from .services import (
@@ -117,10 +118,9 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/login")
-    async def login(request: Request):
+    def login(request: Request, form=Depends(_login_form)):
         from .auth import verify_password
 
-        form = await request.form()
         username = str(form.get("username", ""))
         password = str(form.get("password", ""))
         next_path = _safe_ui_next(str(form.get("next", PREFIX + "/")))
@@ -150,8 +150,7 @@ def install(app, ctx: UIContext) -> None:
         return response
 
     @app.post(PREFIX + "/logout")
-    async def logout(request: Request):
-        await _validated_form(request)
+    def logout(request: Request, form=Depends(_validated_form)):
         response = redirect(request, PREFIX + "/login")
         response.delete_cookie(SESSION_COOKIE, path="/")
         return response
@@ -198,12 +197,11 @@ def install(app, ctx: UIContext) -> None:
         return "overview" if form.get("scope") == "overview" else "pill"
 
     @app.post(PREFIX + "/control/{component}")
-    async def control(request: Request, component: str):
+    def control(request: Request, component: str, form=Depends(_validated_form)):
         from pathlib import Path
 
         from ..management.service import control_guard
 
-        form = await _validated_form(request)
         state = str(form.get("state", ""))
         try:
             with control_guard(component, Path(ctx.management_path)), database.session() as session:
@@ -225,8 +223,7 @@ def install(app, ctx: UIContext) -> None:
         return control_response(request, scope_of(form), trigger_header(toast=message))
 
     @app.post(PREFIX + "/control/{component}/run")
-    async def run_module(request: Request, component: str):
-        form = await _validated_form(request)
+    def run_module(request: Request, component: str, form=Depends(_validated_form)):
         try:
             if form.get("confirmed") != "yes":
                 raise ValueError("请先确认手动运行")
@@ -252,8 +249,7 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/control/{component}/release-cooldown")
-    async def release_cooldown(request: Request, component: str):
-        form = await _validated_form(request)
+    def release_cooldown(request: Request, component: str, form=Depends(_validated_form)):
         try:
             if form.get("confirmed") != "yes":
                 raise ValueError("请先确认解除冷却")

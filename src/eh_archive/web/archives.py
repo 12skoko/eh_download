@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import Request
+from fastapi import Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import func, select
 
@@ -287,8 +287,7 @@ def install(app, ctx: UIContext) -> None:
         return int(str(form.get("row_version", "")))
 
     @app.post(PREFIX + "/archives/{manga_id:path}/remark")
-    async def remark(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def remark(request: Request, manga_id: str, form=Depends(_validated_form)):
         return update(
             request,
             form,
@@ -302,8 +301,7 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/archives/{manga_id:path}/priority")
-    async def priority(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def priority(request: Request, manga_id: str, form=Depends(_validated_form)):
         return update(
             request,
             form,
@@ -317,8 +315,7 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/archives/{manga_id:path}/skip-video")
-    async def skip_video(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def skip_video(request: Request, manga_id: str, form=Depends(_validated_form)):
         return update(
             request,
             form,
@@ -331,8 +328,7 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/archives/{manga_id:path}/actions/{action}")
-    async def action(request: Request, manga_id: str, action: str):
-        form = await _validated_form(request)
+    def action(request: Request, manga_id: str, action: str, form=Depends(_validated_form)):
         return update(
             request,
             form,
@@ -348,8 +344,7 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/archives/{manga_id:path}/lease/release-expired")
-    async def release_lease(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def release_lease(request: Request, manga_id: str, form=Depends(_validated_form)):
         return update(
             request,
             form,
@@ -364,8 +359,7 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/archives/{manga_id:path}/conflict-versions")
-    async def conflict_versions(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def conflict_versions(request: Request, manga_id: str, form=Depends(_validated_form)):
         return update(
             request,
             form,
@@ -386,8 +380,7 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/archives/{manga_id:path}/conflict-rename")
-    async def conflict_rename(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def conflict_rename(request: Request, manga_id: str, form=Depends(_validated_form)):
         return update(
             request,
             form,
@@ -404,8 +397,7 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/archives/{manga_id:path}/status/{target_status}")
-    async def override_status(request: Request, manga_id: str, target_status: str):
-        form = await _validated_form(request)
+    def override_status(request: Request, manga_id: str, target_status: str, form=Depends(_validated_form)):
         return update(
             request,
             form,
@@ -428,8 +420,7 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/archives/{manga_id:path}/torrent-link-permission")
-    async def torrent_link_permission(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def torrent_link_permission(request: Request, manga_id: str, form=Depends(_validated_form)):
         return update(
             request,
             form,
@@ -444,8 +435,7 @@ def install(app, ctx: UIContext) -> None:
         )
 
     @app.post(PREFIX + "/archives/{manga_id:path}/torrent-warnings")
-    async def torrent_warnings(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def torrent_warnings(request: Request, manga_id: str, form=Depends(_validated_form)):
         return update(
             request,
             form,
@@ -462,8 +452,7 @@ def install(app, ctx: UIContext) -> None:
 
     # ------------------------------------------------------------------ 进入特殊模块
     @app.post(PREFIX + "/special/start/{manga_id:path}")
-    async def start_special(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def start_special(request: Request, manga_id: str, form=Depends(_validated_form)):
         try:
             with database.session() as session:
                 workflow = SpecialWorkflowService(
@@ -483,8 +472,7 @@ def install(app, ctx: UIContext) -> None:
         return redirect(request, f"{PREFIX}/workflows/{kind}/{workflow_id}", "workflow-created")
 
     @app.post(PREFIX + "/manual-torrent/start/{manga_id:path}")
-    async def start_manual_torrent(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def start_manual_torrent(request: Request, manga_id: str, form=Depends(_validated_form)):
         try:
             with database.session() as session:
                 workflow = ModuleService(

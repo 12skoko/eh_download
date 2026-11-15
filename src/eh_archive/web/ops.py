@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlencode
 
-from fastapi import HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ..management import ManagementError
@@ -176,8 +176,7 @@ def install(app, ctx: UIContext) -> None:
         return render_settings(request, section, saved=saved)
 
     @app.post(PREFIX + "/settings/{section_name}")
-    async def save_settings(request: Request, section_name: str):
-        form = await _validated_form(request)
+    def save_settings(request: Request, section_name: str, form=Depends(_validated_form)):
         wants_json = "application/json" in request.headers.get("accept", "")
         try:
             result = update_config_section(

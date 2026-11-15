@@ -1,4 +1,4 @@
-from fastapi import Request
+from fastapi import Depends, Request
 
 from ...special.core.service import ModuleService, SpecialInvalidRequest, SpecialServiceError
 from ...special.modules.manual_torrent.module import KIND
@@ -9,8 +9,7 @@ def install_routes(app, database, templates, app_config, config_dir):
     from .common import _special_error_response
 
     @app.post("/v1/special/manual-torrent/start/{manga_id:path}")
-    async def start(request: Request, manga_id: str):
-        form = await _validated_form(request)
+    def start(request: Request, manga_id: str, form=Depends(_validated_form)):
         try:
             with database.session() as session:
                 workflow = ModuleService(
@@ -28,8 +27,7 @@ def install_routes(app, database, templates, app_config, config_dir):
             return _special_error_response(request, templates, error)
 
     @app.post("/v1/special/manual-torrent/{workflow_id}/choose")
-    async def choose(request: Request, workflow_id: int):
-        form = await _validated_form(request)
+    def choose(request: Request, workflow_id: int, form=Depends(_validated_form)):
         try:
             with database.session() as session:
                 ModuleService(

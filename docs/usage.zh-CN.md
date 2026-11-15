@@ -132,8 +132,8 @@ python3.11 -m venv .venv
 没有版本变化或缺失字段时不改写；高于程序支持版本则拒绝启动，不进行降级转换。
 普通 CLI 任务和 Worker 不执行迁移，升级后应先启动 Web 或 Supervisor。
 
-目前 `supervisor.toml` 的结构版本为 3，`app.toml` 为 2，`crawl.toml`、
-`secrets.toml` 及已登记的六个 `special/*.toml` 配置为 1（包括 `lanraragi_metadata.toml`）。
+目前 `supervisor.toml` 的结构版本为 4，`app.toml` 为 2；`special/video_archive.toml` 和
+`special/full_collect.toml` 为 2，`crawl.toml`、`secrets.toml` 及其余已登记的特殊模块配置为 1。
 `migration.toml` 是旧数据库导入工具配置，不在运行配置迁移范围内。
 已登记的运行配置文件缺失时，启动迁移从对应的 `config.sample/` 模板准备新文件，
 校验通过后自动创建并保留模板的当前版本号；配置目录本身仍须预先存在。
@@ -151,11 +151,13 @@ python3.11 -m venv .venv
 `schedules.collect.interval_seconds` 和 `schedules.torrent_check.interval_seconds`。
 显式填写的新字段优先，值冲突时输出提示但不输出配置值。其他用户字段和值保留，不按示例删除。
 
-Web 更新流程只在临时目录预先校验迁移及新建结果；实际迁移和创建由服务启动执行。
-已有且版本相同的文件不会按模板补齐字段或重写。
+Web 更新流程先在临时目录预检迁移及新建结果；数据库升级成功后，由新版本刷新子进程在恢复服务前备份并发布实际配置。服务启动仍执行同一套幂等迁移。
+已有文件即使版本相同，也会补齐缺失的受支持字段；没有转换或缺失字段时不改写。
 迁移步骤和各文件支持版本集中在 `eh_archive.management.config_migrations.steps`。
 以后字段改名或移动时，在对应文件的迁移序列末尾追加一步，并更新示例中的版本号；已发布的
 历史步骤应保持固定，不依赖今后可能变化的模块注册信息。不要手工提高用户文件版本号来跳过迁移。
+
+开发者修改配置前须遵守[配置变更与升级兼容约定](configuration-changes.zh-CN.md)，同时验证配置迁移和旧升级进程跨版本执行到健康检查的完整流程。
 
 仓库中的配置模板统一保存在 `config.sample/`，真实运行配置统一保存在 `config/`。Git 跟踪前者并整体忽略后者，因此以后增加真实配置文件时不需要继续修改 `.gitignore`。首次配置时创建真实配置目录并复制四个必要模板：
 

@@ -11,7 +11,7 @@ import json
 import re
 from urllib.parse import urlencode
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import desc, func, select
 
@@ -349,8 +349,7 @@ def install(app, ctx: UIContext) -> None:
 
     # ------------------------------------------------------------------ 通用动作
     @app.post(PREFIX + "/workflows/{kind}/create")
-    async def create(request: Request, kind: str):
-        form = await _validated_form(request)
+    def create(request: Request, kind: str, form=Depends(_validated_form)):
         try:
             inputs = json.loads(str(form.get("inputs", "{}")))
             if not isinstance(inputs, dict):
@@ -362,8 +361,7 @@ def install(app, ctx: UIContext) -> None:
         return created(request, workflow)
 
     @app.post(PREFIX + "/workflow/{workflow_id:int}/actions/{action}")
-    async def action(request: Request, workflow_id: int, action: str):
-        form = await _validated_form(request)
+    def action(request: Request, workflow_id: int, action: str, form=Depends(_validated_form)):
         try:
             inputs = json.loads(str(form.get("inputs", "{}")))
             if action == "release-expired" and "reason" in form:
@@ -388,8 +386,7 @@ def install(app, ctx: UIContext) -> None:
 
     # ------------------------------------------------------------------ 视频模块
     @app.post(PREFIX + "/workflow/{workflow_id:int}/video/{op}")
-    async def video_op(request: Request, workflow_id: int, op: str):
-        form = await _validated_form(request)
+    def video_op(request: Request, workflow_id: int, op: str, form=Depends(_validated_form)):
         method = _VIDEO_OPS.get(op)
         if method is None:
             return ctx.error(request, "未知操作", 404)
@@ -428,19 +425,16 @@ def install(app, ctx: UIContext) -> None:
         return redirect(request, f"{module_url('video_archive')}?{query}")
 
     @app.post(PREFIX + "/video-archive/collect-ready")
-    async def collect_ready(request: Request):
-        await _validated_form(request)
+    def collect_ready(request: Request, form=Depends(_validated_form)):
         return batch(request, "dispatch_ready_checks", "batch-dispatched")
 
     @app.post(PREFIX + "/video-archive/cleanup-completed")
-    async def cleanup_completed(request: Request):
-        await _validated_form(request)
+    def cleanup_completed(request: Request, form=Depends(_validated_form)):
         return batch(request, "dispatch_source_cleanups", "cleanup-dispatched")
 
     # ------------------------------------------------------------------ 手动种子
     @app.post(PREFIX + "/manual-torrent/{workflow_id:int}/choose")
-    async def manual_choose(request: Request, workflow_id: int):
-        form = await _validated_form(request)
+    def manual_choose(request: Request, workflow_id: int, form=Depends(_validated_form)):
         try:
             with database.session() as session:
                 module_service(session, request).action(
@@ -458,8 +452,7 @@ def install(app, ctx: UIContext) -> None:
 
     # ------------------------------------------------------------------ 元数据更新
     @app.post(PREFIX + "/workflows/lanraragi_metadata/start")
-    async def metadata_start(request: Request):
-        form = await _validated_form(request)
+    def metadata_start(request: Request, form=Depends(_validated_form)):
         try:
             inputs = {
                 "manga_ids": [v for v in re.split(r"[\s,，]+", str(form.get("manga_ids", ""))) if v]
@@ -481,8 +474,7 @@ def install(app, ctx: UIContext) -> None:
         }
 
     @app.post(PREFIX + "/full-collect/start")
-    async def full_start(request: Request):
-        form = await _validated_form(request)
+    def full_start(request: Request, form=Depends(_validated_form)):
         try:
             with database.session() as session:
                 workflow = module_service(session, request).create(

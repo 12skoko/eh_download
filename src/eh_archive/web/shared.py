@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
+from fastapi import Request
+
 
 from ..config.loader import SUPERVISOR_MODULES
 from ..db.models import MangaRecord, SystemControl, SystemHealth
@@ -51,7 +53,12 @@ def _context(request, **values):
     }
 
 
-async def _validated_form(request):
+async def _login_form(request: Request):
+    return await request.form()
+
+
+async def _validated_form(request: Request):
+    """Read/validate on the event loop; sync endpoints run wholly in the thread pool."""
     form = await request.form()
     identity = getattr(request.state, "identity", None)
     if identity is None or str(form.get("csrf_token", "")) != identity.csrf_token:

@@ -215,7 +215,7 @@ def create_app(
         return await call_next(request)
 
     @app.get("/health/live")
-    def liveness():
+    async def liveness():
         return {"ok": True}
 
     @app.get("/health")
@@ -429,7 +429,7 @@ def create_app(
         config_dir=config_dir,
         management_config=management_config,
     )
-    install_ui(
+    ctx = install_ui(
         app,
         templates=templates,
         database=database,
@@ -441,6 +441,9 @@ def create_app(
         config_dir=config_dir,
         management_path=Path(management_config),
     )
+    from .execution import install_execution_policy
+
+    install_execution_policy(app, database, ctx)
     return app
 
 

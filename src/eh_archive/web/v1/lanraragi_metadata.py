@@ -2,7 +2,7 @@
 
 import re
 
-from fastapi import Request
+from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 
 from ...special.core.service import ModuleService, SpecialInvalidRequest, SpecialServiceError
@@ -24,8 +24,7 @@ def install_routes(app, database, templates, app_config, config_dir):
         )
 
     @app.post("/v1/special/modules/lanraragi_metadata/start")
-    async def start(request: Request):
-        form = await _validated_form(request)
+    def start(request: Request, form=Depends(_validated_form)):
         try:
             inputs = {
                 "manga_ids": [v for v in re.split(r"[\s,，]+", str(form.get("manga_ids", ""))) if v]

@@ -90,3 +90,7 @@ eharchive service logs supervisor
 ```
 
 Web 与 Supervisor 服务默认不会在机器重启后自动启动，重启后执行 `eharchive service start all`。
+
+## 开发与维护约定
+
+修改配置字段、默认值、校验或升级流程前，先阅读[配置变更与升级兼容约定](docs/configuration-changes.zh-CN.md)，按现有版本迁移机制处理旧配置，并验证旧升级进程一直运行到新服务健康检查通过。

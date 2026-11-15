@@ -1,6 +1,6 @@
 """V1 full-collection forms and log page."""
 
-from fastapi import Request
+from fastapi import Depends, Request
 from ...special.core.service import ModuleService, SpecialInvalidRequest, SpecialServiceError
 from ...special.modules.full_collect.module import KIND
 from ...special.modules.full_collect.routes import log_context
@@ -35,8 +35,7 @@ def install_routes(app, database, templates, app_config, config_dir):
         )
 
     @app.post("/v1/special/full-collect/start")
-    async def start(request: Request):
-        form = await _validated_form(request)
+    def start(request: Request, form=Depends(_validated_form)):
         try:
             with database.session() as session:
                 workflow = service(session, request).create(KIND, form_inputs(form))
