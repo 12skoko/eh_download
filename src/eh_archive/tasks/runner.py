@@ -2027,6 +2027,19 @@ class TaskExecutor:
         if isinstance(exc, MaintenancePaused) or info.code == "database_unavailable":
             # Roll back the execution transaction before using a fresh settlement session.
             raise exc
+        if claim.operation == "torrent_download" and info.code == "torrent_submit_conflict":
+            repository.finish(
+                claim, owner=self.owner, event="review",
+                error_code=info.code, error_detail=info.message,
+            )
+            log.warning(
+                "torrent submission conflict; moved to manual_review: %s", info.message,
+                extra={"event": {
+                    "manga_id": claim.manga_id, "operation": claim.operation,
+                    "error_code": info.code, **(info.detail or {}),
+                }},
+            )
+            return
         if claim.operation == "details" and info.code == "details_page_structure_invalid":
             repository.finish(claim, owner=self.owner, event="review",
                               error_code=info.code, error_detail=info.message)

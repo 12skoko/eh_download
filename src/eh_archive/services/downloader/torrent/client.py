@@ -49,8 +49,24 @@ class QBittorrentClient:
             ) from exc
 
     def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        from qbittorrentapi.exceptions import Conflict409Error
+
         try:
             return getattr(self.client, method)(*args, **kwargs)
+        except Conflict409Error as exc:
+            if method != "torrents_add":
+                if isinstance(exc, getattr(self, "_system_exceptions", ())):
+                    raise ArchiveError(
+                        "qbittorrent_unavailable",
+                        f"qBittorrent is unavailable or rejected authentication: {exc}",
+                        ErrorClass.SYSTEM,
+                    ) from exc
+                raise
+            raise ArchiveError(
+                "torrent_submit_conflict",
+                "qBittorrent rejected torrent submission with HTTP 409 Conflict",
+                ErrorClass.ITEM,
+            ) from exc
         except getattr(self, "_system_exceptions", ()) as exc:
             raise ArchiveError(
                 "qbittorrent_unavailable",
@@ -74,10 +90,30 @@ class QBittorrentClient:
         }
         if display_name is not None:
             options["rename"] = display_name
-        self._call(
-            "torrents_add",
-            **options,
-        )
+        try:
+            self._call("torrents_add", **options)
+        except ArchiveError as exc:
+            if exc.info.code != "torrent_submit_conflict":
+                raise
+            from .review import torrent_info_hash
+
+            try:
+                torrent_hash = torrent_info_hash(torrent_bytes)
+            except ArchiveError:
+                torrent_hash = "unknown"
+            detail = {
+                "torrent_info_hash": torrent_hash,
+                "save_path": str(save_path),
+                "display_name": display_name,
+                "category": category,
+            }
+            raise ArchiveError(
+                "torrent_submit_conflict",
+                f"qBittorrent HTTP 409 submission conflict: info_hash={torrent_hash}; "
+                f"name={display_name}; save_path={save_path}; category={category}",
+                ErrorClass.ITEM,
+                detail=detail,
+            ) from exc
         # qBittorrent may acknowledge before the hash is visible. Polling is
         # bounded and does not hold a database lease.
         for _ in range(10):
