@@ -1764,6 +1764,11 @@ class TaskExecutor:
             archive_identified=archive_identified,
         )
         outcome = backend.upload(request)
+        if outcome.log_detail and self.report is not None:
+            self.report.write(
+                f"[{self._report_item_index}] {clean_report_value(claim.manga_id)} | "
+                + " ".join(outcome.log_detail.splitlines())
+            )
         # This error is emitted only after the remote artifact identity passed
         # verification. Keep that identity even if its metadata needs review.
         if outcome.error_code == "lrr_metadata_mismatch" and outcome.archive_id:

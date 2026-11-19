@@ -4,6 +4,7 @@ import hashlib
 import re
 import time
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import BinaryIO, Protocol, Self
 
@@ -100,23 +101,23 @@ class FilesystemUploadBackend:
         request.archive_identified(expected_id)
         self.api.shinobu_status()
 
+        remote_filename = request.filename.replace(":", "：")
         request.phase("checking_lanraragi", {"expected_archive_id": expected_id})
         status, existing = self.api.metadata(expected_id)
         if status == 200:
-            if not self.api.metadata_matches_artifact(
-                existing,
-                archive_id=expected_id,
-                size=request.size,
-                filename=request.filename,
-            ):
-                return UploadOutcome(
-                    "duplicate_review",
-                    expected_id,
-                    status,
-                    "the expected LANraragi ID exists with a different size or filename",
-                    "lrr_prefix_collision",
-                )
-            return self._update_and_confirm(request, expected_id)
+            # Older uploads may already be indexed under the original basename.
+            for filename in dict.fromkeys((remote_filename, request.filename)):
+                if self.api.metadata_matches_artifact(
+                    existing, archive_id=expected_id, size=request.size, filename=filename
+                ):
+                    return self._update_and_confirm(request, expected_id, filename)
+            return UploadOutcome(
+                "duplicate_review",
+                expected_id,
+                status,
+                "the expected LANraragi ID exists with a different size or filename",
+                "lrr_prefix_collision",
+            )
         if status in AUTH_HTTP_STATUSES:
             return UploadOutcome(
                 "system",
@@ -135,23 +136,23 @@ class FilesystemUploadBackend:
                 "lrr_metadata_preflight_failed",
             )
 
-        staging = f".{request.filename}.{request.attempt_id}.uploading"
+        staging = f".{remote_filename}.{request.attempt_id}.uploading"
         published = False
         staging_owned = False
         request.phase(
             "preparing_remote",
             {
                 "expected_archive_id": expected_id,
-                "remote_filename": request.filename,
+                "remote_filename": remote_filename,
                 "staging_filename": staging,
             },
         )
         try:
             with self.store:
                 try:
-                    if self.store.exists(request.filename):
-                        request.phase("verifying_remote", {"remote_filename": request.filename})
-                        if not self._remote_matches(request, request.filename):
+                    if self.store.exists(remote_filename):
+                        request.phase("verifying_remote", {"remote_filename": remote_filename})
+                        if not self._remote_matches(request, remote_filename):
                             return UploadOutcome(
                                 "review",
                                 expected_id,
@@ -170,7 +171,7 @@ class FilesystemUploadBackend:
                             # This name belongs exclusively to the current
                             # attempt, including partial files left by a failed write.
                             staging_owned = True
-                            self._transfer(request, staging)
+                            self._transfer(request, remote_filename, staging)
                         request.phase("verifying_remote", {"staging_filename": staging})
                         if not self._remote_matches(request, staging):
                             return UploadOutcome(
@@ -183,18 +184,18 @@ class FilesystemUploadBackend:
                         request.phase(
                             "publishing",
                             {
-                                "remote_filename": request.filename,
+                                "remote_filename": remote_filename,
                                 "staging_filename": staging,
                             },
                         )
-                        self.store.rename(staging, request.filename)
+                        self.store.rename(staging, remote_filename)
                         staging_owned = False
                         published = True
                     request.phase(
                         "published",
                         {
                             "expected_archive_id": expected_id,
-                            "remote_filename": request.filename,
+                            "remote_filename": remote_filename,
                         },
                     )
                 finally:
@@ -205,9 +206,17 @@ class FilesystemUploadBackend:
         except ArchiveError:
             raise
         except Exception as exc:  # noqa: BLE001 - classify every SMB library error locally
-            return self._store_failure(exc, expected_id=expected_id, published=published)
+            outcome = self._store_failure(exc, expected_id=expected_id, published=published)
+            status = getattr(exc, "ntstatus", None)
+            if status is None:
+                status = getattr(exc, "status", None)
+            code = f"0x{status:08X}" if isinstance(status, int) else "unavailable"
+            return replace(
+                outcome,
+                log_detail=f"smb_status={code} | exception={type(exc).__name__}: {exc}",
+            )
 
-        return self._wait_and_finalize(request, expected_id)
+        return self._wait_and_finalize(request, expected_id, remote_filename)
 
     @staticmethod
     def _validate_request(request: UploadRequest) -> UploadOutcome | None:
@@ -239,11 +248,11 @@ class FilesystemUploadBackend:
             )
         return None
 
-    def _transfer(self, request: UploadRequest, staging: str) -> None:
+    def _transfer(self, request: UploadRequest, remote_filename: str, staging: str) -> None:
         request.phase(
             "transferring",
             {
-                "remote_filename": request.filename,
+                "remote_filename": remote_filename,
                 "staging_filename": staging,
             },
         )
@@ -269,7 +278,9 @@ class FilesystemUploadBackend:
             )
         return remote_sha1 == request.sha1.lower()
 
-    def _wait_and_finalize(self, request: UploadRequest, archive_id: str) -> UploadOutcome:
+    def _wait_and_finalize(
+        self, request: UploadRequest, archive_id: str, remote_filename: str
+    ) -> UploadOutcome:
         request.phase("waiting_for_shinobu", {"expected_archive_id": archive_id})
         deadline = self.monotonic() + self.poll_timeout
         last_status: int | None = None
@@ -290,7 +301,7 @@ class FilesystemUploadBackend:
                     payload,
                     archive_id=archive_id,
                     size=request.size,
-                    filename=request.filename,
+                    filename=remote_filename,
                 ):
                     return UploadOutcome(
                         "review",
@@ -299,7 +310,7 @@ class FilesystemUploadBackend:
                         "Shinobu imported archive metadata with a different size or filename",
                         "lrr_import_mismatch",
                     )
-                return self._update_and_confirm(request, archive_id)
+                return self._update_and_confirm(request, archive_id, remote_filename)
             if status in AUTH_HTTP_STATUSES:
                 return UploadOutcome(
                     "system",
@@ -325,7 +336,9 @@ class FilesystemUploadBackend:
             "lrr_import_timeout",
         )
 
-    def _update_and_confirm(self, request: UploadRequest, archive_id: str) -> UploadOutcome:
+    def _update_and_confirm(
+        self, request: UploadRequest, archive_id: str, remote_filename: str
+    ) -> UploadOutcome:
         request.phase("metadata_updating", {"expected_archive_id": archive_id})
         expected_metadata = self.api.metadata_values(request.info)
         try:
@@ -354,7 +367,7 @@ class FilesystemUploadBackend:
             confirmed = self.api.confirm_metadata(
                 archive_id,
                 size=request.size,
-                filename=request.filename,
+                filename=remote_filename,
                 expected=expected_metadata,
             )
         except Exception as exc:  # noqa: BLE001 - published result is intentionally unknown

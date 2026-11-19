@@ -51,6 +51,7 @@ class UploadOutcome:
     status_code: int | None = None
     response: str = ""
     error_code: str | None = None
+    log_detail: str = ""
 
 
 class UploadBackend(Protocol):
