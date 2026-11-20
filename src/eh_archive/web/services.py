@@ -97,7 +97,7 @@ MANUAL_STATUS_TARGETS = (
     {
         "status": Status.DETAILS_PENDING.value,
         "label": "等待详情（重新下载）",
-        "description": "保存指定下载方式，先检查详情和新版本，通过后安排下载。",
+        "description": "先检查详情和新版本，通过后安排下载。已有 BT 任务会先由后台核实；已完成任务移除时保留文件，未完成任务转人工处理。",
     },
     {
         "status": Status.DOWNLOADED.value,
@@ -460,10 +460,8 @@ class WebService:
             if not archive_id or not re.fullmatch(r"[0-9a-fA-F]{40}", archive_id):
                 raise InvalidRequest("archive ID 必须是 40 位 SHA1")
             confirmed_id = archive_id.lower()
-        if transition_target(row.status, event) == Status.DETAILS_PENDING and (
-            row.active_attempt_id or row.lease_token or row.lease_until or row.external_download_id
-        ):
-            raise Conflict("档案仍有活动任务或外部下载，请先核实，不能重新入队")
+        if transition_target(row.status, event) == Status.DETAILS_PENDING:
+            self._request_external_requeue(row, row.download_method)
         previous = row.status
         row.status = transition_target(row.status, event).value
         if confirmed_id:
@@ -525,16 +523,16 @@ class WebService:
                 raise InvalidRequest("二次确认的档案 ID 与当前档案不一致")
         if row.status == target_status and not manual_torrent:
             raise InvalidRequest("档案已经处于目标状态")
-        if row.active_attempt_id is not None or row.lease_owner or row.lease_token:
+        if row.active_attempt_id is not None or row.lease_owner or row.lease_token or row.lease_until:
             raise Conflict("档案仍有活动任务或租约，不能人工修改状态")
-        if target_status == Status.DETAILS_PENDING.value and row.external_download_id:
-            raise Conflict("已有外部下载任务，请先核实并处理该任务，不能重新入队")
         if row.status == Status.SPECIAL_PROCESSING.value:
             raise Conflict("档案由活动的特殊工作流控制，不能使用通用状态修改")
 
         if manual_torrent:
             from ..special.core.service import ModuleService
 
+            if row.external_download_id:
+                raise Conflict("请先通过普通下载方式核实并处理原外部任务，再进入手动种子流程")
             if config_dir is None or self.app_config is None:
                 raise InvalidRequest("手动种子下载需要模块配置")
             try:
@@ -570,9 +568,12 @@ class WebService:
         if target_status in {Status.DETAILS_PENDING.value, Status.DOWNLOADED.value}:
             if clean_method not in DOWNLOAD_METHOD_VALUES:
                 raise InvalidRequest("必须选择有效的下载方式")
-            row.download_method = clean_method
-            if clean_method != previous_method:
-                row.external_download_id = None
+            if target_status == Status.DETAILS_PENDING.value and row.external_download_id:
+                self._request_external_requeue(row, clean_method)
+            else:
+                row.download_method = clean_method
+                if clean_method != previous_method:
+                    row.external_download_id = None
 
         clean_filename = artifact_filename.strip() if artifact_filename else None
         artifact_path = None
@@ -952,6 +953,20 @@ class WebService:
             )
         )
         return row
+
+    def _request_external_requeue(self, row: MangaRecord, method: str | None) -> None:
+        if any((row.active_attempt_id is not None, row.lease_owner, row.lease_token, row.lease_until)):
+            raise Conflict("档案仍有活动任务或租约，不能重新入队")
+        if not row.external_download_id:
+            return
+        if row.download_method != "torrent":
+            raise Conflict("该下载方式尚不支持自动核实外部任务，请先核实并处理原任务")
+        # Keep the original method and hash until the worker has reconciled them.
+        self._event(row, "external_download_requeue_requested", detail={
+            "external_download_id": row.external_download_id,
+            "download_method": row.download_method,
+            "requested_download_method": method,
+        })
 
     def _manga(self, manga_id: str) -> MangaRecord:
         # Hold the same row lock used by task claiming until the caller commits

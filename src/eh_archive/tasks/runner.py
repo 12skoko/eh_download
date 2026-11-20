@@ -1133,9 +1133,72 @@ class TaskExecutor:
             self._tag_translation = EhTagTranslation()
         return self._tag_translation
 
+    def _reconcile_external_requeue(
+        self, repository: ArchiveRepository, claim: ClaimedAttempt, record: MangaRecord
+    ) -> None:
+        from ..db.models import DOWNLOAD_METHOD_VALUES, EventLog
+        from ..integrations.qbittorrent import QBittorrentClient
+
+        request = repository.session.scalar(
+            select(EventLog).where(
+                EventLog.manga_id == record.manga_id,
+                EventLog.operation == "external_download_requeue_requested",
+            ).order_by(EventLog.id.desc()).limit(1)
+        )
+        detail = request.detail if request else {}
+        external_id = record.external_download_id
+        method = detail.get("requested_download_method")
+        if (record.download_method != "torrent"
+                or detail.get("external_download_id") != external_id
+                or method not in DOWNLOAD_METHOD_VALUES):
+            raise ArchiveError("external_requeue_unconfirmed", "缺少有效的外部任务核实请求，请重新提交状态修改", ErrorClass.ITEM)
+        options = dict(self.secrets.qbittorrent)
+        options.setdefault("host", self.app.qbittorrent_url)
+        try:
+            qbit = QBittorrentClient(**options)
+            info = qbit.info(external_id)
+        except Exception as exc:
+            raise ArchiveError("external_requeue_query_failed", "无法核实外部下载任务，保留原关联并稍后重试", ErrorClass.TEMPORARY, retryable=True) from exc
+        outcome = "missing"
+        if info is not None:
+            state = str(getattr(info, "state", "")).lower()
+            complete = (
+                float(getattr(info, "progress", 0) or 0) >= 1
+                and state in {"uploading", "stalledup", "pausedup", "stoppedup", "queuedup", "forcedup", "completed"}
+            )
+            if not complete:
+                raise ArchiveError("external_download_active", f"原 BT 任务尚未确认完成（状态：{state}），未启动新下载", ErrorClass.ITEM)
+            self._begin_external_effect(repository, claim)
+            try:
+                qbit.delete(external_id, delete_files=False)
+                if qbit.info(external_id) is not None:
+                    raise RuntimeError("torrent removal not yet confirmed")
+            except Exception as exc:
+                raise ArchiveError("external_requeue_remove_pending", "尚未确认旧 BT 任务已移除，保留原关联并稍后重试", ErrorClass.TEMPORARY, retryable=True) from exc
+            outcome = "completed_task_removed_files_preserved"
+        if repository.fenced(claim, owner=self.owner) is None:
+            raise ArchiveError("stale_attempt", "attempt fencing failed", ErrorClass.TEMPORARY)
+        repository._event(record.manga_id, "external_download_reconciled", actor=self.owner,
+                          attempt_id=claim.attempt_id, operation="details", detail={
+                              "external_download_id": external_id,
+                              "download_method": record.download_method,
+                              "requested_download_method": method,
+                              "request_event_id": request.id,
+                              "outcome": outcome,
+                              "artifact_location": record.artifact_location,
+                              "artifact_filename": record.artifact_filename,
+                          })
+        record.external_download_id = None
+        record.download_method = method
+        record.row_version += 1
+        # Persist reconciliation independently of subsequent details/network errors.
+        repository.session.commit()
+
     def _details_task(
         self, repository: ArchiveRepository, claim: ClaimedAttempt, record: MangaRecord
     ) -> None:
+        if record.external_download_id:
+            self._reconcile_external_requeue(repository, claim, record)
         info = self._details(record, role="browse")
         self._upsert_info_fenced(repository, claim, info)
         if info.latest_version_id or record.superseded_by_id:

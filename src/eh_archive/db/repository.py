@@ -593,7 +593,8 @@ class ArchiveRepository:
             query = query.where(~MangaRecord.manga_id.like("picacg/%"))
         elif operation == "details":
             query = query.where(
-                MangaRecord.external_download_id.is_(None),
+                or_(MangaRecord.external_download_id.is_(None),
+                    MangaRecord.status == Status.DETAILS_PENDING.value),
                 ~MangaRecord.manga_id.like("picacg/%"),
                 or_(MangaRecord.status == Status.DETAILS_PENDING.value,
                     _download_details_missing_clause()),

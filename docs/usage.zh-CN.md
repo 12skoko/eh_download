@@ -681,6 +681,8 @@ Invoke-RestMethod -Method Put -Uri "$base/api/control/supervisor" `
 
 旧的 `/actions/*` 和 `/archive-confirmation` API 为兼容既有脚本继续保留。新的管理界面使用 `/status/{target_status}`；它只修改数据库状态和关联字段，不在 Web 请求中直接运行子模块。`force_delete_pending` 和 `rename_pending` 都被限制为管理网页发起，通用状态 API 不能直接设置；前者交给 `delete`，后者交给 `validate` 执行实体操作。Supervisor 后续根据 `details_pending`、`download_pending`、`downloaded`、`rename_pending`、`upload_pending`、`uploaded`、`outdated` 和 `force_delete_pending` 等状态安排相应模块。
 
+人工重新入队时，已有 BT 任务不再仅因外部 ID 存在而拒绝提交。网页保留原下载方式和任务 ID，记录请求的下载方式，由 details worker 在获取详情前核实旧任务：确认不存在时清除失效关联；确认已完成（含做种中）时移除客户端任务但不删除文件，确认移除后再切换到请求的下载方式。核实结果、旧任务 ID 和原文件位置写入审计事件。未完成或状态不明确的任务转人工处理；查询或移除确认失败时保留关联，按现有重试策略重试。普通下载调度不会领取仍在等待核实的记录。该机制覆盖单条、批量状态修改和旧重试入口；内部活动任务、租约、其他外部下载方式及手动种子特殊流程仍保留拦截。此改动需同时更新 Web、Supervisor 和 Worker 后使用。
+
 数据库升级会自动执行 `CREATE EXTENSION IF NOT EXISTS pg_trgm`，并为几十万条记录创建标题、归档文件名搜索索引，以及档案队列和人工复核局部索引。正常情况下不需要单独在 Docker PostgreSQL 中启用扩展；只有 migration 账号缺少数据库 `CREATE` 权限时，才需要由 PostgreSQL 管理员提前启用。
 
 ## 10. 从旧 MySQL 迁移
