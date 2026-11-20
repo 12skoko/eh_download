@@ -122,6 +122,11 @@ MANUAL_STATUS_TARGETS = (
         "default_reason": DEFAULT_DOWNLOAD_BLOCKED_REASON,
     },
     {
+        "status": Status.FILTERED_OUT.value,
+        "label": "筛选排除",
+        "description": "人工标记为筛选排除，停止自动处理；不会删除已有文件。",
+    },
+    {
         "status": Status.SKIPPED.value,
         "label": "已跳过",
         "description": "从自动流程中跳过这条档案。",
@@ -171,7 +176,7 @@ MANUAL_STATUS_TARGETS = (
 
 MANUAL_STATUS_VALUES = frozenset(target["status"] for target in MANUAL_STATUS_TARGETS)
 BULK_STATUS_VALUES = frozenset({
-    "discovered", "manual_review", "skipped", "download_blocked",
+    "discovered", "manual_review", "filtered_out", "skipped", "download_blocked",
     "unavailable", "quarantined", "details_pending", "outdated",
 })
 BULK_STATUS_TARGETS = tuple(
