@@ -103,9 +103,10 @@ scan and confirmation, rather than replaying an old deletion job.
 
 `cleanup_download_artifacts.py` scans the configured torrent, direct, H@H, and
 aria2 download roots. It also scans every qBittorrent task whose category is
-exactly `eharchive`. A recognized item is eligible only when the matching
-PostgreSQL manga row is `completed` or `deleted` and has no active attempt or
-lease. The script never changes PostgreSQL and never calls LANraragi.
+exactly `eharchive`. All sources accept `completed` and `deleted`. qBittorrent
+tasks and numeric torrent directories also accept `download_blocked`, `filtered_out`,
+and `skipped`. The matching PostgreSQL row must have no active attempt or lease.
+The script never changes PostgreSQL and never calls LANraragi.
 
 Preview all eligible and skipped items first:
 
@@ -123,5 +124,5 @@ qBittorrent tasks are removed first with `delete_files=false`; the script then
 removes the corresponding numeric torrent directory. Direct and aria2 ZIP
 files are removed individually, while recognized H@H gallery directories are
 removed recursively. Unrecognized names, temporary files, symlinks, missing
-database rows, non-terminal states, and anomalous active leases are preserved
+database rows, ineligible states, and active leases are preserved
 and listed in the report.

@@ -4,7 +4,7 @@
 <div class="page-head"><div><a class="back" href="/v1/special">← 特殊模块</a><h1>下载残留清理</h1></div></div>
 <section class="panel">
   <h2>扫描下载残留</h2>
-  <p>扫描 qBittorrent 中属于 eharchive 的种子，以及种子、直链、H@H、aria2 下载目录。只有数据库状态为 completed 或 deleted，且没有活动任务或租约的条目可以清理。</p>
+  <p>扫描 qBittorrent 中属于 eharchive 的种子，以及种子、直链、H@H、aria2 下载目录。所有来源均可清理“已完成”和“已删除”的条目。qBittorrent 种子和种子下载目录还可清理“下载受阻”“筛选排除”和“已跳过”的条目。有活动任务或租约的档案会跳过。</p>
   <p>先生成预览清单，再手动确认删除。清理不改变普通档案状态，也不删除 LANraragi 档案。</p>
   {% if module_health.available %}
   <form method="post" action="{{ module_url }}/create" class="stack-form download-cleanup-form">

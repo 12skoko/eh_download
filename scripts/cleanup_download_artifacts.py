@@ -24,8 +24,8 @@ def _report_path(log_dir: Path, timezone: str) -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Remove qBittorrent tasks and download artifacts whose database status is "
-            "completed or deleted. Preview is the default."
+            "Clean completed or deleted downloads. qBittorrent tasks and torrent directories "
+            "also qualify for download_blocked, filtered_out, or skipped. Preview is the default."
         )
     )
     parser.add_argument("--config-dir", default="config")

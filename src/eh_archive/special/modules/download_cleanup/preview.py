@@ -152,22 +152,19 @@ def apply_preview(*, database, app, qbit, preview, checkpoint=lambda: None, on_r
                 if manga
                 else None
             )
-            action, detail = _classification(state)
-            if len(mangas) > 1:
-                action, detail = "target_changed", "数据库存在重复数字 ID"
-            if action == "eligible" and any(
-                r["database_manga_id"] != state.manga_id or r["database_status"] != state.status
-                for r in rows
-            ):
-                action, detail = "target_changed", "档案状态与预览不一致，请重新扫描"
-            if action != "eligible":
-                for row in rows:
-                    record(row, action, detail)
-                continue
-
             blocked_torrent = numeric_id in blocked_torrent_ids
             for row in sorted(rows, key=lambda r: r["source"] != "qbittorrent"):
                 source, identity = row["source"], row.get("identity")
+                action, detail = _classification(state, source)
+                if len(mangas) > 1:
+                    action, detail = "target_changed", "数据库存在重复数字 ID"
+                elif action == "eligible" and (
+                    row["database_manga_id"] != state.manga_id or row["database_status"] != state.status
+                ):
+                    action, detail = "target_changed", "档案状态与预览不一致，请重新扫描"
+                if action != "eligible":
+                    record(row, action, detail)
+                    continue
                 try:
                     if not identity:
                         raise ValueError("预览缺少目标身份信息，请重新扫描")

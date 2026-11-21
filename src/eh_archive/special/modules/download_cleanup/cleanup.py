@@ -20,6 +20,7 @@ from eh_archive.db import Database, MangaRecord
 from eh_archive.integrations.qbittorrent import QBittorrentClient
 
 TERMINAL_STATUSES = frozenset({"completed", "deleted"})
+TORRENT_CLEANUP_STATUSES = TERMINAL_STATUSES | {"download_blocked", "filtered_out", "skipped"}
 DIRECT_NAME = re.compile(r"^\[(\d+)](?=.+\.zip$)", re.IGNORECASE)
 HAH_NAME = re.compile(r"^\[(\d+)]")
 ARIA2_NAME = re.compile(r"^(\d+)_[A-Za-z0-9._-]+\.g\d+\.zip$", re.IGNORECASE)
@@ -168,12 +169,13 @@ def load_database_states(database: Database, candidate_ids: set[str]) -> dict[st
     return states
 
 
-def _classification(state: DatabaseState | None) -> tuple[str, str | None]:
+def _classification(state: DatabaseState | None, source: str) -> tuple[str, str | None]:
     if state is None:
         return "database_not_found", None
     if state.has_active_task:
-        return "active_task_skipped", "terminal row still has an active attempt or lease"
-    if state.status not in TERMINAL_STATUSES:
+        return "active_task_skipped", "row has an active attempt or lease"
+    statuses = TORRENT_CLEANUP_STATUSES if source in {"qbittorrent", "torrent_download"} else TERMINAL_STATUSES
+    if state.status not in statuses:
         return "status_skipped", None
     return "eligible", None
 
@@ -220,7 +222,7 @@ def reconcile(
 
     for numeric_id, torrent_hash, target in torrent_candidates:
         state = states.get(numeric_id)
-        action, detail = _classification(state)
+        action, detail = _classification(state, "qbittorrent")
         if action == "eligible":
             action = "would_delete" if not apply else "deleted"
             if apply:
@@ -244,7 +246,7 @@ def reconcile(
 
     for candidate in file_candidates:
         state = states.get(candidate.numeric_id)
-        action, detail = _classification(state)
+        action, detail = _classification(state, candidate.source)
         if action == "eligible":
             if candidate.source == "torrent_download" and candidate.numeric_id in torrent_failures:
                 action = "torrent_delete_failed"
@@ -272,7 +274,7 @@ def reconcile(
     counts = Counter(item.action for item in results)
     return {
         "mode": "apply" if apply else "dry-run",
-        "status_scope": sorted(TERMINAL_STATUSES),
+        "status_scope": sorted(TORRENT_CLEANUP_STATUSES),
         "summary": dict(sorted(counts.items())),
         "results": [asdict(item) for item in results],
     }
