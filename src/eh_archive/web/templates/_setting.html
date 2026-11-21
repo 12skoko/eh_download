@@ -1,5 +1,5 @@
 {% from "_macros.html" import icon with context %}
-{% set wide = field.kind in ['lines', 'mapping', 'toml'] %}
+{% set wide = field.kind in ['lines', 'mapping', 'toml', 'json'] %}
 <div class="setting {{ 'wide' if wide }}" data-field="{{ field.name }}" {% if field.error %}data-invalid{% endif %}>
   <div class="min0">
     <div class="name"><label for="setting-{{ field.name }}">{{ field.label }}</label><span class="effect" {% if field.policy != 'next_worker' %}data-restart{% endif %}>{{ policy_labels[field.policy] }}</span>{% if field.secret %}<span class="effect">{{ icon('key-round', 'icon-sm') }}敏感</span>{% endif %}</div>
@@ -8,7 +8,7 @@
   </div>
   <div class="min0 control">
     {% if not field.editable %}
-      <pre class="codeblock">{{ field.value or '—' }}</pre><div class="default">此项固定，不可修改。</div>
+      <pre class="codeblock">{{ field.value or '—' }}</pre>{% if field.kind != 'json' %}<div class="default">此项固定，不可修改。</div>{% endif %}
     {% elif field.kind == 'bool' %}
       <label class="switch"><input id="setting-{{ field.name }}" type="checkbox" name="{{ field.name }}" value="true" {{ 'checked' if field.checked }} aria-describedby="error-{{ field.name }}">启用</label>
     {% elif wide %}

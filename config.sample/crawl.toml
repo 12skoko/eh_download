@@ -1,4 +1,4 @@
-config_version = 1
+config_version = 3
 observation_days = 1
 collect_end_days = 6
 collect_end_offset = 3000
@@ -7,16 +7,14 @@ collect_end_offset = 3000
 # Archive write failures warn and do not stop collection. Files are retained until removed.
 collect_archive_enabled = false
 collect_archive_dir = "data/collect_pages"
-collect_tags = []
-name_keywords = []
-tag_keywords = []
-# Exact namespace:name gate for EH discovered candidates; empty keeps old behavior.
-screen_required_tags = []
-screen_required_tags_mode = "all"
-exclude_categories = []
 video_markers = ["mp4", "video"]
 excluded_resolutions = ["1280x", "800x", "1920x", "2560x"]
 tag_translation_url = "https://github.com/EhTagTranslation/Database/releases/latest/download/db.text.json"
+
+[screening]
+# null disables this path. Edit both rules in the archive screening module.
+direct_json = 'null'
+algorithm_json = '{"op":"all","children":[{"field":"category","op":"exact","values":["Manga","Doujinshi"]},{"op":"any","children":[{"field":"tag_text","op":"contains","values":["chinese"]},{"field":"rating","op":"gte","value":3}]}]}'
 
 [urls]
 # latest = "https://e-hentai.org/?f_search=..."

@@ -80,9 +80,9 @@ def run(
     )
     database = Database(app.database_url)
     report = RunReport(app.log_dir, "collect", timezone=app.timezone, run_id=run_id)
-    report.fields({"config_dir": config_dir, "sources": len(crawl.collection_urls())})
-    collect_end: int | None = None
     collection_urls = crawl.collection_urls()
+    report.fields({"config_dir": config_dir, "sources": len(collection_urls)})
+    collect_end: int | None = None
     source_results: list[tuple[str, CollectionResult]] = []
     current_source: str | None = None
     try:

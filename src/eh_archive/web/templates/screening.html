@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% set nav = 'workflows' %}
+{% block title %}档案筛选{% endblock %}
+{% block crumbs %}<a href="/workflows">工作流</a> / 档案筛选{% endblock %}
+{% block main %}
+<div class="page page-narrow" id="screen-editor" data-revision="{{ revision }}">
+  <link rel="stylesheet" href="/static/screening.css">
+  <div class="page-head"><div><h1>档案筛选</h1><p>直接放行优先，其余档案按算法候选规则判断。两条路径均未命中时滤除。</p></div></div>
+  <section class="card rule-editor">
+    <div class="card-head">
+      <div class="seg" role="group" aria-label="选择规则">
+        <button type="button" data-tab="direct">直接放行</button>
+        <button type="button" data-tab="algorithm">算法候选</button>
+      </div>
+    </div>
+    <div class="card-body" data-tree></div>
+    <footer class="savebar rule-footer">
+      <details data-rule-details>
+        <summary>查看规则 JSON</summary>
+        <pre class="codeblock" data-rule-json></pre>
+      </details>
+      <button class="btn btn-primary" data-save>保存两份规则</button>
+    </footer>
+  </section>
+  <section class="card preview-panel mt16">
+    <div class="card-head"><h2>预览草稿</h2></div>
+    <div class="card-body">
+      <div class="preview-controls">
+        <label class="rule-control"><span>档案范围</span><select class="select" data-scope><option value="pending">待初筛档案</option><option value="all">所有 EH 档案</option></select></label>
+        <label class="rule-control"><span>最近入库条数</span><input data-limit type="number" class="input" min="1" max="1000" value="100"></label>
+        <button class="btn" data-preview>预览</button>
+      </div>
+      <div data-results></div>
+    </div>
+  </section>
+  <p role="status" aria-live="polite" data-status></p>
+  <script type="application/json" id="screen-trees">{{ trees|tojson }}</script>
+  <script src="/static/screening.js"></script>
+</div>
+{% endblock %}

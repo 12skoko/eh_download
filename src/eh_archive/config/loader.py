@@ -8,8 +8,9 @@ from dataclasses import dataclass, field
 from datetime import time as clock_time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus, urlsplit
+from urllib.parse import urlsplit
 
+from ..domain.screen_rules import V2_ALGORITHM, compile_rule
 from ..tasks.registry import MODULES
 from .defaults import effective_values
 from .validation import validate_structure
@@ -166,15 +167,11 @@ class SupervisorConfig:
 @dataclass(frozen=True)
 class CrawlConfig:
     urls: dict[str, str] = field(default_factory=dict)
-    collect_tags: tuple[str, ...] = ()
-    name_keywords: tuple[str, ...] = ()
-    tag_keywords: tuple[str, ...] = ()
-    screen_required_tags: tuple[str, ...] = ()
-    screen_required_tags_mode: str = "all"
+    direct_json: str = "null"
+    algorithm_json: str = V2_ALGORITHM
     observation_days: int = 1
     collect_end_days: int = 6
     collect_end_offset: int = 3000
-    exclude_categories: tuple[str, ...] = ()
     video_markers: tuple[str, ...] = ("mp4", "video")
     excluded_resolutions: tuple[str, ...] = ("1280x", "800x", "1920x", "2560x")
     tag_translation_url: str = (
@@ -184,11 +181,7 @@ class CrawlConfig:
     collect_archive_dir: Path = Path("data/collect_pages")
 
     def collection_urls(self) -> tuple[str, ...]:
-        values = list(self.urls.values())
-        values.extend(
-            f"https://exhentai.org/tag/{quote_plus(tag, safe=':')}" for tag in self.collect_tags
-        )
-        return tuple(dict.fromkeys(values))
+        return tuple(dict.fromkeys(self.urls.values()))
 
 
 @dataclass(frozen=True)
@@ -416,21 +409,6 @@ def _module_map(value: Any) -> dict[str, bool]:
     if invalid:
         raise TypeError("[modules] entries must be true or false: " + ", ".join(invalid))
     return {name: bool(value.get(name, True)) for name in SUPERVISOR_MODULES}
-
-
-def _string_tuple(value: Any, key: str) -> tuple[str, ...]:
-    if not isinstance(value, list):
-        raise TypeError(f"{key} must be an array of strings")
-    result: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            raise TypeError(f"{key} must be an array of strings")
-        item = item.strip()
-        if not item:
-            raise ValueError(f"{key} must not contain empty tags")
-        if item not in result:
-            result.append(item)
-    return tuple(result)
 
 
 def _optional_clock_time(value: Any, key: str) -> clock_time | None:
@@ -772,19 +750,11 @@ def load_config(
         raise ValueError("collect_archive_dir 不能包含空字符")
     crawl = CrawlConfig(
         urls={str(k): str(v) for k, v in dict(crawl_raw.get("urls", {})).items()},
-        collect_tags=_string_tuple(crawl_raw.get("collect_tags", []), "collect_tags"),
-        name_keywords=tuple(crawl_raw.get("name_keywords", [])),
-        tag_keywords=tuple(crawl_raw.get("tag_keywords", [])),
-        screen_required_tags=tuple(
-            ":".join(part.strip() for part in tag.casefold().split(":", 1))
-            for tag in _string_tuple(crawl_raw.get("screen_required_tags", []),
-                                     "screen_required_tags")
-        ),
-        screen_required_tags_mode=str(crawl_raw.get("screen_required_tags_mode", "all")),
+        direct_json=crawl_raw["screening"]["direct_json"],
+        algorithm_json=crawl_raw["screening"]["algorithm_json"],
         observation_days=int(crawl_raw.get("observation_days", 1)),
         collect_end_days=int(crawl_raw.get("collect_end_days", 6)),
         collect_end_offset=int(crawl_raw.get("collect_end_offset", 3000)),
-        exclude_categories=tuple(crawl_raw.get("exclude_categories", [])),
         video_markers=tuple(crawl_raw.get("video_markers", ["mp4", "video"])),
         excluded_resolutions=tuple(
             crawl_raw.get("excluded_resolutions", ["1280x", "800x", "1920x", "2560x"])
@@ -795,13 +765,8 @@ def load_config(
         collect_archive_enabled=crawl_raw.get("collect_archive_enabled", False),
         collect_archive_dir=Path(collect_archive_dir.strip()).expanduser().resolve(),
     )
-    if crawl.screen_required_tags_mode not in {"all", "any"}:
-        raise ValueError("screen_required_tags_mode 必须是 all 或 any")
-    for tag in crawl.screen_required_tags:
-        namespace, separator, name = tag.partition(":")
-        if (not separator or not namespace or not name or ":" in name or "," in tag
-                or not re.fullmatch(r"[a-z][a-z0-9_]*", namespace)):
-            raise ValueError("screen_required_tags 必须使用完整 namespace:name 标签")
+    compile_rule(crawl.direct_json, "screening.direct_json")
+    compile_rule(crawl.algorithm_json, "screening.algorithm_json")
     sessions = {
         str(k): _role(dict(secrets_raw.get("sessions", {})), str(k))
         for k in secrets_raw.get("sessions", {})

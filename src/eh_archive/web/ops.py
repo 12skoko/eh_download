@@ -153,9 +153,9 @@ def install(app, ctx: UIContext) -> None:
                     replace(
                         field,
                         value=str(form.get(field.name, field.value)) if not field.secret else "",
-                        checked=field.name in form if field.editable else field.checked,
+                        checked=field.name in form,
                         error=error.fields.get(field.name, "") if error else "",
-                    )
+                    ) if field.editable else field
                     for field in active.fields
                 ),
             )

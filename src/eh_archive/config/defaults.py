@@ -42,6 +42,14 @@ def effective_values(filename: str, overrides: dict) -> dict:
     for key in {"crawl.toml": ("urls",), "app.toml": ()}.get(filename, ()):
         if key in overrides:
             defaults.pop(key, None)
+    version = overrides.get("config_version", 0)
+    if filename == "crawl.toml" and type(version) is int and version in (0, 1, 2):
+        from ..management.config_migrations.steps import crawl_v1_to_v2, crawl_v2_to_v3
+
+        overrides = deepcopy(overrides)
+        if version < 2:
+            crawl_v1_to_v2(overrides)
+        crawl_v2_to_v3(overrides)
     if filename == "special/video_archive.toml":
         # Read old files before startup migration removes this retired setting.
         version = overrides.get("config_version", 0)

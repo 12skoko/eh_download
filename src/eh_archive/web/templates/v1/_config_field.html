@@ -1,8 +1,8 @@
-<div class="config-setting {{ 'config-field-wide' if field.kind in ['lines', 'mapping', 'toml'] }}" data-field="{{ field.name }}">
+<div class="config-setting {{ 'config-field-wide' if field.kind in ['lines', 'mapping', 'toml', 'json'] }}" data-field="{{ field.name }}">
   <div class="config-setting-heading"><label for="setting-{{ field.name }}">{{ field.label }}</label><span class="config-effect {{ 'effect-restart' if field.policy != 'next_worker' }}">{{ policy_labels[field.policy] }}</span></div>
   <code class="config-key">{{ field.key }}</code>
   {% if not field.editable %}
-    <div class="config-readonly"><pre>{{ field.value or '—' }}</pre><small>此项固定，不可修改。</small></div>
+    <div class="config-readonly"><pre>{{ field.value or '—' }}</pre>{% if field.kind != 'json' %}<small>此项固定，不可修改。</small>{% endif %}</div>
   {% elif field.kind == 'bool' %}
     <label class="config-switch"><input id="setting-{{ field.name }}" type="checkbox" name="{{ field.name }}" value="true" {{ 'checked' if field.checked }} aria-describedby="error-{{ field.name }}"><span>启用</span></label>
   {% elif field.kind in ['lines', 'mapping', 'toml'] %}

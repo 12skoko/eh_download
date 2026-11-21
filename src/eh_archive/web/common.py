@@ -309,6 +309,8 @@ def v1_url(request) -> str:
         head = parts[0]
         if head == "archives" and len(parts) > 1:
             target = "/manga/" + "/".join(parts[1:])
+        elif parts == ["workflows", "screening"]:
+            target = "/special"
         elif head == "workflows" and len(parts) == 2:
             target = f"/special/modules/{parts[1]}"
         elif head == "workflows" and len(parts) >= 3:

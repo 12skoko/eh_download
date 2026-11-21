@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import re
@@ -231,13 +232,8 @@ CRAWL_FIELDS = (
               help="普通 collect 在解析前保存 gzip HTML 和每轮一个 manifest.json；归档失败不阻断采集。"),
     FieldSpec(("collect_archive_dir",), "页面归档目录",
               help="相对路径以程序工作目录为基准。归档持续保留，需手动清理。下次采集生效。"),
-    FieldSpec(("collect_tags",), "采集标签", "lines", help="每行一个标签。"),
-    FieldSpec(("name_keywords",), "名称关键词", "lines", help="每行一个关键词。"),
-    FieldSpec(("tag_keywords",), "标签关键词", "lines", help="每行一个关键词。"),
-    FieldSpec(("screen_required_tags",), "EH 必需标签", "lines",
-              help="每行一个 namespace:name 精确标签；空列表保持原有筛选行为。"),
-    FieldSpec(("screen_required_tags_mode",), "必需标签匹配", "choice", options=("all", "any")),
-    FieldSpec(("exclude_categories",), "排除分类", "lines", help="每行一个分类。"),
+    FieldSpec(("screening", "direct_json"), "直接放行", "json", editable=False),
+    FieldSpec(("screening", "algorithm_json"), "算法候选", "json", editable=False),
     FieldSpec(("video_markers",), "视频标记", "lines", help="每行一个标记。"),
     FieldSpec(("excluded_resolutions",), "排除分辨率", "lines", help="每行一个分辨率。"),
     FieldSpec(("tag_translation_url",), "标签翻译地址"),
@@ -467,7 +463,9 @@ def field_group(section: str, path: tuple[str, ...]) -> tuple[str, bool]:
     if section == "crawl":
         if key in {"collect_archive_enabled", "collect_archive_dir"}:
             return "页面归档", False
-        if key in {"urls", "collect_tags"}:
+        if key == "screening":
+            return "档案筛选规则", False
+        if key == "urls":
             return "采集来源", False
         if key in {"observation_days", "collect_end_days", "collect_end_offset"}:
             return "采集范围", False
@@ -573,6 +571,19 @@ def _section_document(config_dir: Path, name: str):
     return raw, document, table, defaults, effective
 
 
+def load_screening_editor(config_dir):
+    raw, _, _, _, effective = _section_document(Path(config_dir), "crawl")
+    return effective["screening"], _revision(raw)
+
+
+def save_screening_editor(config_dir, direct, algorithm, revision):
+    specs = (FieldSpec(("screening", "direct_json"), "直接放行规则"),
+             FieldSpec(("screening", "algorithm_json"), "算法候选规则"))
+    values = {specs[0].name: direct, specs[1].name: algorithm}
+    result = update_config_section(config_dir, "crawl", values, revision=revision, field_specs=specs)
+    return _revision(result.candidate.encode("utf-8")) if result.candidate is not None else revision
+
+
 def load_config_sections(config_dir: str | Path) -> tuple[ConfigSection, ...]:
     config_dir = Path(config_dir)
     sections = []
@@ -666,6 +677,7 @@ def update_config_section(
     *,
     revision: str,
     publish: bool = True,
+    field_specs: tuple[FieldSpec, ...] | None = None,
 ) -> ConfigUpdateResult:
     section_meta = dict(_SECTION_META)
     if section_name not in section_meta:
@@ -674,6 +686,8 @@ def update_config_section(
     filename = CONFIG_FILENAMES[section_name]
     path = config_dir / filename
     _, _, specs = section_meta[section_name]
+    if field_specs is not None:
+        specs = field_specs
 
     with _CONFIG_WRITE_LOCK, configuration_lock(config_dir):
         original_exists = path.exists()
@@ -750,6 +764,12 @@ def update_config_section(
 
 def _field_view(spec: FieldSpec, value: Any) -> ConfigField:
     checked = bool(value) if spec.kind == "bool" else False
+    display = _format_field_value(value, safe=not spec.editable)
+    if spec.kind == "json" and isinstance(value, str):
+        try:
+            display = json.dumps(json.loads(value), ensure_ascii=False, indent=2)
+        except (ValueError, RecursionError):
+            pass  # Keep malformed rules visible for diagnosis.
     return ConfigField(
         name=spec.name,
         label=spec.label,
@@ -758,7 +778,7 @@ def _field_view(spec: FieldSpec, value: Any) -> ConfigField:
         options=spec.options,
         minimum=spec.minimum,
         help=spec.help,
-        value=_format_field_value(value, safe=not spec.editable),
+        value=display,
         checked=checked,
     )
 

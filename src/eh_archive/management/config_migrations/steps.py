@@ -1,5 +1,6 @@
 """Ordered, historical config transformations. Never derive these from defaults."""
 
+import json
 import logging
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -79,6 +80,34 @@ def full_collect_v1_to_v2(document):
         document.pop(name, None)
 
 
+def crawl_v1_to_v2(document):
+    """Preserve positive keyword matches; retire the old exclusion gates."""
+    from ...config.validation import ConfigValueError
+    from ...domain.screen_rules import V2_ALGORITHM
+
+    if "screening" not in document:
+        document["screening"] = {}
+    rules = document["screening"]
+    if not isinstance(rules, MutableMapping):
+        raise ConfigValueError("crawl.toml", ("screening",), "必须是配置表")
+    leaves = []
+    for key, field in (("name_keywords", "title"), ("tag_keywords", "tag_text")):
+        values = document.pop(key, [])
+        if not isinstance(values, list) or any(not isinstance(v, str) for v in values):
+            raise ValueError(f"crawl.toml: {key} 必须为文本列表")
+        if values:
+            leaves.append({"field": field, "op": "word", "values": list(values)})
+    direct = {"op": "any", "children": leaves} if leaves else None
+    rules.setdefault("direct_json", json.dumps(direct, ensure_ascii=False))
+    rules.setdefault("algorithm_json", V2_ALGORITHM)
+    for key in ("exclude_categories", "screen_required_tags", "screen_required_tags_mode"):
+        document.pop(key, None)
+
+
+def crawl_v2_to_v3(document):
+    document.pop("collect_tags", None)
+
+
 # Keys are source versions; each function advances exactly one version.
 MIGRATIONS = {
     "app.toml": {0: establish_version, 1: app_v1_to_v2},
@@ -88,7 +117,7 @@ MIGRATIONS = {
         2: supervisor_v2_to_v3,
         3: supervisor_v3_to_v4,
     },
-    "crawl.toml": {0: establish_version},
+    "crawl.toml": {0: establish_version, 1: crawl_v1_to_v2, 2: crawl_v2_to_v3},
     "secrets.toml": {0: establish_version},
     "special/video_archive.toml": {0: establish_version, 1: video_archive_v1_to_v2},
     "special/lanraragi_compare.toml": {0: establish_version},

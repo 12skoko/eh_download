@@ -494,12 +494,29 @@ class ArchiveRepository:
         )
 
     def list_screen_group(self, real_name: str) -> list[MangaRecord]:
+        last_reason = (
+            select(EventLog.detail["reason"].as_string())
+            .where(EventLog.manga_id == MangaRecord.manga_id, EventLog.operation == "screen",
+                   EventLog.event_type == "status_changed")
+            .order_by(EventLog.id.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
         return list(
             self.session.scalars(
                 select(MangaRecord)
                 .where(
                     MangaRecord.real_name == real_name,
-                    MangaRecord.category.in_(("Manga", "Doujinshi")),
+                    ~MangaRecord.manga_id.like("picacg/%"),
+                    or_(
+                        MangaRecord.status == Status.DISCOVERED.value,
+                        and_(
+                            MangaRecord.screen_group_id.is_not(None),
+                            func.coalesce(last_reason, "").not_in(
+                                ("direct_rule", "name_keyword", "tag_keyword")
+                            ),
+                        ),
+                    ),
                 )
                 .order_by(MangaRecord.created_at, MangaRecord.manga_id)
                 .with_for_update()

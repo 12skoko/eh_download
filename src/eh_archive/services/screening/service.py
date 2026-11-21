@@ -27,13 +27,7 @@ def _manga(row: MangaRecord) -> Manga:
 class ScreeningService:
     def __init__(self, repository: ArchiveRepository, crawl: CrawlConfig) -> None:
         self.repository = repository
-        self.policy = ScreeningPolicy(
-            name_keywords=crawl.name_keywords,
-            tag_keywords=crawl.tag_keywords,
-            exclude_categories=crawl.exclude_categories,
-            required_tags=crawl.screen_required_tags,
-            required_tags_mode=crawl.screen_required_tags_mode,
-        )
+        self.policy = ScreeningPolicy(crawl.direct_json, crawl.algorithm_json)
 
     def run_batch(self, limit: int = 100, *, actor: str = "screen") -> ScreeningBatchResult:
         if limit < 0:
@@ -110,18 +104,13 @@ class ScreeningService:
         evaluations = {
             row.manga_id: self.policy.evaluate(_manga(row))
             for row in similar
-            if row.status == Status.DISCOVERED.value
+            if row.status not in {Status.DEFERRED.value, Status.FILTERED_OUT.value}
         }
-        competing: list[MangaRecord] = []
-        for row in similar:
-            if row.status in {Status.DEFERRED.value, Status.FILTERED_OUT.value}:
-                continue
-            if (
-                row.status == Status.DISCOVERED.value
-                and evaluations[row.manga_id].action == ScreenAction.FILTER_OUT
-            ):
-                continue
-            competing.append(row)
+        competing = [
+            row for row in similar
+            if row.manga_id in evaluations
+            and evaluations[row.manga_id].action == ScreenAction.COMPARE_GROUP
+        ]
         priorities = [screen_priority(_manga(row)) for row in competing]
         selected_indexes = (
             {0}
@@ -135,24 +124,16 @@ class ScreeningService:
             if row.status != Status.DISCOVERED.value:
                 continue
             eligibility = evaluations[row.manga_id]
-            if eligibility.action == ScreenAction.FILTER_OUT:
-                status = Status.FILTERED_OUT
-                reason = eligibility.reason
-                selected: bool | None = None
-                priority: float | None = None
-                group_id: str | None = None
-            elif eligibility.action == ScreenAction.QUEUE:
-                status = Status.DETAILS_PENDING
-                reason = eligibility.reason
-                selected = True
-                priority = screen_priority(_manga(row))
-                group_id = relation
-            else:
-                selected = row.manga_id in selected_ids
-                status = Status.DETAILS_PENDING if selected else Status.SKIPPED
-                reason = "version_selected" if selected else "version_rejected"
-                priority = screen_priority(_manga(row))
-                group_id = relation
+            if eligibility.action != ScreenAction.COMPARE_GROUP:
+                status = (Status.DETAILS_PENDING if eligibility.action == ScreenAction.QUEUE
+                          else Status.FILTERED_OUT)
+                self._apply_single(row, status, eligibility.reason, result, actor=actor)
+                continue
+            selected = row.manga_id in selected_ids
+            status = Status.DETAILS_PENDING if selected else Status.SKIPPED
+            reason = "version_selected" if selected else "version_rejected"
+            priority = screen_priority(_manga(row))
+            group_id = relation
             self.repository.apply_screen_outcome(
                 row,
                 status=status,

@@ -3,6 +3,7 @@
 {% block content %}
 <div class="page-head"><div><p class="eyebrow">模块目录</p><h1>特殊模块</h1><p class="muted">选择一个模块进入它自己的控制台。不同模块独立管理操作、状态和处理记录。</p></div></div>
 <section class="module-grid" aria-label="特殊模块">
+  <a class="module-card" href="/workflows/screening" hx-boost="false"><h2>档案筛选</h2><p>编辑规则与预览档案去向</p></a>
   {% for module in modules %}
   <a class="module-card" href="{{ module.url }}">
     <div class="module-card-head">

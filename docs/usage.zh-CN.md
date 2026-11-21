@@ -132,8 +132,8 @@ python3.11 -m venv .venv
 没有版本变化或缺失字段时不改写；高于程序支持版本则拒绝启动，不进行降级转换。
 普通 CLI 任务和 Worker 不执行迁移，升级后应先启动 Web 或 Supervisor。
 
-目前 `supervisor.toml` 的结构版本为 4，`app.toml` 为 2；`special/video_archive.toml` 和
-`special/full_collect.toml` 为 2，`crawl.toml`、`secrets.toml` 及其余已登记的特殊模块配置为 1。
+目前 `supervisor.toml` 的结构版本为 4，`crawl.toml` 为 3，`app.toml`、`special/video_archive.toml` 和
+`special/full_collect.toml` 为 2，`secrets.toml` 及其余已登记的特殊模块配置为 1。
 `migration.toml` 是旧数据库导入工具配置，不在运行配置迁移范围内。
 已登记的运行配置文件缺失时，启动迁移从对应的 `config.sample/` 模板准备新文件，
 校验通过后自动创建并保留模板的当前版本号；配置目录本身仍须预先存在。
@@ -283,10 +283,9 @@ qBittorrent 返回 `/home/ubuntu/ptcache/ehentai/1234567/archive.zip` 后，EH A
 observation_days = 1
 collect_end_days = 6
 collect_end_offset = 3000
-collect_tags = ["artist:某作者"]
-name_keywords = ["关键词"]
-tag_keywords = ["某作者"]
-exclude_categories = ["Western"]
+[screening]
+direct_json = '{"field":"title","op":"contains","match":"any","values":["总集篇","合集"]}'
+algorithm_json = '{"field":"tags","op":"exact","values":["language:chinese"]}'
 
 [urls]
 latest = "https://e-hentai.org/?f_search=..."
@@ -294,7 +293,19 @@ latest = "https://e-hentai.org/?f_search=..."
 
 自动采集会跟随列表的下一页，并从最近 `collect_end_days` 天内最早的 `deferred` 记录计算终点：画廊 ID 减去 `collect_end_offset`。默认值与旧程序一致，分别是 6 天和 3000；找不到符合条件的记录时会抓到网站最后一页。Collect 只根据 `posted_at + observation_days` 维护时间状态：尚未到期的条目为 `deferred`，已经到期的条目为 `discovered`。观察期从画廊的 `posted_at` 开始计算，重复抓取不会重新计时。关键词、分类、语言、评分和同名版本选择全部由独立的 Screen 模块处理。
 
-`collect_tags` 会将标签转换为 ExHentai 标签页 URL，例如 `artist:tamano kedama` 转换为 `https://exhentai.org/tag/artist:tamano+kedama`，然后与 `[urls]` 合并并去重。它负责主动抓取标签页；`tag_keywords` 只负责条目抓取后的筛选，两者用途不同。
+普通采集只访问「采集来源 → 采集地址」中列出的 URL，相同地址只访问一次。配置页的「档案筛选规则」直接展示已保存的「直接放行」和「算法候选」两份 JSON。编辑规则请进入「工作流 → 档案筛选」，备用界面从「特殊模块」进入。
+
+两个页签各有「包含条件」和「排除条件」。当前路径在包含条件成立且排除条件未命中时匹配。只填排除条件时，该路径匹配其余所有档案。两个框都留空会关闭该路径。在「直接放行」中被排除的档案仍会按「算法候选」页自己的规则判断。
+
+在单条条件卡片或嵌套子组上点「＋ 备注」可记录用途。点击已有备注即可编辑，清空文字可移除备注。点「保存两份规则」后，备注写入 `crawl.toml` 对应条件或子组的 `note` 字段。预览里的「判定依据」会将备注显示在对应的判定旁。旧版已保存的页签和外层框备注仍保存在原 JSON 中。
+
+每个框内都可选择与、或，也可嵌套子组和取反。条目内的多值可以选任一或全部。输入多个值用分号、中文分号或换行，正则只用换行。列表语言在「EH 标签 → 语言」选择，按完整命名空间标签匹配。页数和星级支持区间，列表星级为 0～5，旧数据把无法解析的星级也记为 0。日期按 UTC 日历日计算，区间包含两端。
+
+直接放行优先，算法候选使用同名版本择优。历史同名档案只在有择优分组记录且仍符合当前候选条件时参与竞争；先前直接放行的版本不占择优名额。空树 `null` 关闭对应路径，显式匹配全部用 `{"op":"always"}`。两份规则都为空时，待初筛档案全部滤除。
+
+草稿预览对所选范围内最近的 1～1000 条 EH 档案试跑两份规则。展开一个结果分类，点档案旁的「判定依据」，可查看包含和排除条件的判定、比对的值、档案原值，以及因前面已确定结果而跳过的条件。每类可翻页查看全部档案。「算法候选」表示已通过候选规则，版本择优在正式任务中执行。保存后，下一次筛选任务读取新规则，历史档案不会自动重筛。
+
+升级时由新进程在数据库升级后、恢复服务前备份并迁移实际配置。v1 标题与标签关键词保留词边界语义，旧的必需标签、排除分类和内置翻译排除退役。算法树初始包含旧分类、中文文本和 3 星门槛，可自行编辑。v2 升至 v3 时移除 `collect_tags`，保留原有的 `[urls]` 和筛选规则。若要继续采集某个标签页，可将其完整地址显式加入 `[urls]`。原文件保存在配置目录的 `backups/config-migration-*/crawl.toml`。
 
 ### 4.4 `config/supervisor.toml`
 
@@ -464,7 +475,7 @@ Screen 不按固定周期运行。Supervisor 发现数据库中存在 `discovere
 eharchive --config-dir config task screen --limit 100
 ```
 
-Screen 命中名称或标签关键词时进入 `details_pending`；不符合分类、语言、评分等基本收录规则时进入 `filtered_out`；符合规则但在同名版本比较中落选时进入 `skipped`；胜出版本进入 `details_pending`。`filtered_out` 表示未通过筛选准入，`skipped` 只表示参加版本比较后落选。
+Screen 命中直接放行树时进入 `details_pending`；两树均未命中时进入 `filtered_out`；算法候选在同名比较中落选时进入 `skipped`；胜出版本进入 `details_pending`。`filtered_out` 表示未通过筛选准入，`skipped` 只表示参加版本比较后落选。
 
 ### 7.2 手工加入单个画廊
 
@@ -847,6 +858,4 @@ eharchive --config-dir config special action 123 resume --row-version 8
 eharchive --config-dir config special action 123 terminate --row-version 9 --inputs '{"confirmed":true}'
 ```
 
-筛选入口另有 crawl.toml 的 screen_required_tags 与 screen_required_tags_mode
-（all/any）。必需标签按 namespace:name 精确匹配，不能被名称或标签关键词绕过；
-空列表保持旧行为。具体标签需要按现有采集条件填写。全量 filtered_out 不会自动重新筛选。
+全量采集交给同一套档案筛选规则判断。历史 `filtered_out` 记录不会自动重新筛选。

@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from ...domain.models import Manga
+from ...domain.screen_rules import V2_ALGORITHM, RuleTrace, compile_rule, normalized_eh_tags
 
 
 class ScreenAction(StrEnum):
@@ -25,82 +26,22 @@ def _contains_key(text: str, keyword: str) -> bool:
     return bool(re.search(r"\b" + re.escape(keyword) + r"\b", text))
 
 
-def normalized_eh_tags(tags_raw: str) -> frozenset[str]:
-    """Read both namespace:a,b and namespace:a,namespace:b storage formats."""
-    result: set[str] = set()
-    namespace = ""
-    for token in tags_raw.split(","):
-        token = token.strip().casefold()
-        if ":" in token:
-            namespace, token = (part.strip() for part in token.split(":", 1))
-        if namespace and token:
-            result.add(f"{namespace}:{token}")
-    return frozenset(result)
-
-
-@dataclass(frozen=True)
 class ScreeningPolicy:
-    name_keywords: tuple[str, ...] = ()
-    tag_keywords: tuple[str, ...] = ()
-    exclude_categories: tuple[str, ...] = ()
-    required_tags: tuple[str, ...] = ()
-    required_tags_mode: str = "all"
-
-    def __post_init__(self) -> None:
-        if self.required_tags_mode not in {"all", "any"}:
-            raise ValueError("required_tags_mode must be all or any")
-        normalized: list[str] = []
-        for value in self.required_tags:
-            namespace, separator, tag = value.strip().casefold().partition(":")
-            if not separator or not namespace.strip() or not tag.strip() or "," in value:
-                raise ValueError("required tags must be exact namespace:name values")
-            normalized.append(f"{namespace.strip()}:{tag.strip()}")
-        object.__setattr__(self, "required_tags", tuple(normalized))
+    def __init__(
+        self, direct_json: str = "null", algorithm_json: str = V2_ALGORITHM,
+        *, trace: RuleTrace | None = None,
+    ):
+        today = datetime.now(UTC).date()
+        self.direct = compile_rule(direct_json, "screening.direct_json", today=today, trace=trace)
+        self.algorithm = compile_rule(
+            algorithm_json, "screening.algorithm_json", today=today, trace=trace
+        )
 
     def evaluate(self, manga: Manga) -> EligibilityDecision:
-        if self.required_tags:
-            tags = normalized_eh_tags(manga.tags_raw)
-            matched = (tag in tags for tag in self.required_tags)
-            accepted = all(matched) if self.required_tags_mode == "all" else any(matched)
-            if not accepted:
-                return EligibilityDecision(ScreenAction.FILTER_OUT, "required_tag_missing")
-        if manga.category in self.exclude_categories:
-            return EligibilityDecision(ScreenAction.FILTER_OUT, "excluded_category")
-
-        lowered_tags = manga.tags_raw.lower()
-        languages = {
-            "english",
-            "korean",
-            "russian",
-            "french",
-            "dutch",
-            "hungarian",
-            "italian",
-            "polish",
-            "portuguese",
-            "spanish",
-            "thai",
-            "vietnamese",
-            "ukrainian",
-        }
-        if (
-            "translated" in lowered_tags
-            and "chinese" not in lowered_tags
-            and any(language in lowered_tags for language in languages)
-        ):
-            return EligibilityDecision(ScreenAction.FILTER_OUT, "unsupported_translation")
-        if any(
-            _contains_key(manga.name.lower(), keyword.lower()) for keyword in self.name_keywords
-        ):
-            return EligibilityDecision(ScreenAction.QUEUE, "name_keyword")
-        if any(
-            _contains_key(manga.tags_raw.lower(), keyword.lower()) for keyword in self.tag_keywords
-        ):
-            return EligibilityDecision(ScreenAction.QUEUE, "tag_keyword")
-        if manga.category in {"Manga", "Doujinshi"} and (
-            "chinese" in lowered_tags or (manga.rating or 0) >= 30
-        ):
-            return EligibilityDecision(ScreenAction.COMPARE_GROUP, "eligible_for_version_selection")
+        if self.direct(manga):
+            return EligibilityDecision(ScreenAction.QUEUE, "direct_rule")
+        if self.algorithm(manga):
+            return EligibilityDecision(ScreenAction.COMPARE_GROUP, "algorithm_rule")
         return EligibilityDecision(ScreenAction.FILTER_OUT, "screen_not_eligible")
 
 
