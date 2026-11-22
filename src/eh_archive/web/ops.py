@@ -20,6 +20,7 @@ from .configuration import (
     update_config_section,
 )
 from .logs import list_logs, resolve_log
+from .screening_editor import install_screening_editor
 from .services import COMPONENT_LABELS, list_events
 from .common import PREFIX, UIContext
 
@@ -141,6 +142,8 @@ def install(app, ctx: UIContext) -> None:
         )
 
     # ------------------------------------------------------------------ 配置
+    install_screening_editor(app, ctx)
+
     def render_settings(request, selected, *, saved=None, error=None, form=None, status=200):
         sections = load_config_sections(config_dir)
         active = next((s for s in sections if s.name == selected), sections[0])

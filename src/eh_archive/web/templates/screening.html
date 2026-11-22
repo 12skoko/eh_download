@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% set nav = 'workflows' %}
-{% block title %}档案筛选{% endblock %}
-{% block crumbs %}<a href="/workflows">工作流</a> / 档案筛选{% endblock %}
+{% set nav = 'settings' %}
+{% block title %}档案筛选规则{% endblock %}
+{% block crumbs %}<a href="/settings" hx-boost="false">配置</a> / <a href="/settings?section=crawl" hx-boost="false">采集配置</a> / <span class="current">档案筛选规则</span>{% endblock %}
 {% block main %}
 <div class="page page-narrow" id="screen-editor" data-revision="{{ revision }}">
   <link rel="stylesheet" href="/static/screening.css">
-  <div class="page-head"><div><h1>档案筛选</h1><p>直接放行优先，其余档案按算法候选规则判断。两条路径均未命中时滤除。</p></div></div>
+  <div class="page-head"><div><h1>档案筛选规则</h1><p>直接放行优先，其余档案按算法候选规则判断。两条路径均未命中时滤除。</p></div></div>
   <section class="card rule-editor">
     <div class="card-head">
       <div class="seg" role="group" aria-label="选择规则">

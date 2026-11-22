@@ -113,7 +113,7 @@
   let dictionaryRequest, listId = 0;
   function tagDictionary() {
     if (!dictionaryRequest) {
-      dictionaryRequest = fetch("/workflows/screening/tag-dictionary").then(async response => {
+      dictionaryRequest = fetch(location.pathname + "/tag-dictionary").then(async response => {
         if (!response.ok) throw new Error("翻译词库暂不可用");
         const groups = await response.json();
         return Object.entries(groups).map(([ns, group]) => ({
@@ -701,12 +701,16 @@
     const controls = [find("[data-save]"),find("[data-preview]")];
     controls.forEach(el => el.disabled=true);
     try {
-      const response = await fetch("/workflows/screening/" + action, {method:"POST",body:params});
+      const response = await fetch(location.pathname + "/" + action, {method:"POST",body:params});
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "请求失败");
       if (action === "save") {
         root.dataset.revision = data.revision;
-        status.textContent = version === editVersion ? "已保存，下次筛选任务生效" : "已保存提交时的规则，当前仍有未保存修改";
+        if (version === editVersion) {
+          location.assign("/settings?section=crawl&saved=next_worker");
+        } else {
+          status.textContent = "已保存提交时的规则，当前仍有未保存修改";
+        }
       } else if (version === editVersion) {
         const result = find("[data-results]");
         result.replaceChildren();

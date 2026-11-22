@@ -70,9 +70,6 @@ def workflow_url(kind: str, workflow_id: int) -> str:
 
 
 def install(app, ctx: UIContext) -> None:
-    from .screening_editor import install_screening_editor
-
-    install_screening_editor(app, ctx)
     database = ctx.database
     app_config = ctx.app_config
     config_dir = ctx.config_dir

@@ -56,7 +56,7 @@ def _tag_dictionary(ctx) -> bytes:
 
 
 def install_screening_editor(app, ctx):
-    url = "/workflows/screening"
+    url = "/settings/crawl/screening"
     dictionary_lock = Lock()
     dictionary_bytes = None
     refresh_at = 0.0

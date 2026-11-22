@@ -33,6 +33,12 @@
             {% if advanced %}<details class="advanced" {% if visible|selectattr('error')|list %}open{% endif %}><summary>{{ icon('chevron-right', 'icon-sm') }}高级设置 <span class="xs muted">连接、限制与低频选项 · {{ visible|length }} 项</span></summary>{% endif %}
             {% for group, fields in grouped %}
             <div class="section-title setting-group">{{ '高级 · ' if advanced else '' }}{{ group }}</div>
+            {% if section.name == 'crawl' and group == '档案筛选规则' %}
+            <div class="setting setting-action">
+              <div class="min0 xs muted">直接放行优先，其余档案按算法候选规则判断。修改的规则在下次筛选时生效。</div>
+              <a class="btn btn-sm btn-ghost" href="/settings/crawl/screening" hx-boost="false">编辑筛选规则{{ icon('chevron-right', 'icon-sm') }}</a>
+            </div>
+            {% endif %}
             {% for field in fields %}{% include "_setting.html" %}{% endfor %}
             {% endfor %}
             {% if advanced %}</details>{% endif %}

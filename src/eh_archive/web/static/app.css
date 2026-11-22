@@ -814,6 +814,8 @@ a.module-card:hover { border-color: var(--line-strong); text-decoration: none; c
 .setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 360px); gap: 8px 24px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
 .setting:last-child { border-bottom: 0; }
 .setting.wide { grid-template-columns: minmax(0, 1fr); }
+.setting.setting-action { display: flex; align-items: center; gap: 12px; }
+.setting-action > a { flex: none; }
 .setting .name { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-weight: 500; font-size: var(--fs-sm); }
 .setting .key { font: 450 var(--fs-xs)/1.4 var(--font-mono); color: var(--faint); }
 .setting .help { margin-top: 4px; color: var(--muted); font-size: var(--fs-xs); }

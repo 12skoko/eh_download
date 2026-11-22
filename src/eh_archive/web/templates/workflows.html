@@ -7,7 +7,6 @@
 <div class="page">
   <div class="page-head"><div class="grow"><h1>工作流</h1><p>用户触发的一次性特殊处理。Web 只写入工作流和任务请求，由 Supervisor 启动对应的 Worker。</p></div></div>
   <section class="module-grid" aria-label="特殊模块">
-    <a class="module-card" href="/workflows/screening" hx-boost="false"><div class="top"><span class="glyph">{{ icon('sliders-horizontal') }}</span><strong>档案筛选</strong></div><p>编辑直接放行和算法候选规则，预览档案去向。</p></a>
     {% for module in modules %}
     <a class="module-card" href="/workflows/{{ module.kind }}">
       <div class="top">
