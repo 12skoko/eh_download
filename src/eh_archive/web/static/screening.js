@@ -290,6 +290,33 @@
     } else n.values = [];
     return n;
   }
+  async function copyValues(box, trigger, values, kind) {
+    const text = values.join("\n");
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        window.archiveUI?.toast("已复制" + kind);
+        return;
+      } catch {
+        // Clipboard permission can be denied even on HTTPS.
+      }
+    }
+    if (!box.isConnected) return;
+    const list = element("textarea", undefined, "textarea mono");
+    list.readOnly = true;
+    list.setAttribute("aria-label", "可复制的" + kind);
+    list.value = text;
+    box.append(list);
+    list.addEventListener("blur", () => list.remove(), {once:true});
+    list.focus();
+    list.select();
+    if (document.execCommand("copy")) {
+      trigger.focus();
+      window.archiveUI?.toast("已复制" + kind);
+    } else {
+      window.archiveUI?.toast("已选中" + kind + "，请使用系统复制操作");
+    }
+  }
   function editValues(box, controls, n) {
     const tags = n.field === "tags";
     const cats = n.field === "category";
@@ -311,8 +338,13 @@
     }
     const kind = tags ? "标签" : cats ? "分类" : n.op === "regex" ? "表达式" : "关键词";
     const count = element("span", undefined, "rule-value-count");
-    const updateCount = () => {count.textContent = n.values.length + " 个" + kind;};
-    meta.append(count);
+    const copy = button("复制" + kind, () => copyValues(box, copy, n.values, kind));
+    copy.classList.add("btn-ghost");
+    meta.append(count, copy);
+    const updateCount = () => {
+      count.textContent = n.values.length + " 个" + kind;
+      copy.disabled = n.values.length === 0;
+    };
     controls.append(meta);
     const entry = element("div", undefined, "rule-entry");
     box.append(entry);
