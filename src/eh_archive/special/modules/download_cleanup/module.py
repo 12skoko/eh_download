@@ -204,7 +204,6 @@ def detail(session, workflow_id):
         "cleanup_applied": applied,
         "report_sections": report_sections,
         "report_labels": {"results": "全部条目", **ACTION_LABELS},
-        "report_template": "special/download_cleanup_report.html",
     }
 
 

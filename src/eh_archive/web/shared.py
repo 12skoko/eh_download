@@ -10,7 +10,7 @@ from fastapi import Request
 
 
 from ..config.loader import SUPERVISOR_MODULES
-from ..db.models import MangaRecord, SystemControl, SystemHealth
+from ..db.models import SystemControl, SystemHealth
 from ..services.paths import safe_filename
 from ..special.remarks import PHASE_LABELS
 from .auth import WebIdentity
@@ -25,7 +25,6 @@ from .services import (
     WebServiceError,
     allowed_actions,
     serialize_manga,
-    serialize_model,
 )
 
 
@@ -48,7 +47,6 @@ def _context(request, **values):
         "bulk_status_targets": BULK_STATUS_TARGETS,
         "now": datetime.now(UTC),
         "special_phase_labels": PHASE_LABELS,
-        "main_ui_url": main_url(request),
         **values,
     }
 
@@ -97,13 +95,6 @@ def _optional_int(value) -> int | None:
 
 def _safe_next(value: str) -> str:
     return value if value.startswith("/") and not value.startswith("//") else "/"
-
-
-def _redirect_response(request, location: str):
-    responses = __import__("fastapi.responses", fromlist=["Response", "RedirectResponse"])
-    if request.headers.get("HX-Request") == "true":
-        return responses.Response(status_code=204, headers={"HX-Redirect": location})
-    return responses.RedirectResponse(location, status_code=303)
 
 
 def _is_loopback(host: str) -> bool:
@@ -245,38 +236,3 @@ def _error_summary(value, error_code=None) -> str:
         return "服务返回了 HTML 页面；响应片段请展开查看。"
     summary = " ".join(detail.split())
     return summary if len(summary) <= 200 else summary[:199] + "…"
-
-
-def _serialize(row):
-    if row is None:
-        return None
-    if isinstance(row, MangaRecord):
-        return serialize_manga(row)
-    return serialize_model(row)
-
-
-def main_url(request) -> str:
-    """Map a V1 page to the main console, preserving its filters."""
-    path = request.url.path.removeprefix("/v1") or "/"
-    parts = path.strip("/").split("/")
-    mapping = {
-        "manga": "/archives",
-        "review": "/inbox",
-        "config": "/settings",
-        "events": "/events",
-        "logs": "/logs",
-        "system": "/system",
-    }
-    target = "/"
-    if parts[0] in mapping:
-        target = mapping[parts[0]] + ("/" + "/".join(parts[1:]) if len(parts) > 1 else "")
-    elif parts[0] == "special":
-        target = "/workflows"
-        if len(parts) >= 3 and parts[1] == "modules":
-            target = "/workflows/" + "/".join(parts[2:])
-        elif len(parts) >= 3 and parts[1] == "workflows":
-            target = "/workflow/" + "/".join(parts[2:])
-        elif len(parts) >= 4 and parts[1] == "full-collect" and parts[3] == "logs":
-            target = "/workflow/" + parts[2] + "/logs"
-    query = [(k, v) for k, v in request.query_params.multi_items() if k not in {"notice", "toast"}]
-    return target + ("?" + urlencode(query) if query else "")

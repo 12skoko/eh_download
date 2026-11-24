@@ -434,7 +434,6 @@ eharchive-supervisor --config-dir config
 - `/workflows`：特殊工作流、视频档案状态与人工批量检查；
 - `/events`：事件与错误；
 - `/settings`：查看非敏感配置并修改允许从网页维护的字段；
-- `/v1/`：原版备用界面，与主界面提供双向切换入口；
 - `/docs`：FastAPI Swagger API 文档；
 - `/health`：数据库、组件、健康快照和状态计数 JSON。
 
@@ -632,7 +631,7 @@ aria2 必须由外部进程运行；EH Archive 只提交、轮询和清理任务
 Authorization: Bearer <web_secret>
 ```
 
-除 `/login`、`/v1/login`、`/static/*` 和最小存活探针 `/health/live` 外，查询和写入均需要认证。常用接口：
+除 `/login`、`/static/*` 和最小存活探针 `/health/live` 外，查询和写入均需要认证。常用接口：
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |

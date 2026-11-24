@@ -1,4 +1,4 @@
-"""Read bounded full-collection log windows for both interfaces."""
+"""Read bounded full-collection log windows."""
 
 import json
 from urllib.parse import urlencode
@@ -12,7 +12,7 @@ from .module import KIND
 def log_context(
     database, app_config, workflow_id, *, job_id=0, level="", file="", before=None, page=1
 ) -> dict:
-    """Read a bounded window of one round's JSON log; shared by every interface."""
+    """Read a bounded window of one round's JSON log."""
     from ....web.logs import list_logs, resolve_log
 
     with database.session() as session:

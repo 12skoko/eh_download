@@ -2,7 +2,7 @@
 
 Usage (from repo root):
     python scripts/dev_demo.py [--port PORT] [--base DIR]
-Then open the printed URL: / (V1 fallback at /v1/).
+Then open the printed URL: /.
 Auth is disabled and the server only listens on loopback.
 
 Everything lives in a temporary directory (or ``--base``); configured databases
@@ -1336,7 +1336,7 @@ def main() -> None:
     import uvicorn
 
     url = f"http://127.0.0.1:{args.port}"
-    print(f"Demo data: {base}\nOpen {url}/  (V1: {url}/v1/ ; auth disabled)", flush=True)
+    print(f"Demo data: {base}\nOpen {url}/  (auth disabled)", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 
 

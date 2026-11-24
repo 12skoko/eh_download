@@ -165,7 +165,7 @@ eharchive --config-dir config db upgrade
 
 1. 在 `special/modules/<kind>/` 实现定义、配置、创建服务和执行器。
 2. 在 `special/catalog.py` 增加一个 `ModuleRegistration`。这里是模块装配入口，通用 worker、仓储和 Supervisor 不增加模块分支。
-3. 可选注册 dashboard、detail、模板和 `install_routes`，复杂模块可提供专用路由；所有动作仍需服务端验证与既有认证、CSRF 保护。
+3. 可注册 dashboard 和 detail，在 `web/workflows.py` 中接入专用页面与路由；所有动作仍需服务端验证与既有认证、CSRF 保护。
 4. 可选通过集成组件关联业务实体。Manga 组件支持零个/一个/多个关联；视频集成额外要求恰好一个。其他实体按真实业务建立专用存储，不伪造 Manga ID。
 
 `WorkflowDefinition` 声明数据版本、可读取版本、迁移函数、创建入口、动作与集成组件。`OperationDefinition` 声明允许生命周期/阶段、运行阶段、输入校验、租约、可选执行期限、副作用类别与重试策略。
@@ -174,7 +174,7 @@ eharchive --config-dir config db upgrade
 
 模块可使用 `ExecutionContext` 的短事务、进度与输出接口。worker 自动续租只更新 job 租约，不推进阶段；每次结果提交仍独立验证执行身份。可选操作执行期限到达后拒绝续租和提交，外部调用应同时设置自己的网络/子进程超时，并在循环中检查执行上下文。期限失效不代表业务取消成功，也不会自动释放未核实占用。
 
-自定义动作在 `definition.actions` 注册；主界面通用路由为 `POST /workflow/{id}/actions/{action}`，V1 备用界面使用 `POST /v1/special/workflows/{id}/actions/{action}`。默认支持手动重试、取消、已确认旧 Worker 停止后的只读任务过期恢复和 `migrate-data`。数据升级要求没有 queued/running job；不支持的历史版本禁止领取，历史与输出仍可查看。未安装模块同样回退到通用历史页。
+自定义动作在 `definition.actions` 注册；主界面通用路由为 `POST /workflow/{id}/actions/{action}`。默认支持手动重试、取消、已确认旧 Worker 停止后的只读任务过期恢复和 `migrate-data`。数据升级要求没有 queued/running job；不支持的历史版本禁止领取，历史与输出仍可查看。未安装模块同样回退到通用历史页。
 
 ### 事务与资源协议
 

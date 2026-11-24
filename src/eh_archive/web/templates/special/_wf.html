@@ -63,7 +63,7 @@
   {{ icon('file-json') }}
   <div class="grow min0"><strong class="small">{{ labels.get(output.id, output.name) }}</strong><div class="xs muted"><span class="mono">{{ output.name }}</span> · {{ output.size_bytes|filesize }} · {{ output.created_at|ui_ago }}</div></div>
   <a class="btn btn-sm btn-primary" href="/workflow/{{ workflow.id }}/outputs/{{ output.id }}">{{ icon('eye', 'icon-sm') }}浏览</a>
-  <a class="btn btn-sm" href="/special/workflows/{{ workflow.id }}/outputs/{{ output.id }}/download" hx-boost="false" download>{{ icon('download', 'icon-sm') }}下载 JSON</a>
+  <a class="btn btn-sm" href="/workflow/{{ workflow.id }}/outputs/{{ output.id }}/download" hx-boost="false" download>{{ icon('download', 'icon-sm') }}下载 JSON</a>
 </div>
 {% else %}
 {{ caller() if caller else '' }}

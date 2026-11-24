@@ -7,7 +7,7 @@
   <section class="card">
     <div class="card-head"><h2>选择档案并预览差异</h2></div>
     {% if module_health.available %}
-    <form class="card-body form-stack" method="post" action="/workflows/lanraragi_metadata/start" hx-post="/workflows/lanraragi_metadata/start" hx-swap="none" hx-disabled-elt="find button[type=submit]" data-id-picker data-mismatch-url="/special/modules/lanraragi_metadata/mismatch-ids">
+    <form class="card-body form-stack" method="post" action="/workflows/lanraragi_metadata/start" hx-post="/workflows/lanraragi_metadata/start" hx-swap="none" hx-disabled-elt="find button[type=submit]" data-id-picker data-mismatch-url="/workflows/lanraragi_metadata/mismatch-ids">
       {{ csrf() }}
       <p class="small">检查远端文件并用本地数据修复标题和标签，先预览再确认，不重新上传文件。支持已完成档案及因上传错误进入人工复核的档案；文件不存在或身份不符时保留人工复核。</p>
       <div class="field" data-picker-raw><label for="meta-ids">完整档案 ID</label><textarea class="textarea mono" id="meta-ids" name="manga_ids" rows="5" placeholder="4194902/07c0c45119，每行一个，也可用逗号分隔">{{ request.query_params.get('manga_id', '') }}</textarea></div>

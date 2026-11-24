@@ -1,18 +1,14 @@
-"""Special-module catalog, dashboards, workflow detail panels, reports and actions.
-
-Every write calls the same ModuleService / SpecialWorkflowService entry point as
-the original pages; only the post-action navigation differs (the panel is
-re-rendered in place with a toast instead of a full-page redirect).
-"""
+"""Special-module catalog, dashboards, workflow detail panels, reports and actions."""
 
 from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import desc, func, select
 
 from ..db.models import MangaRecord, SpecialWorkflow
@@ -26,7 +22,7 @@ from ..special.service import (
 from .shared import _actor, _validated_form
 from .services import Page
 from .special_modules import get_special_module_page, special_module_cards
-from .special_routes import report_context
+from .special_routes import report_context, resolve_output
 from .common import PREFIX, UIContext, is_htmx, redirect, trigger_header
 
 _VIDEO_OPS = {
@@ -451,6 +447,18 @@ def install(app, ctx: UIContext) -> None:
         return after_action(request, workflow_id, "choose")
 
     # ------------------------------------------------------------------ 元数据更新
+    @app.get(PREFIX + "/workflows/lanraragi_metadata/mismatch-ids")
+    def mismatch_ids():
+        from ..special.modules.lanraragi_metadata.config import load_metadata_config
+        from ..special.modules.lanraragi_metadata.module import pending_mismatch_ids
+
+        with database.session() as session:
+            ids = pending_mismatch_ids(session)
+        return JSONResponse(
+            {"manga_ids": ids, "batch_limit": load_metadata_config(config_dir).batch_limit},
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.post(PREFIX + "/workflows/lanraragi_metadata/start")
     def metadata_start(request: Request, form=Depends(_validated_form)):
         try:
@@ -512,6 +520,11 @@ def install(app, ctx: UIContext) -> None:
         return ctx.page(request, "special/full_collect_logs.html", **values)
 
     # ------------------------------------------------------------------ 报告
+    @app.get(PREFIX + "/workflow/{workflow_id:int}/outputs/{output_id}/download")
+    def download_output(workflow_id: int, output_id: str):
+        _, entry, path = resolve_output(database, app_config, workflow_id, output_id)
+        return FileResponse(path, media_type=entry["media_type"], filename=Path(entry["name"]).name)
+
     @app.get(
         PREFIX + "/workflow/{workflow_id:int}/outputs/{output_id}", response_class=HTMLResponse
     )

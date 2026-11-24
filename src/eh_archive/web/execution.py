@@ -51,9 +51,4 @@ def install_execution_policy(app, database, ctx):
         _logger.warning("Web database lock timeout: method=%s path=%s", request.method, request.url.path)
         if request.url.path.startswith("/api/") or "application/json" in request.headers.get("accept", ""):
             return JSONResponse({"detail": message}, status_code=409)
-        if request.url.path.startswith("/v1/"):
-            from .services import Conflict
-            from .v1.common import _error_response
-
-            return _error_response(request, ctx.templates, Conflict(message))
         return ctx.error(request, message, 409)

@@ -290,48 +290,6 @@ def redirect(request, location: str, toast_key: str | None = None) -> Response:
     return RedirectResponse(location, status_code=303)
 
 
-def v1_url(request) -> str:
-    """Equivalent page in the original interface, used for side-by-side comparison."""
-    path = request.url.path[len(PREFIX) :] or "/"
-    query = request.url.query
-    parts = [part for part in path.split("/") if part]
-    mapping = {
-        "archives": "/manga",
-        "inbox": "/review",
-        "events": "/events",
-        "logs": "/logs",
-        "settings": "/config",
-        "system": "/system",
-        "workflows": "/special",
-    }
-    target = "/"
-    if parts:
-        head = parts[0]
-        if head == "archives" and len(parts) > 1:
-            target = "/manga/" + "/".join(parts[1:])
-        elif parts == ["workflows", "screening"]:
-            target = "/special"
-        elif head == "workflows" and len(parts) == 2:
-            target = f"/special/modules/{parts[1]}"
-        elif head == "workflows" and len(parts) >= 3:
-            target = f"/special/workflows/{parts[2]}"
-        elif head == "workflow" and len(parts) >= 2:
-            rest = "/".join(parts[2:])
-            if rest == "logs":
-                target = f"/special/full-collect/{parts[1]}/logs"
-            else:
-                target = f"/special/workflows/{parts[1]}" + (f"/{rest}" if rest else "")
-        elif head == "logs" and parts[1:] == ["view"]:
-            target = "/logs/view"
-        elif head == "system" and len(parts) > 1:
-            target = "/system/" + "/".join(parts[1:])
-        elif head == "pane" and len(parts) > 1:
-            target = "/manga/" + "/".join(parts[1:])
-        else:
-            target = mapping.get(head, "/")
-    return "/v1" + target + (f"?{query}" if query and "toast=" not in query else "")
-
-
 def manga_url(manga_id: str) -> str:
     return f"{PREFIX}/archives/{quote(manga_id, safe='/')}"
 
@@ -421,7 +379,6 @@ class UIContext:
         from .shared import _supervisor_status
 
         values: dict[str, Any] = {
-            "ui_v1_url": v1_url(request),
             "ui_toast": TOASTS.get(request.query_params.get("toast", "")),
             "ui_inbox_count": None,
             "ui_supervisor": None,

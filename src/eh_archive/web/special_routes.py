@@ -8,7 +8,7 @@ from ..special.core.service import SpecialServiceError
 
 
 def resolve_output(database, app_config, workflow_id, output_id):
-    """Locate a published workflow output; shared by every interface."""
+    """Locate a published workflow output for preview or download."""
     from ..special.service import special_workflow_detail
 
     try:

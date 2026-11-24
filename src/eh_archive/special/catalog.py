@@ -13,12 +13,8 @@ class ModuleRegistration:
     executor: Callable
     capability: Callable
     description: str
-    template_name: str
     load_dashboard: Callable
     load_detail: Callable | None = None
-    detail_template: str = "special/generic_detail.html"
-    panel_template: str = "special/_generic_panel.html"
-    install_routes: Callable | None = None
 
     @property
     def kind(self):
@@ -27,10 +23,6 @@ class ModuleRegistration:
     @property
     def label(self):
         return self.definition.label
-
-    @property
-    def url(self):
-        return f"/special/modules/{self.kind}"
 
 
 MODULES = {}
@@ -119,12 +111,9 @@ def load_modules():
         return
     from .modules.download_cleanup import module as cleanup
     from .modules.full_collect import module as full
-    from ..web.v1.full_collect import install_routes as full_routes
     from .modules.lanraragi_compare.module import DEFINITION, dashboard, detail
     from .modules.lanraragi_metadata import module as metadata
-    from ..web.v1.lanraragi_metadata import install_routes as metadata_routes
     from .modules.manual_torrent import module as manual
-    from ..web.v1.manual_torrent import install_routes as manual_routes
     from .modules.video_archive.definition import VIDEO_ARCHIVE
     from .modules.video_archive.integration import VideoIntegration
 
@@ -154,65 +143,46 @@ def load_modules():
             full.executor,
             full.capability,
             "按 ID 区间逐页建档，支持暂停、继续和终止，新增档案进入 filtered_out。",
-            "special/full_collect.html",
             full.dashboard,
             full.detail,
-            "special/full_collect_detail.html",
-            "special/_full_collect_panel.html",
-            full_routes,
         ),
         ModuleRegistration(
             manual.DEFINITION,
             manual.executor,
             manual.capability,
             "手动选择种子，确认后交回普通下载流程。",
-            "special/manual_torrent.html",
             manual.dashboard,
             manual.detail,
-            "special/manual_torrent_detail.html",
-            "special/_manual_torrent_panel.html",
-            manual_routes,
         ),
         ModuleRegistration(
             metadata.DEFINITION,
             metadata.executor,
             metadata.capability,
             "检查远端文件，更新标题和标签，核验并恢复上传出错的任务。",
-            "special/lanraragi_metadata.html",
             metadata.dashboard,
             metadata.detail,
-            "special/lanraragi_metadata_detail.html",
-            "special/_lanraragi_metadata_panel.html",
-            metadata_routes,
         ),
         ModuleRegistration(
             cleanup.DEFINITION,
             cleanup.executor,
             cleanup.capability,
             "预览并清理已完成或已删除档案的种子任务与下载文件。",
-            "special/download_cleanup.html",
             cleanup.dashboard,
             cleanup.detail,
-            "special/download_cleanup_detail.html",
-            "special/_download_cleanup_panel.html",
         ),
         ModuleRegistration(
             video,
             _video_executor,
             _video_capability,
             "下载图片与视频种子，转换并整合为普通归档产物。",
-            "special/video_archive.html",
             _video_dashboard,
             _video_detail,
-            "special_detail.html",
-            "_special_workflow_panel.html",
         ),
         ModuleRegistration(
             DEFINITION,
             _compare_executor,
             _compare_capability,
             "核对已完成档案与 LANraragi，查找差异、重复及无法解析的档案。",
-            "special/lanraragi_compare.html",
             dashboard,
             detail,
         ),

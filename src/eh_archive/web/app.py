@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import time
 import uuid
 from pathlib import Path
@@ -94,9 +93,6 @@ def create_app(
 
     app = FastAPI(title="EH Archive", version="6.0.0")
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
-    templates.env.globals["css_version"] = hashlib.sha256(
-        (STATIC_DIR / "v1/app.css").read_bytes()
-    ).hexdigest()[:12]
     templates.env.filters["datetime"] = _format_datetime
     templates.env.filters["full_collect_datetime"] = lambda value: _format_full_collect_datetime(
         value, app_config.timezone
@@ -175,7 +171,7 @@ def create_app(
     @app.middleware("http")
     async def authenticate(request, call_next):
         path = request.url.path
-        public = path in {"/login", "/v1/login", "/health/live"} or path.startswith("/static/")
+        public = path in {"/login", "/health/live"} or path.startswith("/static/")
         if public or not auth_enabled:
             request.state.identity = WebIdentity("local", "local", int(time.time()) + 3600)
             request.state.auth_via_bearer = False
@@ -193,15 +189,14 @@ def create_app(
             if path.startswith("/api/") or path == "/health":
                 return JSONResponse({"detail": "authentication required"}, status_code=401)
             next_path = request.url.path + ("?" + request.url.query if request.url.query else "")
-            login_path = "/v1/login" if path == "/v1" or path.startswith("/v1/") else "/login"
             if request.headers.get("HX-Request") == "true":
                 return JSONResponse(
                     {"detail": "authentication required"},
                     status_code=401,
-                    headers={"HX-Redirect": f"{login_path}?next={quote(next_path, safe='/?=&')}"},
+                    headers={"HX-Redirect": f"/login?next={quote(next_path, safe='/?=&')}"},
                 )
             return RedirectResponse(
-                f"{login_path}?next={quote(next_path, safe='/?=&')}", status_code=303
+                f"/login?next={quote(next_path, safe='/?=&')}", status_code=303
             )
         request.state.identity = identity
         request.state.auth_via_bearer = via_bearer
@@ -414,21 +409,8 @@ def create_app(
     from .logs import register as register_logs
 
     register_logs(app, templates, _context, app_config.log_dir)
-    from .v1 import install_v1
     from .ui import install_ui
 
-    install_v1(
-        app,
-        database=database,
-        templates=templates,
-        app_config=app_config,
-        supervisor_config=supervisor_config,
-        secrets_config=secrets_config,
-        signer=signer,
-        auth_enabled=auth_enabled,
-        config_dir=config_dir,
-        management_config=management_config,
-    )
     ctx = install_ui(
         app,
         templates=templates,

@@ -264,7 +264,6 @@ def detail(session, workflow_id):
         )
         is not None,
         "report_sections": report_sections,
-        "report_template": "special/lanraragi_metadata_report.html",
         "confirmed_items": [
             {"manga_id": b.manga_id, "action": b.context["result"]}
             for b in workflow.manga_bindings

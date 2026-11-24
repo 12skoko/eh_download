@@ -32,8 +32,6 @@ def special_workflow_detail(session, workflow_id, *, page=1, jobs_page=None, eve
         detail.update(module.load_detail(session, workflow_id))
     if history["history_paging"] is not None:
         detail.update(history)
-    detail["detail_template"] = module.detail_template if compatible else "special/generic_detail.html"
-    detail["panel_template"] = module.panel_template if compatible else "special/_generic_panel.html"
     return detail
 
 
