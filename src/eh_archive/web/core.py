@@ -39,6 +39,7 @@ from .services import (
     running_module_tasks,
 )
 from .common import PREFIX, UIContext, is_htmx, redirect, trigger_header
+from .daily_summary import DailySummaryCache
 
 
 def _safe_ui_next(value: str) -> str:
@@ -102,6 +103,7 @@ def activity_items(session) -> list[dict]:
 def install(app, ctx: UIContext) -> None:
     templates = ctx.templates
     database = ctx.database
+    summary_cache = DailySummaryCache()
 
     @app.get(PREFIX + "/login", response_class=HTMLResponse)
     def login_page(request: Request, next: str = PREFIX + "/", error: str | None = None):
@@ -163,6 +165,7 @@ def install(app, ctx: UIContext) -> None:
             review, _ = review_facets(session, status="manual_review")
             quarantine, _ = review_facets(session, status="quarantined")
             activity = activity_items(session)
+            summary = summary_cache.get(session)
         health_states = {
             component: _health_status(item, ctx.supervisor_config.health_check_interval_seconds)
             for component, item in data["health"].items()
@@ -173,10 +176,17 @@ def install(app, ctx: UIContext) -> None:
             **data,
             **state,
             activity=activity,
+            summary=summary,
             health_states=health_states,
             review_facets=review[:4],
             quarantine_facets=quarantine[:3],
         )
+
+    @app.get(PREFIX + "/partials/daily-summary", response_class=HTMLResponse)
+    def daily_summary_partial(request: Request):
+        with database.session() as session:
+            summary = summary_cache.get(session)
+        return ctx.partial(request, "_daily_summary.html", summary=summary)
 
     @app.get(PREFIX + "/partials/activity", response_class=HTMLResponse)
     def activity_partial(request: Request):

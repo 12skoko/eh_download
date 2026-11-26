@@ -8,7 +8,18 @@ from .services import STATUS_LABELS
 from . import common
 
 
+def chart_count(value: int) -> str:
+    """Short labels for count axes and bars; tooltips retain the exact count."""
+    if value < 10_000:
+        return str(value)
+    unit, suffix = (100_000_000, "亿") if value >= 100_000_000 else (10_000, "万")
+    scaled = value / unit
+    number = f"{scaled:.1f}".removesuffix(".0") if scaled < 100 else f"{scaled:.0f}"
+    return "1亿" if suffix == "万" and number == "10000" else number + suffix
+
+
 def register(env, app_config) -> None:
+    env.filters["ui_chart_count"] = chart_count
     env.filters["ui_tone"] = common.tone
     env.filters["ui_run_tone"] = common.run_tone
     env.filters["ui_run_label"] = lambda value: common.RUN_LABELS.get(value or "", value or "—")

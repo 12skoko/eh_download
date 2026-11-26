@@ -1,0 +1,49 @@
+{% set today = summary.days[-1] %}
+<section class="card daily-summary" aria-labelledby="daily-summary-title"
+         hx-get="/partials/daily-summary" hx-trigger="every 5m [archiveUICanPoll() && !document.activeElement.closest('.daily-summary')]" hx-swap="outerHTML">
+  <div class="card-head">
+    <h2 id="daily-summary-title">每日汇总</h2>
+    <span class="meta" title="统计按北京时间划分自然日">统计截至 <time datetime="{{ summary.as_of.isoformat() }}">{{ summary.as_of.strftime('%m/%d %H:%M') }}</time></span>
+  </div>
+  <div class="daily-body">
+    <dl class="daily-metrics">
+      {% for key, label in [('added', '今日新增入库'), ('completed', '今日归档完成')] %}
+      <div><dt>{{ label }}</dt><dd>{{ '{:,}'.format(today[key]) }}<small>部</small></dd></div>
+      {% endfor %}
+    </dl>
+    <div class="daily-trend">
+      <div class="daily-trend-head">
+        <h3>近 {{ summary.days|length }} 天</h3>
+        <span class="daily-key"><i class="daily-added"></i>新增入库</span>
+        <span class="daily-key"><i class="daily-completed"></i>归档完成</span>
+      </div>
+      <div class="daily-chart">
+        {% for week in summary.days|batch(7) %}
+        <div class="daily-scale" aria-hidden="true">
+          {% for tick in summary.ticks %}<span><b>{{ tick|ui_chart_count }}</b></span>{% endfor %}
+        </div>
+        <div class="daily-days">
+          {% for day in week %}
+          <button type="button" class="daily-day{% if day.date == today.date %} is-today{% endif %}"
+                  aria-label="{{ day.date.isoformat() }}，新增入库 {{ day.added }} 部，归档完成 {{ day.completed }} 部">
+            <span class="daily-bars" aria-hidden="true">
+              {% for key in ['added', 'completed'] %}
+              <span class="daily-bar daily-{{ key }}"{% if day[key] %} style="height:max(1px, {{ 100 * day[key] / summary.ceiling }}%)"{% endif %}>
+                <span class="daily-value">{{ day[key]|ui_chart_count }}</span>
+              </span>
+              {% endfor %}
+            </span>
+            <span class="daily-label">{% if day.date == today.date %}今天{% else %}<span class="daily-month">{{ day.date.strftime('%m/') }}</span>{{ day.date.strftime('%d') }}{% endif %}</span>
+            <span class="daily-tip" aria-hidden="true">
+              <b>{{ day.date.strftime('%m/%d') }}</b>
+              <span>新增入库 <strong>{{ '{:,}'.format(day.added) }}</strong></span>
+              <span>归档完成 <strong>{{ '{:,}'.format(day.completed) }}</strong></span>
+            </span>
+          </button>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</section>
