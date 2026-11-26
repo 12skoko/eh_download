@@ -29,6 +29,7 @@ LABELS = {
     "replaced": "已指向新版",
     "hidden": "已隐藏，无新版提示（人工复核）",
     "unresolved": "读取失败或需核对",
+    "busy": "记录被占用，本轮跳过",
     "changed": "状态或记录已变化",
 }
 PHASE_LABELS = {
@@ -51,6 +52,19 @@ def _events(session, workflow_id, event_type):
     )
 
 
+def _retry_candidates(workflow_id):
+    failed = select(EventLog.detail["manga_id"].as_string()).where(
+        EventLog.run_id == f"observation:{workflow_id}",
+        EventLog.event_type == "rescan_result",
+        EventLog.detail["outcome"].as_string() == "unresolved",
+        # Older workers recorded both lock skips and deleted rows under this reason.
+        EventLog.detail["reason"].as_string().is_distinct_from("档案已移除或正在由其他任务写入"),
+    )
+    return select(MangaRecord.manga_id).where(
+        MangaRecord.status == Status.DEFERRED.value, MangaRecord.manga_id.in_(failed)
+    )
+
+
 def create(service, inputs):
     if set(inputs) - {"start_id", "retry_workflow_id"}:
         raise ValueError("未知的补扫参数")
@@ -63,12 +77,7 @@ def create(service, inputs):
         previous = service.session.get(SpecialWorkflow, retry_id) if type(retry_id) is int else None
         if not previous or previous.kind != KIND or previous.status != "completed":
             raise ValueError("请选择已完成的补扫运行")
-        failed = select(EventLog.detail["manga_id"].as_string()).where(
-            EventLog.run_id == f"observation:{retry_id}",
-            EventLog.event_type == "rescan_result",
-            EventLog.detail["outcome"].as_string() == "unresolved",
-        )
-        query = query.where(MangaRecord.manga_id.in_(failed))
+        query = _retry_candidates(retry_id)
     workflow = service.repository.create(
         KIND, actor=service.actor, resources=[KIND], payload={"input": inputs}
     )
@@ -180,6 +189,10 @@ def live_results(session, workflow, outcome="", before=0):
         )
     return {
         "counts": counts, "completed": sum(counts.values()), "total": total,
+        "can_retry_unresolved": (
+            workflow.status == "completed" and bool(counts.get("unresolved"))
+            and session.scalar(select(_retry_candidates(workflow.id).exists()))
+        ),
         "latest": latest, "rows": rows[:10], "outcome": outcome, "before": before,
         "older": rows[9].id if len(rows) > 10 else None, "newer": previous or 0,
     }
@@ -246,6 +259,16 @@ def classify_gallery(repository, row, info, result, observation_days):
     return outcome
 
 
+def _scan_record(session, mid):
+    """Return the record and whether a conflicting lock prevented taking it."""
+    row = session.get(MangaRecord, mid, with_for_update={"skip_locked": True})
+    if row is not None:
+        return row, False
+    # A plain MVCC read can see an occupied row without waiting for its writer.
+    snapshot = session.get(MangaRecord, mid)
+    return snapshot, snapshot is not None
+
+
 class RescanExecutor:
     def __init__(self, database, config_dir, claim):
         app, self.supervisor, self.crawl, secrets = load_config(config_dir)
@@ -280,10 +303,10 @@ class RescanExecutor:
 
     def scan_one(self, mid, completed, total):
         with self.database.session() as session:
-            before = session.get(MangaRecord, mid)
+            before, busy = _scan_record(session, mid)
         info, reason = None, None
         link = gallery_url(before.link, mid) if before else None
-        if before and before.status == "deferred":
+        if not busy and before and before.status == "deferred":
             if link:
                 info, reason = self.read(link)
             else:
@@ -292,21 +315,23 @@ class RescanExecutor:
             if not special.update_progress(self.claim, {"completed": completed, "total": total}):
                 raise RuntimeError("stale special job")
             session = special.session
-            # Collect can hold a gallery lock across multiple pages. Do not hold
-            # the special scheduler lock while waiting for that transaction.
-            row = session.get(MangaRecord, mid, with_for_update={"skip_locked": True})
+            row = None
+            if before is not None and not busy:
+                # The initial transaction ended before the HTTP request.
+                row, busy = _scan_record(session, mid)
             repository = ArchiveRepository(session, run_id=f"observation:{self.claim.workflow_id}")
             result = {
                 "manga_id": mid,
                 "title": (before.name or before.real_name) if before else mid,
                 "url": link,
             }
-            if row is None:
-                result["reason"] = "档案已移除或正在由其他任务写入"
-                outcome = "unresolved"
+            if busy:
+                outcome = "busy"
+            elif row is None:
+                result["reason"] = "补扫时未找到档案"
+                outcome = "changed"
             elif (
                 row.status != "deferred"
-                or before is None
                 or row.row_version != before.row_version
                 or row.link != before.link
                 or before.status != "deferred"
@@ -326,8 +351,10 @@ class RescanExecutor:
                         raise
                     outcome, result["reason"] = "unresolved", exc.info.message
             result["outcome"] = outcome
+            # A foreign key check on an occupied gallery could itself wait for the lock.
             repository._event(
-                mid if row else None, "rescan_result", actor=KIND, operation=KIND, detail=result
+                mid if row is not None and not busy else None,
+                "rescan_result", actor=KIND, operation=KIND, detail=result,
             )
             return result
 

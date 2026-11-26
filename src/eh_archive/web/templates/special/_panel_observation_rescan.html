@@ -24,7 +24,7 @@
       </div>
       {% endif %}
       {% if payload.get('outputs') %}{{ outputs(workflow, payload, {'rescan': '补扫报告'}) }}{% endif %}
-      {% if can_start and payload.get('summary', {}).get('unresolved') %}
+      {% if can_start and rescan.can_retry_unresolved %}
       <form method="post" action="/workflows/{{ kind }}/create" hx-post="/workflows/{{ kind }}/create" hx-swap="none" hx-disabled-elt="find button">
         {{ csrf() }}<input type="hidden" name="inputs" value='{{ {"retry_workflow_id": workflow.id}|tojson }}'>
         {{ form_error() }}<button type="submit" class="btn btn-sm">{{ icon('rotate-cw', 'icon-sm') }}只重扫读取失败或需核对的档案</button>

@@ -9,7 +9,7 @@
   <div class="card-head"><h2>处理明细</h2><span class="meta">{{ result_labels.get(rescan.outcome, '全部结果') }} · 最近完成的在前</span></div>
   <nav class="tabs report-tabs" aria-label="补扫结果分类">
     {{ result_link('全部', '', count=rescan.completed, current=not rescan.outcome) }}
-    {% for key in ('missing_latest', 'hidden', 'unresolved', 'discovered', 'replaced', 'waiting', 'changed') %}
+    {% for key in ('missing_latest', 'hidden', 'unresolved', 'busy', 'discovered', 'replaced', 'waiting', 'changed') %}
       {{ result_link(result_labels[key], key, count=rescan.counts.get(key, 0), current=rescan.outcome == key) }}
     {% endfor %}
   </nav>
