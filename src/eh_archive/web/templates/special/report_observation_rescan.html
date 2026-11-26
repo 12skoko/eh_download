@@ -1,0 +1,23 @@
+{% extends "special/_report_base.html" %}
+{% from "_macros.html" import empty, manga_link with context %}
+{% from "special/_wf.html" import section_tabs, report_pager with context %}
+{% from "special/_observation_rescan.html" import result_labels %}
+{% set report_title = '观察等待补扫报告' %}
+{% set report_timestamp = output.created_at|collected_at %}
+{% block report %}
+{% set show_latest = section in ('missing_latest', 'replaced', 'unresolved') %}
+{% set show_note = section in ('hidden', 'unresolved', 'waiting') %}
+<section class="card">
+  {{ section_tabs(sections, section, result_labels) }}
+  <div class="card-head"><h2>{{ report_labels[section] }}</h2><span class="meta num">{{ report_total }} 条</span></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>档案 / 画廊 ID</th>{% if show_latest %}<th>最新版画廊 ID</th>{% endif %}{% if show_note %}<th>{{ '观察截止时间' if section == 'waiting' else '原因' }}</th>{% endif %}</tr></thead>
+    <tbody>{% for row in report_rows %}
+    <tr><td class="title-cell">{{ manga_link(row.manga_id, row.title or row.manga_id, 'truncate') }}
+      {% if row.url %}<a class="id" href="{{ row.url }}" aria-label="打开画廊 {{ row.manga_id }}">{{ row.manga_id }}</a>{% else %}<span class="id">{{ row.manga_id }}</span>{% endif %}</td>
+      {% if show_latest %}<td class="mono xs">{% if row.latest_url %}<a href="{{ row.latest_url }}">{{ row.latest_id }}</a>{% else %}<span class="faint">—</span>{% endif %}</td>{% endif %}
+      {% if show_note %}<td class="small muted break">{% if row.defer_until %}<time class="mono xs" datetime="{{ row.defer_until }}">{{ row.defer_until|collected_at }}</time>{% else %}{{ row.reason or '—' }}{% endif %}</td>{% endif %}</tr>
+    {% else %}<tr><td colspan="{{ 1 + show_latest + show_note }}">{{ empty('本轮没有此类档案', 'list') }}</td></tr>{% endfor %}</tbody>
+  </table></div>{{ report_pager(report_total, report_page, section) }}
+</section>
+{% endblock %}

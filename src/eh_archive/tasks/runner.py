@@ -41,7 +41,7 @@ from ..logging import (
     get_logger,
 )
 from ..services.cleanup import CleanupService
-from ..services.collector.parser import EhTagTranslation, parse_info
+from ..services.collector.parser import EhTagTranslation, fetch_detail_page, parse_info
 from ..services.downloader.archive import request_direct_download_url
 from ..services.downloader.direct import DirectDownloader, DownloadCancelled
 from ..services.downloader.torrent import TorrentService, is_managed_torrent
@@ -1099,15 +1099,9 @@ class TaskExecutor:
 
     def _details(self, record: MangaRecord, *, role: str = "archive") -> Any:
         http = self._http_session(role)
-        html = http.get_text(
-            record.link, role=role, timeout=self.supervisor.request_timeout_seconds
+        soup = fetch_detail_page(
+            http, record.link, role=role, timeout=self.supervisor.request_timeout_seconds
         )
-        try:
-            from bs4 import BeautifulSoup
-
-            soup = BeautifulSoup(html, "lxml")
-        except ImportError as exc:
-            raise RuntimeError("beautifulsoup4 is required") from exc
         translation = self._translation(role=role)
         info, _, _ = parse_info(soup, translation)
         info.manga_id = record.manga_id

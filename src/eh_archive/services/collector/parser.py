@@ -193,6 +193,29 @@ def parse_newer_versions(soup: Any) -> list[dict[str, str]]:
     return list(versions.values())
 
 
+def fetch_detail_page(http, link, *, role, timeout, **request_options):
+    from bs4 import BeautifulSoup
+
+    html = http.get_text(link, role=role, timeout=timeout, **request_options)
+    return BeautifulSoup(html, "lxml")
+
+
+def _visibility(soup):
+    values = [
+        cell.get_text(" ", strip=True)
+        for label in soup.select("td.gdt1")
+        if label.get_text(" ", strip=True).rstrip(":").casefold() == "visible"
+        if (cell := label.find_next_sibling("td")) is not None
+    ]
+    if len(values) == 1:
+        if values[0].casefold() == "yes":
+            return True, ""
+        hidden = re.fullmatch(r"No(?:\s*\((.+)\)|\s*[:–—-]\s*(.+))?", values[0], re.I)
+        if hidden:
+            return False, (hidden[1] or hidden[2] or "").strip()
+    return None, ""
+
+
 def parse_info(
     soup: Any, tag_translation: EhTagTranslation | None = None
 ) -> tuple[MangaInfo, str, str | None]:
@@ -244,6 +267,7 @@ def parse_info(
         match = re.search(r"popUp\('(https://(?:exhentai|e-hentai)\.org/archiver\.php[^']*)',", archive["onclick"])
         archive_url = match.group(1) if match else None
     parent = details[1] if len(details) > 1 and details[1] != "None" else None
+    visible, hidden_reason = _visibility(soup)
     info = MangaInfo(
         manga_id="",
         name=name,
@@ -264,6 +288,8 @@ def parse_info(
         archive_url=archive_url,
         parent_id=parent,
         newer_versions=parse_newer_versions(soup),
+        visible=visible,
+        hidden_reason=hidden_reason,
     )
     return info, archive_url or "", parent
 

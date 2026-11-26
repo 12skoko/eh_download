@@ -69,7 +69,10 @@ TRANSITIONS: dict[str, dict[str, str]] = {
         "unavailable": Status.UNAVAILABLE,
         "review": Status.MANUAL_REVIEW,
     },
-    Status.DEFERRED: {"resume": Status.DISCOVERED, "cancel": Status.CANCEL_REQUESTED},
+    Status.DEFERRED: {
+        "resume": Status.DISCOVERED, "cancel": Status.CANCEL_REQUESTED,
+        "outdate": Status.OUTDATED, "review": Status.MANUAL_REVIEW,
+    },
     Status.DETAILS_PENDING: {
         "block": Status.DOWNLOAD_BLOCKED,
         "details_ready": Status.DOWNLOAD_PENDING,

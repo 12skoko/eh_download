@@ -350,6 +350,8 @@ def install(app, ctx: UIContext) -> None:
             inputs = json.loads(str(form.get("inputs", "{}")))
             if not isinstance(inputs, dict):
                 raise SpecialInvalidRequest("输入必须是对象")
+            if kind == "observation_rescan" and form.get("start_id"):
+                inputs["start_id"] = int(form["start_id"])
             with database.session() as session:
                 workflow = module_service(session, request).create(kind, inputs)
         except ValueError as exc:

@@ -232,7 +232,9 @@ class ArchiveRepository:
         return 0
 
     def upsert_manga(self, record: MangaRecord, *, actor: str = "collector") -> MangaRecord:
-        current = self.session.get(MangaRecord, record.manga_id)
+        # Re-read under lock before reclassifying a deferred gallery concurrently scanned.
+        current = self.session.get(MangaRecord, record.manga_id, with_for_update=True,
+                                   populate_existing=True)
         if current is None:
             self.session.add(record)
             self.session.flush()
@@ -380,7 +382,7 @@ class ArchiveRepository:
                 return target_id
             target_id = target.superseded_by_id
 
-    def set_discovered_replacement(self, row: MangaRecord, target_id: str) -> str:
+    def resolve_discovered_replacement(self, row: MangaRecord, target_id: str) -> str:
         # Never block while another details transaction may own row locks.
         if self.session.get_bind().dialect.name == "postgresql" and not self.session.scalar(
             select(func.pg_try_advisory_xact_lock(834019227))
@@ -392,6 +394,10 @@ class ArchiveRepository:
             previous_target = self.replacement_target(row.manga_id, row.superseded_by_id)
             if previous_target != target_id:
                 raise ArchiveError("replacement_conflict", "已有不同替代关系，需人工核对", ErrorClass.ITEM)
+        return target_id
+
+    def set_discovered_replacement(self, row: MangaRecord, target_id: str) -> str:
+        target_id = self.resolve_discovered_replacement(row, target_id)
         row.superseded_by_id = target_id
         return target_id
 

@@ -60,6 +60,8 @@ class MangaInfo:
     archive_url: str | None = None
     parent_id: str | None = None
     newer_versions: list[dict[str, str]] = field(default_factory=list)
+    visible: bool | None = None
+    hidden_reason: str = ""
 
     @property
     def latest_version_id(self) -> str | None:

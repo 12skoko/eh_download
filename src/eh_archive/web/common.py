@@ -94,6 +94,7 @@ MODULE_ICONS = {
     "special_processing": "workflow",
 }
 MODULE_KIND_ICONS = {
+    "observation_rescan": "file-search",
     "video_archive": "film",
     "manual_torrent": "magnet",
     "lanraragi_metadata": "tag",
@@ -346,6 +347,7 @@ def track(row) -> dict | None:
 
 
 def phase_labels_by_kind() -> dict[str, dict[str, str]]:
+    from ..special.modules.observation_rescan import PHASE_LABELS as rescan
     from ..special.modules.download_cleanup.module import PHASE_LABELS as cleanup
     from ..special.modules.full_collect.module import PHASE_LABELS as full
     from ..special.modules.lanraragi_compare.module import PHASE_LABELS as compare
@@ -360,6 +362,7 @@ def phase_labels_by_kind() -> dict[str, dict[str, str]]:
         "download_cleanup": cleanup,
         "full_collect": full,
         "lanraragi_compare": compare,
+        "observation_rescan": rescan,
     }
 
 

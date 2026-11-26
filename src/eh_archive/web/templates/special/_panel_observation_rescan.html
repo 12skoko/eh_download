@@ -1,0 +1,26 @@
+{% extends "special/_panel_generic.html" %}
+{% from "_macros.html" import csrf, form_error, icon with context %}
+{% from "special/_wf.html" import metrics, outputs with context %}
+{% from "special/_observation_rescan.html" import scan_form, scan_scope, result_labels with context %}
+{% block new_run_action %}{% endblock %}
+{% block results %}
+{% set can_start = module_health.available and workflow.status != 'active' %}
+{% set inputs = payload.get('input', {}) %}
+<div class="{{ 'cols-main' if can_start else 'stack' }}">
+  <section class="card">
+    <div class="card-head"><h2>本轮补扫</h2><span class="meta">{{ scan_scope(inputs) }}</span></div>
+    <div class="card-body form-stack">
+      <div class="progress-meta">已检查 <strong class="mono">{{ workflow.progress.get('completed', 0) }} / {{ workflow.progress.get('total', '—') }}</strong> 条</div>
+      {% if payload.get('summary') %}{{ metrics(payload.summary, result_labels) }}{% endif %}
+      {% if payload.get('outputs') %}{{ outputs(workflow, payload, {'rescan': '补扫报告'}) }}{% endif %}
+      {% if can_start and payload.get('summary', {}).get('unresolved') %}
+      <form method="post" action="/workflows/{{ kind }}/create" hx-post="/workflows/{{ kind }}/create" hx-swap="none" hx-disabled-elt="find button">
+        {{ csrf() }}<input type="hidden" name="inputs" value='{{ {"retry_workflow_id": workflow.id}|tojson }}'>
+        {{ form_error() }}<button type="submit" class="btn btn-sm">{{ icon('rotate-cw', 'icon-sm') }}只重扫读取失败或需核对的档案</button>
+      </form>
+      {% endif %}
+    </div>
+  </section>
+  {% if can_start %}<aside>{{ scan_form(inputs.get('start_id'), again=true) }}</aside>{% endif %}
+</div>
+{% endblock %}

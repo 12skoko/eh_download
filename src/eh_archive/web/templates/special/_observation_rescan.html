@@ -1,0 +1,27 @@
+{% from "_macros.html" import csrf, form_error, icon with context %}
+{% set result_labels = {
+  'missing_latest': '最新版未入库', 'discovered': '进入筛选', 'waiting': '观察中',
+  'replaced': '已替代', 'hidden': '隐藏待复核', 'unresolved': '读取失败或需核对', 'changed': '记录变化'
+} %}
+
+{% macro scan_form(start_id=none, again=false) -%}
+<section class="card">
+  <div class="card-head"><h2>{{ '再次补扫' if again else '新建补扫' }}</h2></div>
+  <form class="card-body form-stack" method="post" action="/workflows/observation_rescan/create"
+        hx-post="/workflows/observation_rescan/create" hx-swap="none" hx-disabled-elt="find button[type=submit]">
+    {{ csrf() }}
+    <div class="field">
+      <label for="rescan-start">起始 GID <span class="muted">（选填）</span></label>
+      <input class="input mono num" id="rescan-start" name="start_id" type="number" min="1" step="1"
+             inputmode="numeric" value="{{ start_id if start_id is not none else '' }}" aria-describedby="rescan-range">
+      <span class="help" id="rescan-range">留空扫描全部。填写后，从该 GID 向较小编号扫描。</span>
+    </div>
+    {{ form_error() }}
+    <button type="submit" class="btn{{ '' if again else ' btn-primary' }}">{{ icon('play') }}开始补扫</button>
+  </form>
+</section>
+{%- endmacro %}
+
+{% macro scan_scope(inputs) -%}
+{% if inputs.get('retry_workflow_id') %}重扫 #{{ inputs.retry_workflow_id }} 的未决条目{% elif inputs.get('start_id') %}GID ≤ <span class="mono">{{ inputs.start_id }}</span>{% else %}全部观察等待{% endif %}
+{%- endmacro %}

@@ -114,6 +114,7 @@ def load_modules():
     from .modules.lanraragi_compare.module import DEFINITION, dashboard, detail
     from .modules.lanraragi_metadata import module as metadata
     from .modules.manual_torrent import module as manual
+    from .modules import observation_rescan as rescan
     from .modules.video_archive.definition import VIDEO_ARCHIVE
     from .modules.video_archive.integration import VideoIntegration
 
@@ -138,6 +139,10 @@ def load_modules():
         },
     )
     registrations = (
+        ModuleRegistration(
+            rescan.DEFINITION, rescan.RescanExecutor, rescan.capability,
+            "回访观察等待档案的详情页，核对可见性及最新版。", rescan.dashboard, rescan.detail,
+        ),
         ModuleRegistration(
             full.DEFINITION,
             full.executor,
