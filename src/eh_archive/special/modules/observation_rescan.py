@@ -140,6 +140,51 @@ def detail(session, workflow_id):
     }
 
 
+def live_results(session, workflow, outcome="", before=0):
+    """Read committed results of this run, including work saved before a retry."""
+    run = EventLog.run_id == f"observation:{workflow.id}"
+    results = (run, EventLog.event_type == "rescan_result")
+    category = EventLog.detail["outcome"].as_string()
+    groups = session.execute(
+        select(category.label("category"), func.count(), func.max(EventLog.id))
+        .where(*results)
+        .group_by("category")
+    ).all()
+    counts = {key: count for key, count, _ in groups}
+    newest_id = max((last for _, _, last in groups), default=0)
+    total = workflow.progress.get("total")
+    if total is None:
+        # Claiming or failing a job replaces its progress with a status message.
+        total = session.scalar(
+            select(func.json_array_length(EventLog.detail["ids"]))
+            .where(run, EventLog.event_type == "rescan_scope")
+        )
+    outcome = outcome if outcome in LABELS else ""
+    before = before if 0 < before <= newest_id else 0
+    query = select(EventLog.id, EventLog.created_at, EventLog.detail).where(
+        *results, EventLog.id <= newest_id,
+    )
+    filtered = query.where(category == outcome) if outcome else query
+    page = filtered.where(EventLog.id < before) if before else filtered
+    rows = session.execute(page.order_by(EventLog.id.desc()).limit(11)).all()
+    latest = rows[0] if rows and not outcome and not before else None
+    if newest_id and latest is None:
+        latest = session.execute(query.where(EventLog.id == newest_id)).one()
+    previous = None
+    if before:
+        # A boundary remains stable as new results arrive during polling.
+        previous = session.scalar(
+            filtered.with_only_columns(EventLog.id)
+            .where(EventLog.id >= before)
+            .order_by(EventLog.id).offset(10).limit(1)
+        )
+    return {
+        "counts": counts, "completed": sum(counts.values()), "total": total,
+        "latest": latest, "rows": rows[:10], "outcome": outcome, "before": before,
+        "older": rows[9].id if len(rows) > 10 else None, "newer": previous or 0,
+    }
+
+
 def gallery_url(link, mid):
     # The browse session carries credentials. Only request the recorded EH identity.
     match = re.fullmatch(

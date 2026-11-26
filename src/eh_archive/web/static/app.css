@@ -1077,6 +1077,7 @@ a.tag:hover { text-decoration: none; background: var(--primary-soft); color: var
 
 /* 报告 */
 .report-tabs { padding-top: 4px; }
+.rescan-results .report-tabs { flex-wrap: wrap; }
 .diff { display: flex; flex-direction: column; gap: 2px; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--line); font-size: var(--fs-sm); }
 .diff-row { display: grid; grid-template-columns: 22px 76px minmax(0, 1fr); gap: 8px; padding: 6px 10px; }
 .diff-row .sign { font-family: var(--font-mono); font-weight: 700; }

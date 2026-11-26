@@ -1,0 +1,40 @@
+{% from "_macros.html" import manga_link, empty with context %}
+{% macro result_link(label, category, before=0, count=none, current=false) -%}
+  {%- set query = ui_history_query(outcome=category, before=before) -%}
+  <a href="{{ ui_page_url }}?{{ query }}" hx-get="/partials/workflow/{{ workflow.id }}?{{ query }}"
+     hx-target="#wf-panel" hx-swap="outerHTML" hx-sync="#wf-panel:replace" hx-push-url="{{ ui_page_url }}?{{ query }}"
+     {% if current %}aria-current="page"{% endif %}>{{ label }}{% if count is not none %} <span class="count">{{ count }}</span>{% endif %}</a>
+{%- endmacro %}
+<section class="card rescan-results">
+  <div class="card-head"><h2>处理明细</h2><span class="meta">{{ result_labels.get(rescan.outcome, '全部结果') }} · 最近完成的在前</span></div>
+  <nav class="tabs report-tabs" aria-label="补扫结果分类">
+    {{ result_link('全部', '', count=rescan.completed, current=not rescan.outcome) }}
+    {% for key in ('missing_latest', 'hidden', 'unresolved', 'discovered', 'replaced', 'waiting', 'changed') %}
+      {{ result_link(result_labels[key], key, count=rescan.counts.get(key, 0), current=rescan.outcome == key) }}
+    {% endfor %}
+  </nav>
+  {% if rescan.rows %}
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>完成时间</th><th>旧档案 / GID</th><th>处理结果</th></tr></thead>
+    <tbody>{% for event in rescan.rows %}{% set row = event.detail %}
+      <tr><td class="mono xs muted"><time datetime="{{ event.created_at.isoformat() }}">{{ event.created_at|full_collect_datetime }}</time></td>
+        <td class="title-cell">{{ manga_link(row.manga_id, row.title or row.manga_id, 'truncate') }}
+          {% if row.url %}<a class="id" href="{{ row.url }}">{{ row.manga_id }}</a>{% else %}<span class="id">{{ row.manga_id }}</span>{% endif %}</td>
+        <td class="small">{{ result_labels.get(row.outcome, row.outcome) }}
+          {% if row.latest_url %}<div class="xs">新版 <a class="mono break" href="{{ row.latest_url }}">{{ row.latest_id }}</a></div>{% endif %}
+          {% if row.reason %}<div class="xs muted break">{{ row.reason }}</div>{% endif %}
+          {% if row.defer_until %}<div class="xs muted">观察至 <time class="mono" datetime="{{ row.defer_until }}">{{ row.defer_until|full_collect_datetime }}</time></div>{% endif %}
+        </td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}{{ empty('本轮暂无此类结果' if rescan.outcome else '尚无已完成的条目', 'file-search') }}{% endif %}
+  {% if rescan.before or rescan.older %}
+  <nav class="pager" aria-label="补扫明细分页"><span class="total">每页 10 条</span>
+    {% if rescan.before %}
+      {% if rescan.newer %}{{ result_link('回到最新', rescan.outcome) }}{% endif %}
+      {{ result_link('上一页', rescan.outcome, rescan.newer) }}
+    {% endif %}
+    {% if rescan.older %}{{ result_link('下一页', rescan.outcome, rescan.older) }}{% endif %}
+  </nav>
+  {% endif %}
+</section>

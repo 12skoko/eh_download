@@ -210,13 +210,18 @@ def install(app, ctx: UIContext) -> None:
 
     # ------------------------------------------------------------------ 工作流详情
     def panel_values(
-        workflow_id: int, jobs_page: int = 1, events_page: int = 1, tab: str = ""
+        workflow_id: int, jobs_page: int = 1, events_page: int = 1, tab: str = "",
+        outcome: str = "", before: int = 0,
     ) -> dict:
         with database.session() as session:
             detail = special_workflow_detail(
                 session, workflow_id, jobs_page=max(1, jobs_page), events_page=max(1, events_page)
             )
             workflow = detail["workflow"]
+            if workflow.kind == "observation_rescan" and not detail["execution_reason"]:
+                from ..special.modules.observation_rescan import live_results
+
+                detail["rescan"] = live_results(session, workflow, outcome, before)
             bindings = [(b.manga_id, b.resume_status) for b in workflow.manga_bindings]
             ids = [manga_id for manga_id, _ in bindings[:50]]
             records = (
@@ -236,10 +241,15 @@ def install(app, ctx: UIContext) -> None:
 
         def history_query(**override) -> str:
             values = {"jobs_page": paging["jobs_page"], "events_page": paging["events_page"]}
+            if live := detail.get("rescan"):
+                if live["outcome"]:
+                    values["outcome"] = live["outcome"]
+                if live["before"]:
+                    values["before"] = live["before"]
             values.update(override)
             if values.get("tab", tab):
                 values["tab"] = values.get("tab", tab)
-            return urlencode(values)
+            return urlencode({k: v for k, v in values.items() if v})
 
         detail.update(
             kind=kind,
@@ -278,6 +288,8 @@ def install(app, ctx: UIContext) -> None:
         jobs_page: int | None = None,
         events_page: int | None = None,
         tab: str = "",
+        outcome: str = "",
+        before: int = 0,
     ):
         try:
             values = panel_values(
@@ -285,6 +297,8 @@ def install(app, ctx: UIContext) -> None:
                 page if jobs_page is None else jobs_page,
                 page if events_page is None else events_page,
                 tab,
+                outcome,
+                before,
             )
         except SpecialServiceError as exc:
             return ctx.service_error(request, exc)
@@ -305,10 +319,11 @@ def install(app, ctx: UIContext) -> None:
 
     @app.get(PREFIX + "/partials/workflow/{workflow_id:int}", response_class=HTMLResponse)
     def workflow_partial(
-        request: Request, workflow_id: int, jobs_page: int = 1, events_page: int = 1, tab: str = ""
+        request: Request, workflow_id: int, jobs_page: int = 1, events_page: int = 1, tab: str = "",
+        outcome: str = "", before: int = 0,
     ):
         try:
-            values = panel_values(workflow_id, jobs_page, events_page, tab)
+            values = panel_values(workflow_id, jobs_page, events_page, tab, outcome, before)
         except SpecialServiceError as exc:
             return ctx.service_error(request, exc)
         return ctx.partial(request, values["ui_panel"], **values)

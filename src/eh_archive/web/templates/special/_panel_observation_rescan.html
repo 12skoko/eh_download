@@ -1,6 +1,6 @@
 {% extends "special/_panel_generic.html" %}
-{% from "_macros.html" import csrf, form_error, icon with context %}
-{% from "special/_wf.html" import metrics, outputs with context %}
+{% from "_macros.html" import csrf, form_error, icon, manga_link with context %}
+{% from "special/_wf.html" import outputs with context %}
 {% from "special/_observation_rescan.html" import scan_form, scan_scope, result_labels with context %}
 {% block new_run_action %}{% endblock %}
 {% block results %}
@@ -10,8 +10,19 @@
   <section class="card">
     <div class="card-head"><h2>本轮补扫</h2><span class="meta">{{ scan_scope(inputs) }}</span></div>
     <div class="card-body form-stack">
-      <div class="progress-meta">已检查 <strong class="mono">{{ workflow.progress.get('completed', 0) }} / {{ workflow.progress.get('total', '—') }}</strong> 条</div>
-      {% if payload.get('summary') %}{{ metrics(payload.summary, result_labels) }}{% endif %}
+      <div>
+        {% set pct = (100 * rescan.completed / rescan.total) if rescan.total else 0 %}
+        <div class="progress"><span style="width:{{ [pct, 100]|min }}%"></span></div>
+        <div class="progress-meta"><span>已检查 <strong class="mono">{{ rescan.completed }} / {{ rescan.total if rescan.total is not none else '—' }}</strong> 条</span>
+          {% if rescan.total %}<strong class="num">{{ '%.1f%%'|format(pct) }}</strong>{% endif %}</div>
+      </div>
+      {% if rescan.latest %}
+      {% set last = rescan.latest.detail %}
+      <div class="row wrap center gap8 small break"><span class="muted">最近完成</span>
+        {{ manga_link(last.manga_id, last.title or last.manga_id) }} <span class="id">{{ last.manga_id }}</span>
+        <time class="xs muted mono" datetime="{{ rescan.latest.created_at.isoformat() }}">{{ rescan.latest.created_at|full_collect_datetime }}</time>
+      </div>
+      {% endif %}
       {% if payload.get('outputs') %}{{ outputs(workflow, payload, {'rescan': '补扫报告'}) }}{% endif %}
       {% if can_start and payload.get('summary', {}).get('unresolved') %}
       <form method="post" action="/workflows/{{ kind }}/create" hx-post="/workflows/{{ kind }}/create" hx-swap="none" hx-disabled-elt="find button">
@@ -23,4 +34,5 @@
   </section>
   {% if can_start %}<aside>{{ scan_form(inputs.get('start_id'), again=true) }}</aside>{% endif %}
 </div>
+{% include "special/_rescan_results.html" %}
 {% endblock %}
