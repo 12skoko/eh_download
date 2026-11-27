@@ -70,6 +70,7 @@ TRANSITIONS: dict[str, dict[str, str]] = {
         "review": Status.MANUAL_REVIEW,
     },
     Status.DEFERRED: {
+        "unavailable": Status.UNAVAILABLE,
         "resume": Status.DISCOVERED, "cancel": Status.CANCEL_REQUESTED,
         "outdate": Status.OUTDATED, "review": Status.MANUAL_REVIEW,
     },

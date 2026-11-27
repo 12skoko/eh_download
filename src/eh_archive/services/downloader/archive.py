@@ -6,6 +6,7 @@ from urllib.parse import urljoin
 
 from ...domain.errors import ArchiveError, ErrorClass
 from ...domain.states import DownloadMethod
+from ...integrations.http import raise_for_copyright_claim
 
 
 def _cost(text: str, *, free_word: str) -> int:
@@ -65,6 +66,7 @@ def extract_direct_download_url(html: str, *, base_url: str) -> str:
     soup = BeautifulSoup(html, "lxml")
     node = soup.select_one("#continue a[href]")
     if node is None:
+        raise_for_copyright_claim(html)
         raise ArchiveError(
             "direct_link_missing",
             "archive response has no direct download link",
@@ -99,7 +101,7 @@ def request_direct_download_url(
         headers=headers or {},
         timeout=timeout,
     )
+    if getattr(response, "status_code", 200) >= 400:
+        raise_for_copyright_claim(response.text)
     response.raise_for_status()
-    if "This gallery is unavailable due to a copyright claim" in response.text:
-        raise ArchiveError("gallery_unavailable", "gallery is unavailable", ErrorClass.ITEM)
     return extract_direct_download_url(response.text, base_url=archive_url)

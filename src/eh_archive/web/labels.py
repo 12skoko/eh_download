@@ -85,6 +85,7 @@ ERROR_CODE_LABELS: dict[str, str] = {
     "incomplete_details": "画廊详情不完整",
     "newer_versions_invalid": "新版信息无法解析",
     "gallery_unavailable": "画廊不可用",
+    "gallery_copyright_claim": "画廊因版权投诉下架",
     "gallery_hidden": "画廊已隐藏",
     "gallery_outdated": "画廊已有新版",
     "missing_archive_url": "缺少归档入口",

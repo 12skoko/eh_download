@@ -12,6 +12,7 @@ from typing import Any
 
 from ...domain.errors import ArchiveError, ErrorClass, classify_exception
 from ...domain.maintenance import MaintenancePaused
+from ...integrations.http import raise_for_copyright_claim
 
 
 class DownloadCancelled(ArchiveError):
@@ -135,6 +136,11 @@ class DirectDownloader:
                     **request_kwargs,
                 )
                 status = int(response.status_code)
+                content_type = response.headers.get("content-type", "").partition(";")[0].lower()
+                if content_type in {"text/html", "text/plain", "application/xhtml+xml"} or (
+                    not content_type and status in {404, 410}
+                ):
+                    raise_for_copyright_claim(response.text)
                 if status in {404, 410}:
                     raise ArchiveError(
                         "archive_unavailable", f"download returned HTTP {status}", ErrorClass.ITEM

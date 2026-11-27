@@ -28,6 +28,7 @@ LABELS = {
     "waiting": "尚在观察期",
     "replaced": "已指向新版",
     "hidden": "已隐藏，无新版提示（人工复核）",
+    "unavailable": "画廊不可用",
     "unresolved": "读取失败或需核对",
     "busy": "记录被占用，本轮跳过",
     "changed": "状态或记录已变化",
@@ -207,9 +208,14 @@ def gallery_url(link, mid):
     return f"https://{match[1]}/g/{mid}/" if match and match[2] == mid else None
 
 
-def classify_gallery(repository, row, info, result, observation_days):
-    latest = info.latest_version_id
-    if latest:
+def classify_gallery(repository, row, info, result, observation_days, *, copyright_notice=None):
+    if copyright_notice is not None:
+        event, outcome = "unavailable", "unavailable"
+        result["reason"] = copyright_notice
+        row.last_error_code = "gallery_copyright_claim"
+        row.last_error_detail = copyright_notice
+        row.last_error_operation, row.last_error_at = KIND, utcnow()
+    elif latest := info.latest_version_id:
         version = next(v for v in info.newer_versions if v["manga_id"] == latest)
         result.update(latest_id=latest, latest_url=version["url"])
         if repository.session.get(MangaRecord, latest) is None:
@@ -229,6 +235,9 @@ def classify_gallery(repository, row, info, result, observation_days):
         result["reason"] = info.hidden_reason or "页面未注明隐藏原因"
         row.last_error_code = "gallery_hidden"
         row.last_error_detail = f"已隐藏，无新版提示。{result['reason']}"
+        if result["reason"].casefold() == "expunged":
+            event, outcome = "unavailable", "unavailable"
+            row.last_error_detail = "InVisible:Expunged"
         row.last_error_operation, row.last_error_at = KIND, utcnow()
     elif info.visible is True:
         posted = row.posted_at or info.posted_at
@@ -283,6 +292,7 @@ class RescanExecutor:
                 link,
                 role="browse",
                 allow_redirects=False,
+                check_copyright=True,
                 timeout=self.supervisor.request_timeout_seconds,
             )
             if page.select_one('form input[type="password"]') and not page.select_one("#gdc"):
@@ -299,18 +309,16 @@ class RescanExecutor:
                 "proxy_unavailable",
             }:
                 raise
-            return None, error.code
+            return None, error
 
     def scan_one(self, mid, completed, total):
         with self.database.session() as session:
             before, busy = _scan_record(session, mid)
-        info, reason = None, None
+        info, error = None, None
         link = gallery_url(before.link, mid) if before else None
         if not busy and before and before.status == "deferred":
             if link:
-                info, reason = self.read(link)
-            else:
-                reason = "无有效的画廊详情链接"
+                info, error = self.read(link)
         with self.context.transaction() as special:
             if not special.update_progress(self.claim, {"completed": completed, "total": total}):
                 raise RuntimeError("stale special job")
@@ -338,13 +346,14 @@ class RescanExecutor:
                 or row.active_attempt_id is not None
             ):
                 outcome = "changed"
-            elif info is None:
-                result["reason"] = reason
+            elif info is None and (error is None or error.code != "gallery_copyright_claim"):
+                result["reason"] = error.code if error else "无有效的画廊详情链接"
                 outcome = "unresolved"
             else:
                 try:
                     outcome = classify_gallery(
-                        repository, row, info, result, self.crawl.observation_days
+                        repository, row, info, result, self.crawl.observation_days,
+                        copyright_notice=error.message if error else None,
                     )
                 except ArchiveError as exc:
                     if exc.info.category == ErrorClass.SYSTEM:

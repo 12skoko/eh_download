@@ -518,7 +518,9 @@ Supervisor 会按需运行 `screen`、`details`、`torrent_download`、`direct_d
 
 qBittorrent 已提交任务如果找不到、进入 `error`/`missingFiles`，会进入 `manual_review`；在 qBittorrent 管理界面给任务加上精确的 `failed` 标签后，程序才会删除该任务及文件并切换 fallback。未完成的任务保留到 `torrent_check` 的下一轮定时运行再次检查，`stalledDL` 超过 `torrent_stall_seconds` 后会自动删除任务并切换 fallback。提交的新任务使用 manga ID 的数字部分作为 qBittorrent 显示名称，不改变种子内文件名。direct 下载会先向 EH archive 页面提交 `dltype=org`，解析临时链接后以分片、断点续传方式下载，并在注册产物前验证 ZIP、大小和 CRC，再为最终 ZIP 计算 LANraragi 所需的 SHA-1。
 
-只有画廊页面明确返回 `gallery_unavailable` 时，自动流程才会把档案设为 `unavailable`。direct 使用的 archive 页面和实际下载文件位于不同域名；下载主机返回 404/410 会记录为 `archive_unavailable` 并转入 `manual_review`，不会据此断定画廊永久不可用。
+观察等待补扫优先处理新版提示。没有新版提示且详情页标记为 `Visible: No (Expunged)` 时，档案转为 `unavailable`，错误码为 `gallery_hidden`，详情为 `InVisible:Expunged`。其他隐藏原因仍转人工复核。
+
+补扫或直接下载遇到明确的版权下架提示时，档案转为 `unavailable`，错误码为 `gallery_copyright_claim`，详情保存页面提示原文，包括页面列出的投诉方。种子页明确提示画廊不可用时仍使用 `gallery_unavailable`。直接下载文件的主机返回普通 404/410 时，记录为 `archive_unavailable` 并转入 `manual_review`。
 
 程序提交的 qBittorrent category 固定为区分大小写的 `eharchive`。只有仍在该类别中的种子由程序托管；手工移到其他类别或清空类别后，即使任务带有 `failed` 标签、发生错误、长期停滞或已经完成，程序也不会处理它，数据库保持 `downloading`。移回 `eharchive` 后自动恢复轮询。cleanup 也不会删除已经移出 `eharchive` 的种子任务。
 

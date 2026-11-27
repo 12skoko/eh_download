@@ -2235,7 +2235,7 @@ class TaskExecutor:
             # are served from separate download hosts, so a 404/410 from those
             # hosts needs manual review instead of permanently suppressing the
             # gallery.
-            if info.code == "gallery_unavailable":
+            if info.code in {"gallery_unavailable", "gallery_copyright_claim"}:
                 event = "unavailable"
             finish_error_code = info.code
             finish_error_detail = info.message

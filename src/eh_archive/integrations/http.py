@@ -31,6 +31,33 @@ def raise_for_ip_ban(html: str) -> None:
         )
 
 
+def raise_for_copyright_claim(html: str) -> None:
+    prefix = "This gallery is unavailable due to a copyright claim"
+    if "copyright" not in html.casefold():
+        return
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    # Gallery descriptions and comments may quote the notice on a live page.
+    if soup.select_one("#taglist") is not None:
+        return
+    body = soup.body or soup
+    for block in body.find_all(["br", "div", "p", "section", "li", "td", "hr"]):
+        block.insert_before("\0")
+        block.insert_after("\0")
+    paragraphs = [" ".join(part.split()) for part in body.get_text().split("\0")]
+    lines = [part for part in paragraphs if part]
+    for index, line in enumerate(lines):
+        start = line.lower().find(prefix.lower())
+        if start >= 0:
+            line = line[start:]
+            if index + 1 < len(lines):
+                following = lines[index + 1]
+                if following.casefold().startswith("by ") or line.casefold().endswith(" by"):
+                    line += " " + following
+            raise ArchiveError("gallery_copyright_claim", line, ErrorClass.ITEM)
+
+
 class RoleSession:
     """Requests session with explicit account/network role selection."""
 
@@ -156,10 +183,13 @@ class RoleSession:
         return self.request("POST", url, role=role, **kwargs)
 
     def get_text(
-        self, url: str, *, role: str = "browse", timeout: float = 30.0, **kwargs: Any
+        self, url: str, *, role: str = "browse", timeout: float = 30.0,
+        check_copyright: bool = False, **kwargs: Any
     ) -> str:
         response = self.request("GET", url, role=role, timeout=timeout, **kwargs)
         raise_for_ip_ban(response.text)
+        if check_copyright:
+            raise_for_copyright_claim(response.text)
         response.raise_for_status()
         if 300 <= int(getattr(response, "status_code", 0)) < 400:
             raise ValueError("站点返回重定向，请检查登录状态及采集入口")
