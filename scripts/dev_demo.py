@@ -292,7 +292,7 @@ def seed(database: Database, log_dir: Path, now: datetime | None = None) -> None
                 EventLog(
                     manga_id=manga_id,
                     component="collect",
-                    event_type="collected",
+                    event_type="collect_touched",
                     operation="collect",
                     actor="supervisor",
                     from_status=None,
@@ -305,7 +305,7 @@ def seed(database: Database, log_dir: Path, now: datetime | None = None) -> None
                 EventLog(
                     manga_id=manga_id,
                     component="supervisor",
-                    event_type="status",
+                    event_type="error" if code else "status_changed",
                     operation=op or "screen",
                     actor="supervisor",
                     from_status="discovered",
@@ -367,12 +367,12 @@ def seed(database: Database, log_dir: Path, now: datetime | None = None) -> None
         }
         errors = {
             "download_pending": (
-                "torrent_no_seeders",
+                "latest_torrent_no_seeder",
                 "torrent_download",
                 '{"error": "所有候选种子均无 Seeder"}',
             ),
             "download_blocked": ("no_download_method", "torrent_download", "账号无下载额度"),
-            "quarantined": ("checksum_mismatch", "validate", "ZIP CRC 校验失败：page_031.jpg"),
+            "quarantined": ("crc_error", "validate", "ZIP CRC 校验失败：page_031.jpg"),
             "unavailable": ("gallery_unavailable", "details", "画廊已被移除"),
         }
         for status, count in fill.items():
@@ -513,7 +513,7 @@ def seed(database: Database, log_dir: Path, now: datetime | None = None) -> None
             "manual_review",
             title="[Akane] 茜色の放課後",
             method="direct",
-            code="upload_result_unknown",
+            code="lrr_upload_unknown",
             op="upload",
             detail="<!doctype html><html><body>502 Bad Gateway</body></html>",
             artifact_location="prepared",

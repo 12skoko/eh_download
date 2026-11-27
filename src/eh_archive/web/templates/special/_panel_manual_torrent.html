@@ -1,5 +1,6 @@
 {% from "_macros.html" import icon, csrf, form_error, empty with context %}
-{% from "special/_wf.html" import act, hero, notices, expired_dialog, history with context %}
+{% from "special/_wf.html" import act, hero, notices, expired_dialog, history, run_info with context %}
+{% from "special/_about.html" import about with context %}
 {% set actions = '/workflow/' ~ workflow.id ~ '/actions/' %}
 {% set locked = busy or workflow.status != 'active' or payload.get('submission') %}
 <div id="wf-panel" class="stack" {% if busy %}hx-get="{{ ui_panel_url }}" hx-trigger="every 3s [archiveUICanPoll() && archiveUIWorkflowCanPoll()]" hx-swap="outerHTML"{% endif %}>
@@ -10,7 +11,7 @@
         ('retry', '重试提交并核对已有任务', 'rotate-cw', 'btn btn-primary'),
         ('verify', '仅核实上次提交结果', 'shield-check', 'btn'),
         ('direct', '转直接下载', 'download', 'btn'),
-        ('cancel', '取消并返回原状态', 'undo-2', 'btn btn-danger-quiet'),
+        ('cancel', '取消并返回原状态', 'undo-2', 'btn btn-warn-quiet'),
       ] %}
       {% if (action != 'retry' or payload.get('selection')) and (action != 'verify' or payload.get('submission')) and (action in ['retry', 'verify'] or not payload.get('submission')) %}
         {{ act(actions ~ action, label, workflow, cls, glyph) }}
@@ -25,6 +26,8 @@
   {% if workflow.phase == 'awaiting_load' and not busy %}<div class="note" data-tone="info">{{ icon('info') }}<div>尚未访问种子页面。准备处理时点击“加载种子”；重启和页面轮询都不会自动加载，再次加载会清除之前的选择。</div></div>{% endif %}
   {% if expired_job %}{{ expired_dialog(workflow, actions ~ 'release-expired', '确认旧 Worker 已停止后解除租约，再核实提交结果或重试。') }}{% endif %}
 
+  <div class="wf-layout">
+  <div class="stack">
   {% if payload.get('choices') %}
   <section class="card">
     <form method="post" action="/manual-torrent/{{ workflow.id }}/choose" hx-post="/manual-torrent/{{ workflow.id }}/choose" hx-target="#wf-panel" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
@@ -62,4 +65,10 @@
   {% endif %}
 
   {{ history(workflow) }}
+  </div>
+  <aside class="stack">
+    {{ run_info(workflow) }}
+    {{ about(kind, detail=true) }}
+  </aside>
+  </div>
 </div>

@@ -62,22 +62,20 @@
 </nav>
 {%- endmacro %}
 
-{% macro event_item(event, show_manga=false) -%}
-<li>
+{#- One compact line per event; Chinese labels with raw codes in tooltips. Rows with detail expand on click. -#}
+{% macro event_item(event, show_manga=false, time_only=false) -%}
+{% set line %}
+  <strong title="{{ event.event_type }}">{{ event.event_type|ui_event_type }}</strong>
+  {% if show_manga and event.manga_id %}{{ manga_link(event.manga_id, cls='mono xs') }}{% endif %}
+  {% if event.from_status or event.to_status %}<span class="transition" title="{{ event.from_status or '—' }} → {{ event.to_status or '—' }}">{{ event.from_status|status_label if event.from_status else '—' }} {{ icon('arrow-right') }} {{ event.to_status|status_label if event.to_status else '—' }}</span>{% endif %}
+  {% if event.error_code %}<span class="code" title="{{ event.error_code }}">{{ event.error_code|ui_error_code }}</span>{% endif %}
+  <span class="ev-meta" title="{{ event.component }} / {{ event.operation or '—' }} · actor={{ event.actor }}">{{ event.component|component_label }}{% if event.operation and event.operation != event.component %} / {{ ui_kind_labels.get(event.operation, event.operation|component_label) }}{% endif %} · {{ event.actor }}</span>
+  <time title="{{ event.created_at|datetime }}">{{ (event.created_at|ui_local).strftime('%H:%M:%S') if time_only else event.created_at|datetime }}</time>
+{% endset %}
+<li class="ev">
   <span class="tl-dot" data-tone="{{ 'danger' if event.error_code else 'ok' if event.to_status in ['completed', 'uploaded', 'upload_pending'] else '' }}"></span>
-  <div class="min0">
-    <div class="tl-head">
-      <strong>{{ event.event_type }}</strong>
-      {% if event.from_status or event.to_status %}<span class="transition">{{ event.from_status or '—' }} {{ icon('arrow-right') }} {{ event.to_status or '—' }}</span>{% endif %}
-      <time title="{{ event.created_at|datetime }}">{{ event.created_at|datetime }}</time>
-    </div>
-    <div class="tl-sub">
-      <span class="mono">{{ event.component }} / {{ event.operation or '—' }}</span> · actor={{ event.actor }}
-      {% if show_manga and event.manga_id %} · {{ manga_link(event.manga_id, cls='mono') }}{% endif %}
-      {% if event.error_code %} · <span class="code">{{ event.error_code }}</span>{% endif %}
-    </div>
-    {% if event.detail %}<details class="more"><summary>结构化详情</summary><pre class="codeblock">{{ event.detail|safe_detail|tojson(indent=2) }}</pre></details>{% endif %}
-  </div>
+  {% if event.detail %}<details class="ev-body min0"><summary class="ev-line">{{ line }}{{ icon('chevron-right', 'ev-caret') }}</summary><pre class="codeblock">{{ event.detail|safe_detail|tojson(indent=2) }}</pre></details>
+  {% else %}<div class="ev-line min0">{{ line }}<span class="ev-caret" aria-hidden="true"></span></div>{% endif %}
 </li>
 {%- endmacro %}
 

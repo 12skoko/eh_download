@@ -103,7 +103,7 @@ def activity_items(session) -> list[dict]:
 def install(app, ctx: UIContext) -> None:
     templates = ctx.templates
     database = ctx.database
-    summary_cache = DailySummaryCache()
+    summary_cache = DailySummaryCache(ctx.app_config.timezone)
 
     @app.get(PREFIX + "/login", response_class=HTMLResponse)
     def login_page(request: Request, next: str = PREFIX + "/", error: str | None = None):

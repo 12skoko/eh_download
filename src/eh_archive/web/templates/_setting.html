@@ -20,7 +20,7 @@
     {% endif %}
     <p class="field-error" id="error-{{ field.name }}" {% if not field.error %}hidden{% endif %}>{{ field.error }}</p>
     {% if field.editable and not field.secret %}
-    <div class="default"><span data-override-label>{{ '用户设置' if field.overridden else '使用默认值' }}</span> · 默认：<span class="mono">{{ field.default if field.default else '未设置' }}</span>
+    <div class="default"><span class="default-label" data-override-label>{{ '用户设置' if field.overridden else '使用默认值' }}</span><span class="default-value" title="{{ field.default }}">默认：<span class="mono">{{ field.default if field.default else '未设置' }}</span></span>
       <button type="button" class="btn btn-sm btn-ghost" data-reset="{{ field.name }}" data-default="{{ field.default }}" data-kind="{{ field.kind }}" title="保存时移除用户覆盖，以后跟随默认值">{{ icon('rotate-ccw', 'icon-sm') }}恢复默认</button></div>
     {% elif field.secret %}<div class="default">{{ '已设置' if field.overridden else '未设置' }}</div>{% endif %}
   </div>

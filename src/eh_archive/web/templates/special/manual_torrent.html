@@ -1,27 +1,15 @@
 {% extends "special/_dash.html" %}
-{% from "_macros.html" import icon, run_pill, empty, manga_link, simple_pager with context %}
-{% from "special/_wf.html" import module_head with context %}
-{% block dash %}
-{{ module_head(module, kind, module_health) }}
-<section class="card">
-  <div class="card-body small form-stack">
-    <p>每个工作流只处理一个档案、一个种子。可从档案的种子下载错误入口进入，或在“更改状态 → 等待下载”中选择“手动选择种子”；批量更改状态也支持此选项，每个档案创建独立工作流。</p>
-    <p class="muted">进入后不会自动加载候选，必须手动点击“加载种子”。提交成功后档案交回普通下载流程，复用 torrent_check。</p>
-  </div>
-</section>
-<section class="card mt16">
-  <div class="card-head"><h2>工作流</h2><span class="meta">共 {{ total }} 个</span></div>
-  <div class="table-wrap"><table class="table">
-    <thead><tr><th>工作流</th><th>档案</th><th>状态</th><th>阶段</th><th>更新</th></tr></thead>
-    <tbody>
-    {% for item in workflows %}
-    <tr><td><a class="mono" href="/workflows/manual_torrent/{{ item.id }}">#{{ item.id }}</a></td>
-      <td class="mono xs">{{ manga_link(item.manga_bindings[0].manga_id) }}</td>
-      <td>{{ run_pill(item.status) }}</td><td class="small">{{ phase_labels.get(item.phase, item.phase) }}</td>
-      <td class="num muted" title="{{ item.updated_at|datetime }}">{{ item.updated_at|ui_clock }}</td></tr>
-    {% else %}<tr><td colspan="5">{{ empty('暂无工作流', 'magnet') }}</td></tr>{% endfor %}
-    </tbody>
-  </table></div>
-  {{ simple_pager(page, page * 50 < total, total) }}
+{% from "_macros.html" import icon, manga_link with context %}
+{% from "special/_wf.html" import runs with context %}
+{% block records %}
+{% call(item) runs(workflows, total, page, [('档案', '')], empty_text='暂无运行记录', empty_icon='magnet') %}
+  <td class="mono xs">{{ manga_link(item.manga_bindings[0].manga_id) }}</td>
+{% endcall %}
+{% endblock %}
+{% block launch %}
+<section class="card launch">
+  <div class="card-head"><h3>新建运行</h3></div>
+  <div class="card-body"><p class="small">从档案进入：种子下载出错的档案详情里有入口；也可以在“更改状态 → 等待下载”中选择“手动选择种子”。</p></div>
+  <div class="card-foot"><a class="btn" href="/inbox">{{ icon('inbox') }}去待处理</a></div>
 </section>
 {% endblock %}

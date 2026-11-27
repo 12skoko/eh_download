@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 from urllib.parse import quote, urlencode
 
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -209,7 +210,12 @@ def aware(value: datetime | None) -> datetime | None:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
-def ago(value: Any) -> str:
+def local(value: datetime, timezone: str) -> datetime:
+    """Convert a stored time to the configured display timezone; naive values are UTC."""
+    return aware(value).astimezone(ZoneInfo(timezone))
+
+
+def ago(value: Any, timezone: str = "UTC") -> str:
     """Compact relative time used in lists; exact time stays in the title attribute."""
     if value is None or value == "":
         return "—"
@@ -232,11 +238,11 @@ def ago(value: Any) -> str:
     elif seconds < 86400 * 7:
         amount = f"{int(seconds // 86400)} 天"
     else:
-        return moment.astimezone().strftime("%Y-%m-%d")
+        return local(moment, timezone).strftime("%Y-%m-%d")
     return amount + ("后" if future else "前")
 
 
-def clock(value: Any) -> str:
+def clock(value: Any, timezone: str = "UTC") -> str:
     if value is None:
         return "—"
     if isinstance(value, str):
@@ -244,8 +250,8 @@ def clock(value: Any) -> str:
             value = datetime.fromisoformat(value)
         except ValueError:
             return value
-    moment = aware(value).astimezone()
-    today = datetime.now(UTC).astimezone().date()
+    moment = local(value, timezone)
+    today = local(datetime.now(UTC), timezone).date()
     return moment.strftime("%H:%M" if moment.date() == today else "%m-%d %H:%M")
 
 

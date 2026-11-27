@@ -5,7 +5,6 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import quote
-from zoneinfo import ZoneInfo
 
 from fastapi import Request
 from pydantic import BaseModel, Field
@@ -93,12 +92,12 @@ def create_app(
 
     app = FastAPI(title="EH Archive", version="6.0.0")
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
-    templates.env.filters["datetime"] = _format_datetime
+    templates.env.filters["datetime"] = lambda value: _format_datetime(value, app_config.timezone)
     templates.env.filters["full_collect_datetime"] = lambda value: _format_full_collect_datetime(
         value, app_config.timezone
     )
     templates.env.filters["schedule_datetime"] = lambda value: (
-        value.astimezone(ZoneInfo(app_config.timezone)).strftime("%Y-%m-%d %H:%M:%S")
+        _format_datetime(value, app_config.timezone)
         if value
         else "—"
     )

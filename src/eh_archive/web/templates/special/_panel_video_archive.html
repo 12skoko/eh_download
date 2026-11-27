@@ -1,5 +1,6 @@
 {% from "_macros.html" import icon, csrf, form_error, modal_head, run_pill, empty with context %}
-{% from "special/_wf.html" import act, hero, notices, expired_dialog, history, metrics with context %}
+{% from "special/_wf.html" import act, hero, notices, expired_dialog, history, metrics, run_info with context %}
+{% from "special/_about.html" import about with context %}
 {% set active_job = history_active_job %}
 {% set running_job = history_active_job if history_active_job and history_active_job.status == 'running' else none %}
 {% set base = '/workflow/' ~ workflow.id ~ '/video/' %}
@@ -25,7 +26,7 @@
   {% if active_job %}<div class="note" data-tone="info">{{ icon('loader-circle', 'spin') }}<div><strong>Job #{{ active_job.id }} {{ active_job.status|ui_run_label }}</strong> <span class="mono xs">{{ active_job.operation }}</span><div class="xs">普通阶段操作暂时锁定；页面每 4 秒读取一次数据库进度，不访问 qBittorrent。</div></div></div>{% endif %}
   {% if expired_job %}{{ expired_dialog(workflow, base ~ 'release-expired', '先检查进程与外部系统，确认旧 Worker 不会继续写回，再解除租约。', '已确认旧 worker 进程不存在') }}{% endif %}
 
-  <div class="cols-main">
+  <div class="wf-layout">
     <div class="stack">
       {% if selecting %}
       <section class="card">
@@ -83,8 +84,8 @@
           <p class="small">该操作只删除本工作流登记且所有权仍匹配的两个 qBittorrent 任务、下载文件和工作目录；不会改变普通档案状态。</p>
           {% if manga and manga.status != 'completed' and source_cleanup.get('status') != 'completed' %}<div class="note" data-tone="warn">{{ icon('hourglass') }}<div>普通档案当前为 <span class="mono">{{ manga.status }}</span>，必须完成校验、上传和普通 cleanup 后才能手动清理源文件。</div></div>{% endif %}
           {% if source_cleanup.get('last_error') %}<div class="note" data-tone="danger">{{ icon('circle-alert') }}<div><strong class="mono">{{ source_cleanup.get('last_error_code', 'source_cleanup_failed') }}</strong><div class="xs break">{{ source_cleanup.get('last_error') }}</div></div></div>{% endif %}
-          {% if source_cleanup_eligible and module_health.available and not active_job %}<div>{{ act(base ~ 'cleanup-sources', '重新清理源文件' if source_cleanup.get('status') == 'failed' else '立即清理源文件', workflow, 'btn btn-primary', 'eraser') }}</div>{% endif %}
         </div>
+        {% if source_cleanup_eligible and module_health.available and not active_job %}<div class="card-foot end">{{ act(base ~ 'cleanup-sources', '重新清理源文件' if source_cleanup.get('status') == 'failed' else '立即清理源文件', workflow, 'btn btn-primary', 'eraser') }}</div>{% endif %}
       </section>
       {% endif %}
 
@@ -92,16 +93,7 @@
     </div>
 
     <aside class="stack">
-      <section class="card">
-        <div class="card-head"><h3>工作流</h3></div>
-        <div class="card-body"><dl class="kv">
-          <dt>Kind</dt><dd class="mono xs">{{ workflow.kind }}</dd>
-          <dt>Row version</dt><dd class="num">{{ workflow.row_version }}</dd>
-          <dt>创建</dt><dd class="num">{{ workflow.created_at|datetime }}</dd>
-          <dt>更新</dt><dd class="num">{{ workflow.updated_at|datetime }}</dd>
-          <dt>最近检查</dt><dd>{{ payload.get('last_checked_at', '尚未人工检查') }}</dd>
-        </dl></div>
-      </section>
+      {% call run_info(workflow) %}<dt>最近检查</dt><dd>{% if payload.get('last_checked_at') %}<span class="num" title="{{ payload.last_checked_at }}">{{ payload.last_checked_at|ui_ago }}</span>{% else %}尚未人工检查{% endif %}</dd>{% endcall %}
       <section class="card">
         <div class="card-head"><h3>进度快照</h3><span class="meta">数据库最近状态</span></div>
         <div class="card-body">
@@ -111,16 +103,19 @@
       {% if workflow.status == 'active' and not running_job %}
       <section class="card">
         <div class="card-head"><h3>受控退出</h3><span class="meta">{{ '模块未启用' if not module_health.available else '不执行自动清理' }}</span></div>
-        <form class="card-body form-stack" method="post" action="{{ base }}exit-without-cleanup" hx-post="{{ base }}exit-without-cleanup" hx-target="#wf-panel" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
+        <form method="post" action="{{ base }}exit-without-cleanup" hx-post="{{ base }}exit-without-cleanup" hx-target="#wf-panel" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]">
           {{ csrf() }}<input type="hidden" name="row_version" value="{{ workflow.row_version }}">
+          <div class="card-body form-stack">
           <p class="small muted">{% if not module_health.available %}{{ module_health.reason }}。{% endif %}退出会先取消尚未领取的 job，只恢复档案状态，不会访问或删除 qBittorrent 任务和工作目录。</p>
           <div class="field"><label>退出原因<span class="req">*</span></label><textarea class="textarea" name="reason" rows="2" required>{{ '模块配置不可用，保留外部资源并退出' if not module_health.available else '保留外部资源，转为人工处理' }}</textarea></div>
           <label class="confirm-box"><input type="checkbox" name="confirmed" value="yes" required><span>我确认外部下载和工作目录将被保留，稍后人工处理。</span></label>
           {{ form_error() }}
-          <div><button type="submit" class="btn btn-warn-quiet">保留资源并退出</button></div>
+          </div>
+          <div class="card-foot end"><button type="submit" class="btn btn-warn-quiet">保留资源并退出</button></div>
         </form>
       </section>
       {% endif %}
+      {{ about(kind, detail=true) }}
     </aside>
   </div>
 

@@ -1,7 +1,9 @@
-"""Daily counts of new archives and first completions by Beijing calendar date."""
+"""Daily counts of new archives and first completions by calendar date in the configured timezone."""
 
-from datetime import UTC, datetime, time, timedelta, timezone
+import statistics
+from datetime import UTC, datetime, time, timedelta
 from threading import Lock
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import aliased
@@ -9,8 +11,15 @@ from sqlalchemy.orm import aliased
 from ..db.models import EventLog, MangaRecord
 
 
-BEIJING = timezone(timedelta(hours=8))
 SUMMARY_DAYS = 14
+DEFAULT_TIMEZONE = "Asia/Shanghai"
+SERIES = ("added", "completed")
+# A day is clipped when it exceeds both 4x the series' 75th percentile and that
+# percentile plus 1000, e.g. a one-off import far above the usual daily volume.
+CLIP_RATIO = 4
+CLIP_MARGIN = 1000
+# With clipped bars present, the tallest ordinary bar uses this share of the plot.
+CLIPPED_PEAK_SHARE = 0.78
 
 
 def _completion(event):
@@ -21,10 +30,10 @@ def _completion(event):
     )
 
 
-def daily_summary(session, now):
-    today = now.astimezone(BEIJING).date()
+def daily_summary(session, now, zone=ZoneInfo(DEFAULT_TIMEZONE)):
+    today = now.astimezone(zone).date()
     dates = [today - timedelta(days=i) for i in reversed(range(SUMMARY_DAYS))]
-    starts = [datetime.combine(day, time.min, BEIJING).astimezone(UTC) for day in dates]
+    starts = [datetime.combine(day, time.min, zone).astimezone(UTC) for day in dates]
     days = [dict(date=day, added=0, completed=0) for day in dates]
 
     # Restrict the candidate set by time first. For each candidate the existing
@@ -50,18 +59,36 @@ def daily_summary(session, now):
         for index, count in session.execute(query):
             days[index][key] = count
 
-    peak = max(max(day["added"], day["completed"]) for day in days)
-    # Integer ticks spaced by 1, 2 or 5 times a power of ten.
-    target = max(1, (peak + 6) // 7)
-    magnitude = 10 ** (len(str(target)) - 1)
-    step = next(magnitude * n for n in (1, 2, 5, 10) if magnitude * n >= target)
-    ceiling = max(1, (peak + step - 1) // step) * step
-    return dict(days=days, ceiling=ceiling, ticks=range(ceiling, -1, -step),
-                as_of=now.astimezone(BEIJING))
+    series = {key: _series(days, key) for key in SERIES}
+    # The scale follows the ordinary days only; clipped bars are drawn full
+    # height and the ordinary peak is lowered so clipped bars stay the tallest.
+    peak = max(day[key] for key in SERIES for day in days if not day[key + "_clipped"])
+    clipped = any(item["clipped"] for item in series.values())
+    ceiling = max(1, peak) / (CLIPPED_PEAK_SHARE if clipped else 1)
+    for day in days:
+        for key in SERIES:
+            day[key + "_height"] = 100 if day[key + "_clipped"] else 100 * day[key] / ceiling
+    return dict(days=days, series=series, as_of=now.astimezone(zone))
+
+
+def _series(days, key):
+    """Flag outlier days for one series and summarise the remaining days."""
+    values = [day[key] for day in days]
+    reference = statistics.quantiles(values, n=4, method="inclusive")[2]
+    for day in days:
+        value = day[key]
+        day[key + "_clipped"] = value > CLIP_RATIO * reference and value - reference > CLIP_MARGIN
+    ordinary = [day[key] for day in days if not day[key + "_clipped"]]
+    return dict(
+        total=sum(values),
+        average=sum(ordinary) / len(ordinary),
+        clipped=[day["date"] for day in days if day[key + "_clipped"]],
+    )
 
 
 class DailySummaryCache:
-    def __init__(self):
+    def __init__(self, timezone: str = DEFAULT_TIMEZONE):
+        self._zone = ZoneInfo(timezone)
         self._lock = Lock()
         self._summary = None
 
@@ -71,9 +98,9 @@ class DailySummaryCache:
             if self._summary is not None:
                 previous = self._summary["as_of"]
                 if (
-                    previous.date() == now.astimezone(BEIJING).date()
+                    previous.date() == now.astimezone(self._zone).date()
                     and timedelta(0) <= now - previous < timedelta(minutes=5)
                 ):
                     return self._summary
-            self._summary = daily_summary(session, now)
+            self._summary = daily_summary(session, now, self._zone)
             return self._summary

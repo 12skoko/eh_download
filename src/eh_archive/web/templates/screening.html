@@ -3,7 +3,7 @@
 {% block title %}档案筛选规则{% endblock %}
 {% block crumbs %}<a href="/settings" hx-boost="false">配置</a> / <a href="/settings?section=crawl" hx-boost="false">采集配置</a> / <span class="current">档案筛选规则</span>{% endblock %}
 {% block main %}
-<div class="page page-narrow" id="screen-editor" data-revision="{{ revision }}">
+<div class="page page-narrow" style="max-width:1240px" id="screen-editor" data-revision="{{ revision }}">
   <link rel="stylesheet" href="/static/screening.css">
   <div class="page-head"><div><h1>档案筛选规则</h1><p>直接放行优先，其余档案按算法候选规则判断。两条路径均未命中时滤除。</p></div></div>
   <section class="card rule-editor">
@@ -13,7 +13,10 @@
         <button type="button" data-tab="algorithm">算法候选</button>
       </div>
     </div>
-    <div class="card-body" data-tree></div>
+    <div class="card-body rule-layout">
+      <div class="rule-trees" data-tree></div>
+      <aside class="rule-side" data-side aria-label="编辑所选条件或组"></aside>
+    </div>
     <footer class="savebar rule-footer">
       <details data-rule-details>
         <summary>查看规则 JSON</summary>

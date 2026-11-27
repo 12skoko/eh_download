@@ -871,15 +871,25 @@ def special_workflow_detail(session: Session, workflow_id: int) -> dict[str, Any
     }
 
 
-def list_video_workflows(session: Session, *, limit: int = 200, page: int = 1) -> dict[str, Any]:
+def list_video_workflows(session: Session, *, limit: int = 50, page: int = 1) -> dict[str, Any]:
+    limit = max(1, min(limit, 500))
+    page = max(1, page)
     rows = list(
         session.scalars(
             select(SpecialWorkflow)
             .where(SpecialWorkflow.kind == VIDEO_ARCHIVE.kind)
             .order_by(desc(SpecialWorkflow.updated_at), desc(SpecialWorkflow.id))
-            .offset((max(1, page) - 1) * max(1, min(limit, 500)))
-            .limit(max(1, min(limit, 500)))
+            .offset((page - 1) * limit)
+            .limit(limit)
         )
+    )
+    total = int(
+        session.scalar(
+            select(func.count())
+            .select_from(SpecialWorkflow)
+            .where(SpecialWorkflow.kind == VIDEO_ARCHIVE.kind)
+        )
+        or 0
     )
     counts = {
         status: int(
@@ -904,19 +914,27 @@ def list_video_workflows(session: Session, *, limit: int = 200, page: int = 1) -
             )
         )
     }
+    # The batch cleanup button acts on every eligible workflow, so count across all pages.
     cleanup_pending = 0
     cleanup_waiting = 0
-    for workflow in rows:
-        raw_cleanup = (workflow.payload or {}).get("source_cleanup")
+    for payload, manga_status in session.execute(
+        select(SpecialWorkflow.payload, MangaRecord.status)
+        .join(SpecialWorkflowManga, SpecialWorkflowManga.workflow_id == SpecialWorkflow.id)
+        .outerjoin(MangaRecord, MangaRecord.manga_id == SpecialWorkflowManga.manga_id)
+        .where(SpecialWorkflow.kind == VIDEO_ARCHIVE.kind)
+    ):
+        raw_cleanup = (payload or {}).get("source_cleanup")
         cleanup = dict(raw_cleanup) if isinstance(raw_cleanup, dict) else {}
         if cleanup.get("status") not in {"pending", "failed"}:
             continue
-        if manga_statuses.get(binding(workflow).manga_id) == Status.COMPLETED.value:
+        if manga_status == Status.COMPLETED.value:
             cleanup_pending += 1
         else:
             cleanup_waiting += 1
     return {
         "workflows": rows,
+        "page": page,
+        "total": total,
         "job_counts": counts,
         "manga_statuses": manga_statuses,
         "cleanup_pending": cleanup_pending,

@@ -8,6 +8,25 @@
   const csrf = () => document.querySelector('meta[name="csrf-token"]')?.content || "";
   const toast = (message, tone) => window.archiveUI?.toast(message, tone);
   const loginUrl = () => `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+  // Times follow app.toml timezone (set on <html data-timezone>), not the browser's.
+  const timeParts = (moment) => {
+    const options = {year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"};
+    let format;
+    try {
+      format = new Intl.DateTimeFormat("en-US", {...options, timeZone: document.documentElement.dataset.timezone || "UTC"});
+    } catch (error) {
+      format = new Intl.DateTimeFormat("en-US", options);
+    }
+    return Object.fromEntries(format.formatToParts(moment).map((part) => [part.type, part.value]));
+  };
+  const formatTime = (moment) => {
+    const p = timeParts(moment);
+    return `${p.hour}:${p.minute}:${p.second}`;
+  };
+  const formatDateTime = (moment) => {
+    const p = timeParts(moment);
+    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+  };
   const once = (element, key) => {
     if (!element || element.dataset[key]) return false;
     element.dataset[key] = "1";
@@ -266,7 +285,7 @@
         text = data.text;
         start = data.start;
         paint();
-        status.textContent = `字节 ${data.start.toLocaleString()}–${data.end.toLocaleString()} / ${data.size.toLocaleString()} · ${new Date().toLocaleTimeString()} 已刷新${data.start ? " · 窗口起始可能位于一行中间" : ""}`;
+        status.textContent = `字节 ${data.start.toLocaleString()}–${data.end.toLocaleString()} / ${data.size.toLocaleString()} · ${formatTime(new Date())} 已刷新${data.start ? " · 窗口起始可能位于一行中间" : ""}`;
         fit();
         if (!filter.value.trim()) {
           output.scrollTop = before === undefined && follow.checked ? output.scrollHeight : (before === undefined ? old : 0);
@@ -312,7 +331,12 @@
   const TONES = {succeeded: "ok", active: "ok", running: "run", activating: "run", pending: "idle", failed: "danger",
     interrupted: "danger", cancelled: "muted", inactive: "muted", deactivating: "warn", paused: "muted", draining: "warn"};
   const label = (value) => LABELS[value] || value || "—";
-  const date = (value) => (value ? new Date(value).toLocaleString("zh-CN") : "—");
+  const date = (value) => {
+    if (!value) return "—";
+    // Naive ISO strings come from SQLite and are stored as UTC.
+    const parsed = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`);
+    return Number.isNaN(parsed.getTime()) ? String(value) : formatDateTime(parsed);
+  };
   const commit = (hash, message, fallback = "—") => (hash ? (message ? `${message} · ${hash.slice(0, 7)}` : hash.slice(0, 7)) : fallback);
   async function api(path, method = "GET", body) {
     const response = await fetch(path, {
@@ -385,7 +409,7 @@
         const service = data.services[`eharchive-${row.dataset.service}.service`] || {};
         pill($("[data-status]", row), service.ActiveState);
         $("[data-pid]", row).textContent = service.MainPID || "—";
-        $("[data-started]", row).textContent = service.ExecMainStartTimestamp || "—";
+        $("[data-started]", row).textContent = service.started_at ? date(service.started_at) : service.ExecMainStartTimestamp || "—";
       }
       $("[data-supervisor-control]", root).textContent = data.database_error || (data.control
         ? `调度状态：${label(data.control.state)} · 心跳：${date(data.control.heartbeat_at)}` : "暂无 Supervisor 心跳");
@@ -418,7 +442,7 @@
         button.disabled = busy;
         button.title = busy ? "已有操作正在执行" : "";
       });
-      $("[data-system-refreshed]", root).textContent = `${new Date().toLocaleTimeString()} 刷新 · 每 2 秒`;
+      $("[data-system-refreshed]", root).textContent = `${formatTime(new Date())} 刷新 · 每 2 秒`;
     }
 
     function renderGit(value) {

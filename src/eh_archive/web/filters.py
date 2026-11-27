@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from .services import STATUS_LABELS
-from . import common
+from . import common, labels
 
 
 def chart_count(value: int) -> str:
@@ -23,14 +23,18 @@ def register(env, app_config) -> None:
     env.filters["ui_tone"] = common.tone
     env.filters["ui_run_tone"] = common.run_tone
     env.filters["ui_run_label"] = lambda value: common.RUN_LABELS.get(value or "", value or "—")
-    env.filters["ui_ago"] = common.ago
-    env.filters["ui_clock"] = common.clock
+    timezone = app_config.timezone
+    env.filters["ui_ago"] = lambda value: common.ago(value, timezone)
+    env.filters["ui_clock"] = lambda value: common.clock(value, timezone)
+    env.filters["ui_local"] = lambda value: common.local(value, timezone)
     env.filters["ui_manga_url"] = common.manga_url
     env.filters["ui_json"] = lambda value: json.dumps(
         value, ensure_ascii=False, indent=2, default=str
     )
     env.filters["ui_is_mapping"] = lambda value: isinstance(value, dict)
     env.filters["ui_track"] = common.track
+    env.filters["ui_event_type"] = labels.event_type_label
+    env.filters["ui_error_code"] = labels.error_code_label
     phases = common.phase_labels_by_kind()
     env.filters["ui_phase"] = lambda phase, kind: phases.get(kind, {}).get(phase, phase)
     env.filters["ui_tags"] = lambda raw: [

@@ -1,4 +1,4 @@
-{% from "_macros.html" import icon, csrf, form_error, modal_head, run_pill, status_pill, event_item, job_table, empty, manga_link with context %}
+{% from "_macros.html" import icon, csrf, form_error, modal_head, run_pill, status_pill, event_item, job_table, empty, manga_link, simple_pager with context %}
 
 {# 面板内单按钮表单：成功后替换整个面板 #}
 {% macro act(url, label, workflow, cls='btn', glyph=none, extra={}, confirm=none) -%}
@@ -150,7 +150,62 @@
     {{ caller() if caller else '' }}
   </div>
 </div>
-{% if not module_health.available %}<div class="note" data-tone="warn" style="margin-bottom:16px">{{ icon('plug') }}<div>{{ module_health.reason }}</div></div>{% endif %}
+{% if not module_health.available %}<div class="note page-note" data-tone="warn">{{ icon('plug') }}<div>{{ module_health.reason }}。启用后才能新建运行，历史仍可查看。</div></div>{% endif %}
+{%- endmacro %}
+
+{# 模块页右侧栏的“新建”卡：字段由 caller 提供，按钮固定在卡底部；模块未启用时卡片保留、控件禁用 #}
+{% macro launch(title, url, label, glyph, primary=true, badge='', attrs='') -%}
+{%- set off = not module_health.available -%}
+<section class="card launch">
+  <form method="post" action="{{ url }}" hx-post="{{ url }}" hx-swap="none" hx-disabled-elt="find button[type=submit]" {{ attrs|safe }}>
+    {{ csrf() }}
+    <div class="card-head"><h3>{{ title }}</h3>{% if badge %}<div class="actions">{{ badge|safe }}</div>{% endif %}</div>
+    <fieldset class="card-body form-stack" {% if off %}disabled{% endif %}>
+      {{ caller() if caller is defined else '' }}
+      {% if off %}<p class="launch-off">{{ icon('plug', 'icon-sm') }}<span>模块未启用，不能新建。</span></p>{% endif %}
+      {{ form_error() }}
+    </fieldset>
+    <div class="card-foot"><button type="submit" class="btn{{ ' btn-primary' if primary }}" {% if off %}disabled{% endif %}>{{ icon(glyph) }}{{ label }}</button></div>
+  </form>
+</section>
+{%- endmacro %}
+
+{# 模块页左栏的运行记录：编号、状态（含阶段）、caller 提供的模块专属列、更新时间 #}
+{% macro runs(rows, total, page, cols=[], title='运行记录', word='运行', empty_text='暂无运行记录', empty_icon='workflow', head_extra='', per=50) -%}
+{%- set labels = phase_labels|default({}) -%}
+<section class="card">
+  <div class="card-head"><h2>{{ title }}</h2><span class="meta">共 {{ total }} 次</span>{% if head_extra %}<div class="actions">{{ head_extra|safe }}</div>{% endif %}</div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>{{ word }}</th><th>状态</th>{% for label, cls in cols %}<th{% if cls %} class="{{ cls }}"{% endif %}>{{ label }}</th>{% endfor %}<th>更新</th></tr></thead>
+    <tbody>
+    {% for item in rows %}
+    <tr {% if item.status == 'active' %}data-active{% endif %}>
+      <td><a class="mono" href="/workflows/{{ item.kind }}/{{ item.id }}">#{{ item.id }}</a></td>
+      <td>{{ run_pill(item.status, labels.get(item.phase) or item.phase|special_phase_label) }}</td>
+      {{ caller(item) if caller is defined else '' }}
+      <td class="num muted nowrap" title="{{ item.updated_at|datetime }}">{{ item.updated_at|ui_ago }}</td>
+    </tr>
+    {% else %}<tr><td colspan="{{ cols|length + 3 }}">{{ empty(empty_text, empty_icon) }}</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% if total > per or page > 1 %}{{ simple_pager(page, page * per < total, total, per) }}{% endif %}
+</section>
+{%- endmacro %}
+
+{# 运行详情右栏的“运行信息”卡；caller 可追加模块专属行 #}
+{% macro run_info(workflow) -%}
+<section class="card">
+  <div class="card-head"><h3>运行信息</h3></div>
+  <div class="card-body"><dl class="kv">
+    <dt>编号</dt><dd class="mono">#{{ workflow.id }}</dd>
+    <dt>阶段</dt><dd class="mono xs">{{ workflow.phase }}</dd>
+    <dt>创建</dt><dd class="num">{{ workflow.created_at|datetime }}</dd>
+    <dt>更新</dt><dd class="num">{{ workflow.updated_at|datetime }}</dd>
+    <dt>发起</dt><dd class="mono xs break">{{ workflow.created_by or '—' }}</dd>
+    <dt>行版本</dt><dd class="num">{{ workflow.row_version }}</dd>
+    {{ caller() if caller is defined else '' }}
+  </dl></div>
+</section>
 {%- endmacro %}
 
 {# 报告分组与分页 #}

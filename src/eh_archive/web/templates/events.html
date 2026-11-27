@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, pager, empty, manga_link with context %}
+{% from "_macros.html" import icon, pager, empty, event_item with context %}
 {% set nav = 'events' %}
 {% block title %}事件{% endblock %}
 {% block crumbs %}<span>观测</span>{{ icon('chevron-right') }}<span class="current">事件</span>{% endblock %}
@@ -22,24 +22,9 @@
     <div class="card-body">
       {% set state = namespace(day=none) %}
       {% for event in page.rows %}
-        {% set day = event.created_at.astimezone().strftime('%Y-%m-%d') %}
+        {% set day = (event.created_at|ui_local).strftime('%Y-%m-%d') %}
         {% if day != state.day %}{% if state.day is not none %}</ol>{% endif %}<div class="day-head">{{ day }}</div><ol class="timeline">{% set state.day = day %}{% endif %}
-        <li>
-          <span class="tl-dot" data-tone="{{ 'danger' if event.error_code else 'ok' if event.to_status in ['completed', 'uploaded'] else '' }}"></span>
-          <div class="min0">
-            <div class="tl-head">
-              <strong>{{ event.event_type }}</strong>
-              <span class="mono xs muted">{{ event.component }} / {{ event.operation or '—' }}</span>
-              {% if event.from_status or event.to_status %}<span class="transition">{{ event.from_status or '—' }} {{ icon('arrow-right') }} {{ event.to_status or '—' }}</span>{% endif %}
-              <time title="{{ event.created_at|datetime }}">{{ event.created_at.astimezone().strftime('%H:%M:%S') }}</time>
-            </div>
-            <div class="tl-sub">
-              {% if event.manga_id %}{{ manga_link(event.manga_id, cls='mono') }} · {% endif %}actor={{ event.actor }}
-              {% if event.error_code %} · <span class="code">{{ event.error_code }}</span>{% endif %}
-            </div>
-            {% if event.detail %}<details class="more"><summary>详情</summary><pre class="codeblock">{{ event.detail|safe_detail|tojson(indent=2) }}</pre></details>{% endif %}
-          </div>
-        </li>
+        {{ event_item(event, show_manga=true, time_only=true) }}
       {% endfor %}
       </ol>
     </div>

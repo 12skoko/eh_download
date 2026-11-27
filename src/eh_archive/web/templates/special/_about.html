@@ -1,0 +1,44 @@
+{# 各模块的“说明”卡：模块页和运行详情共用同一份文字，detail=true 时可附加只与单次运行有关的提示 #}
+{% macro about(kind, detail=false) -%}
+{%- set paragraphs = {
+  'download_cleanup': [
+    '扫描 qBittorrent 中属于 <span class="mono">eharchive</span> 的种子，以及种子、直链、H@H、aria2 下载目录。所有来源均可清理“已完成”和“已删除”的条目；qBittorrent 种子和种子下载目录还可清理“下载受阻”“筛选排除”和“已跳过”的条目。',
+    '有活动任务或租约的档案会跳过。先生成预览清单，再手动确认删除；清理不改变档案状态，也不删除 LANraragi 档案。',
+  ],
+  'lanraragi_compare': [
+    '比较数据库已完成档案与 LANraragi 标签中 EH / EX Gallery URL 提取的数字 GID，只生成报告，不修改任何档案。',
+    'LANraragi 独有项可能对应数据库中的其他状态。GID 相同不代表文件内容一致；两端采集时间分别记录，不是同一时刻的快照。重新核对会新建一次运行并保留历史。',
+  ],
+  'full_collect': [
+    '向较小 GID 逐页扫描，新增记录进入 <span class="mono">filtered_out</span>，已有档案只刷新元数据。补采同样新建独立区间。',
+    '同一时间只运行一个轮次：新建前先暂停当前轮次，并等待执行者安全退出。站点权限、隐藏或已删除内容仍会影响可见范围。',
+  ],
+  'observation_rescan': [
+    '逐个回访观察等待档案的详情页。可见且观察期已满的进入正常筛选，未满的继续观察；已隐藏且无新版提示的转人工复核。',
+    '有新版提示时：新版已入库的标记为被替代；新版尚未入库的只列入报告，不改状态。',
+  ],
+  'lanraragi_metadata': [
+    '检查远端文件，用本地数据修复标题和标签，先预览再确认，不重新上传文件。支持已完成档案，以及因上传错误进入人工复核的档案；文件不存在或身份不符时保留人工复核。',
+    '默认从主记录、当前文件版本的上传记录或远端来源标签定位远端档案。手动填写的 LANraragi ID 仍需核对文件名、大小和来源，不能覆盖已有的不一致 ID。',
+  ],
+  'video_archive': [
+    '每个档案一个工作流，从人工复核中的 <span class="mono">video_torrent</span> 档案进入。图片与视频 Torrent 都下载完成后，安全解压、转换、打包并校验，再交回普通上传流程。',
+    '下载进度不是实时值；只有“立即检查”或模块页的批量检查才访问 qBittorrent。源文件清理只接受同时匹配工作流登记的 hash、模块专用 category 和数字 ID 保存路径的任务，被人工改动时整次失败。',
+  ],
+  'manual_torrent': [
+    '每个工作流只处理一个档案、一个种子。可从档案的种子下载错误入口进入，或在“更改状态 → 等待下载”中选择“手动选择种子”；批量更改状态也支持此选项，每个档案创建独立工作流。',
+    '进入后不会自动加载候选，必须手动点击“加载种子”。提交成功后档案交回普通下载流程，复用 <span class="mono">torrent_check</span>。',
+  ],
+} -%}
+{%- set extra = {
+  'lanraragi_metadata': ['预览与确认之间会检查本地行版本、产物 generation 和元数据指纹，执行时再次检查远端预览快照；有变化需要新预览。重试总是重新生成预览，不自动重放写入。'],
+  'full_collect': ['处理次数包含边界重叠，不代表唯一档案总数。'],
+} if detail else {} -%}
+{%- set items = paragraphs.get(kind, []) + extra.get(kind, []) -%}
+{%- if items -%}
+<section class="card">
+  <div class="card-head"><h3>说明</h3></div>
+  <div class="card-body about">{% for text in items %}<p>{{ text|safe }}</p>{% endfor %}</div>
+</section>
+{%- endif -%}
+{%- endmacro %}

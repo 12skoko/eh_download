@@ -130,7 +130,7 @@ def _format_collected_at(value, timezone) -> str:
         parsed = datetime.fromisoformat(value) if isinstance(value, str) else value
         if parsed.tzinfo is None:
             return str(value)
-        return parsed.astimezone(ZoneInfo(timezone)).strftime("%Y-%m-%d %H:%M:%S %Z")
+        return parsed.astimezone(ZoneInfo(timezone)).strftime("%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError, AttributeError):
         return str(value)
 
@@ -147,11 +147,13 @@ def _format_full_collect_datetime(value, timezone: str) -> str:
         return str(value)
 
 
-def _format_datetime(value) -> str:
+def _format_datetime(value, timezone: str = "UTC") -> str:
     if value is None:
         return "—"
     if isinstance(value, datetime):
-        return value.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(ZoneInfo(timezone)).strftime("%Y-%m-%d %H:%M:%S")
     return str(value)
 
 

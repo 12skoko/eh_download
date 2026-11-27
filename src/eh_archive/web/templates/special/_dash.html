@@ -1,11 +1,19 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon with context %}
+{% from "special/_wf.html" import module_head with context %}
+{% from "special/_about.html" import about with context %}
 {% set nav = 'workflows' %}
 {% block title %}{{ module.label }}{% endblock %}
 {% block crumbs %}<a href="/workflows">工作流</a>{{ icon('chevron-right') }}<span class="current">{{ module.label }}</span>{% endblock %}
 {% block main %}
+{# 模块页骨架：左栏运行记录，右侧栏从上到下是新建卡、说明卡。各模块只填 records / launch 两块 #}
 <div class="page" data-error-scope>
   <div class="form-error page-error" data-form-error hidden></div>
-  {% block dash %}{% endblock %}
+  {{ module_head(module, kind, module_health) }}
+  {% block notice %}{% endblock %}
+  <div class="wf-layout launch-first">
+    <div class="stack">{% block records %}{% endblock %}</div>
+    <aside class="stack">{% block launch %}{% endblock %}{{ about(kind) }}</aside>
+  </div>
 </div>
 {% endblock %}

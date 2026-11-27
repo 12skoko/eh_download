@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -15,6 +17,23 @@ from ..management.service import cancel, submit
 from ..management.state import OperationStore, read_json, tail
 from ..management.systemd import Systemd
 from ..management.update_check import check_updates, saved_check
+_SYSTEMD_TIME = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?: (\S+))?")
+
+
+def _systemd_started_at(value: str | None) -> str | None:
+    """systemctl prints local time such as "Wed 2026-09-30 09:12:03 CST"; return UTC ISO."""
+    match = _SYSTEMD_TIME.search(value or "")
+    if match is None:
+        return None
+    moment = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+    # The Web process shares the host timezone that systemctl formats with.
+    moment = moment.replace(tzinfo=UTC) if match.group(2) == "UTC" else moment.astimezone()
+    return moment.astimezone(UTC).isoformat()
+
+
+def _service_status(systemd: Systemd, unit: str) -> dict:
+    status = systemd.status(unit)
+    return {**status, "started_at": _systemd_started_at(status.get("ExecMainStartTimestamp"))}
 
 
 class OperationRequest(BaseModel):
@@ -65,7 +84,7 @@ def register(app, templates, context, database, management_path: Path = DEFAULT_
         config()
         systemd = Systemd()
         result = {
-            "services": {unit: systemd.status(unit) for unit in (WEB_UNIT, SUPERVISOR_UNIT)},
+            "services": {unit: _service_status(systemd, unit) for unit in (WEB_UNIT, SUPERVISOR_UNIT)},
             "operations": [store().observed(state, systemd) for state in store().list()],
         }
         try:

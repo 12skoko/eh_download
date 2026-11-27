@@ -4,35 +4,34 @@
 {% from "special/_observation_rescan.html" import scan_form, scan_scope, result_labels with context %}
 {% block new_run_action %}{% endblock %}
 {% block results %}
-{% set can_start = module_health.available and workflow.status != 'active' %}
 {% set inputs = payload.get('input', {}) %}
-<div class="{{ 'cols-main' if can_start else 'stack' }}">
-  <section class="card">
-    <div class="card-head"><h2>本轮补扫</h2><span class="meta">{{ scan_scope(inputs) }}</span></div>
-    <div class="card-body form-stack">
-      <div>
-        {% set pct = (100 * rescan.completed / rescan.total) if rescan.total else 0 %}
-        <div class="progress"><span style="width:{{ [pct, 100]|min }}%"></span></div>
-        <div class="progress-meta"><span>已检查 <strong class="mono">{{ rescan.completed }} / {{ rescan.total if rescan.total is not none else '—' }}</strong> 条</span>
-          {% if rescan.total %}<strong class="num">{{ '%.1f%%'|format(pct) }}</strong>{% endif %}</div>
-      </div>
-      {% if rescan.latest %}
-      {% set last = rescan.latest.detail %}
-      <div class="row wrap center gap8 small break"><span class="muted">最近完成</span>
-        {{ manga_link(last.manga_id, last.title or last.manga_id) }} <span class="id">{{ last.manga_id }}</span>
-        <time class="xs muted mono" datetime="{{ rescan.latest.created_at.isoformat() }}">{{ rescan.latest.created_at|full_collect_datetime }}</time>
-      </div>
-      {% endif %}
-      {% if payload.get('outputs') %}{{ outputs(workflow, payload, {'rescan': '补扫报告'}) }}{% endif %}
-      {% if can_start and rescan.can_retry_unresolved %}
-      <form method="post" action="/workflows/{{ kind }}/create" hx-post="/workflows/{{ kind }}/create" hx-swap="none" hx-disabled-elt="find button">
-        {{ csrf() }}<input type="hidden" name="inputs" value='{{ {"retry_workflow_id": workflow.id}|tojson }}'>
-        {{ form_error() }}<button type="submit" class="btn btn-sm">{{ icon('rotate-cw', 'icon-sm') }}只重扫读取失败或需核对的档案</button>
-      </form>
-      {% endif %}
+<section class="card">
+  <div class="card-head"><h2>本轮补扫</h2><span class="meta">{{ scan_scope(inputs) }}</span></div>
+  <div class="card-body form-stack">
+    <div>
+      {% set pct = (100 * rescan.completed / rescan.total) if rescan.total else 0 %}
+      <div class="progress"><span style="width:{{ [pct, 100]|min }}%"></span></div>
+      <div class="progress-meta"><span>已检查 <strong class="mono">{{ rescan.completed }} / {{ rescan.total if rescan.total is not none else '—' }}</strong> 条</span>
+        {% if rescan.total %}<strong class="num">{{ '%.1f%%'|format(pct) }}</strong>{% endif %}</div>
     </div>
-  </section>
-  {% if can_start %}<aside>{{ scan_form(inputs.get('start_id'), again=true) }}</aside>{% endif %}
-</div>
+    {% if rescan.latest %}
+    {% set last = rescan.latest.detail %}
+    <div class="row wrap center gap8 small break"><span class="muted">最近完成</span>
+      {{ manga_link(last.manga_id, last.title or last.manga_id) }} <span class="id">{{ last.manga_id }}</span>
+      <time class="xs muted mono" datetime="{{ rescan.latest.created_at.isoformat() }}">{{ rescan.latest.created_at|full_collect_datetime }}</time>
+    </div>
+    {% endif %}
+    {% if payload.get('outputs') %}{{ outputs(workflow, payload, {'rescan': '补扫报告'}) }}{% endif %}
+  </div>
+  {% if module_health.available and workflow.status != 'active' and rescan.can_retry_unresolved %}
+  <form method="post" action="/workflows/{{ kind }}/create" hx-post="/workflows/{{ kind }}/create" hx-swap="none" hx-disabled-elt="find button">
+    {{ csrf() }}<input type="hidden" name="inputs" value='{{ {"retry_workflow_id": workflow.id}|tojson }}'>
+    <div class="card-foot"><span class="hint">读取失败或需核对的档案可以单独重扫，新建一次运行。</span><button type="submit" class="btn btn-sm">{{ icon('rotate-cw', 'icon-sm') }}只重扫这些档案</button></div>
+  </form>
+  {% endif %}
+</section>
 {% include "special/_rescan_results.html" %}
+{% endblock %}
+{% block side %}
+{% if workflow.status != 'active' %}{{ scan_form(payload.get('input', {}).get('start_id'), again=true) }}{% endif %}
 {% endblock %}

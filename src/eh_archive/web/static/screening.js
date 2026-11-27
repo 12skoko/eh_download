@@ -229,50 +229,14 @@
     if (ruleDetails.open) find("[data-rule-json]").textContent = JSON.stringify(ruleDocument(rules[tab]), null, 2);
   }
   ruleDetails.addEventListener("toggle", refreshRuleJson);
+  let treeFrame = 0;
   function changed() {
     editVersion++;
     find("[data-results]").replaceChildren();
     find("[data-status]").textContent = "草稿已修改";
     refreshRuleJson();
-  }
-  function editNote(box, node, label) {
-    const trigger = element("button", undefined, "rule-note-trigger");
-    trigger.type = "button";
-    function display() {
-      const text = node.note || "";
-      trigger.textContent = text || "＋ 备注";
-      trigger.setAttribute("aria-label", (text ? "编辑" : "添加") + label + "备注");
-      box.classList.toggle("note-line", !!text);
-      box.replaceChildren(trigger);
-    }
-    function write(value) {
-      if (value.trim()) node.note = value;
-      else delete node.note;
-      changed();
-    }
-    trigger.onclick = () => {
-      const original = node.note || "";
-      const input = element("textarea", undefined, "input");
-      input.rows = 2;
-      input.value = original;
-      input.setAttribute("aria-label", label + "备注");
-      input.oninput = () => write(input.value);
-      function finish() { display(); trigger.focus(); }
-      input.onkeydown = ev => {
-        if (ev.isComposing || ev.keyCode === 229) return;
-        if (ev.key === "Escape") {
-          ev.preventDefault();
-          if ((node.note || "") !== original) write(original);
-          finish();
-        } else if (ev.key === "Enter" && !ev.shiftKey) {
-          ev.preventDefault(); finish();
-        }
-      };
-      box.classList.add("note-line");
-      box.replaceChildren(input, button("完成", finish));
-      input.focus();
-    };
-    display();
+    // 侧栏里的输入只刷新左侧大纲，不重建侧栏，避免输入框失焦。
+    if (!treeFrame) treeFrame = requestAnimationFrame(() => {treeFrame = 0; renderTree();});
   }
   function updateNode(node, obj) {
     for (const key of Object.keys(node)) {
@@ -345,9 +309,11 @@
       count.textContent = n.values.length + " 个" + kind;
       copy.disabled = n.values.length === 0;
     };
-    controls.append(meta);
     const entry = element("div", undefined, "rule-entry");
-    box.append(entry);
+    const valueField = element("div", undefined, "rule-control rule-value-field");
+    valueField.append(element("span", "值"), entry);
+    box.append(valueField);
+    controls.append(meta);
     if (cats || (tags && ns === "language")) {
       const choices = cats ? Object.fromEntries(categories.map(v => [v,v])) : languages;
       const menu = select({"":"选择并添加", ...choices}, "", v => {
@@ -476,126 +442,348 @@
   function height(n) {
     return n.children?.length ? 1 + Math.max(...n.children.map(height)) : 0;
   }
-  function node(source, replace, depth, sideName, panelRoot = null) {
-    const excluded = exclusionShell(source) && !source.children[0].children;
-    const n = excluded ? source.children[0] : source;
-    const box = element("section", undefined, n.children ? "rule-group" : "rule-leaf");
-    const head = element("div", undefined, n.children ? "rule-group-head" : "rule-leaf-head");
-    const controls = element("div", undefined, "rule-controls");
-    const actions = element("div", undefined, "rule-actions");
-    head.append(controls, actions);
-    box.append(head);
-    if (!n.children) {
-      const field = element("div", undefined, "rule-control");
-      const modes = element("div", undefined, "seg");
-      modes.setAttribute("role", "group");
-      modes.setAttribute("aria-label", "条件模式");
-      for (const [label, negate] of [["匹配", false], ["取反", true]]) {
-        const option = element("button", label);
-        option.type = "button";
-        option.setAttribute("aria-pressed", String(excluded === negate));
-        option.disabled = negate && !excluded && depth >= 8;
-        if (option.disabled) option.title = "已达到 8 层嵌套限制";
-        option.onclick = () => {
-          if (excluded === negate) return;
-          replace(negate ? {op:"not",children:[n]} : n);
-          changed();
-          render();
-        };
-        modes.append(option);
-      }
-      field.append(element("span", "模式"), modes);
-      controls.append(field);
+  // ---------- 大纲 + 侧栏 ----------
+  // 左侧大纲只读，点行选中，在右侧侧栏编辑；组前的箭头只负责折叠。
+  const relationNames = {all:"以下全部满足", any:"以下任一满足", nall:"不满足以下全部", nany:"不满足以下任一", not:"不满足以下条件"};
+  const treeBox = find("[data-tree]"), sidePanel = find("[data-side]");
+  const collapsed = new WeakSet();
+  let selected = null, contexts = new Map();
+
+  function groupView(raw) {
+    const inner = raw.children[0];
+    // 不带备注的 not 包着一个与 / 或组：显示为“不满足以下全部 / 任一”，不多占一层。
+    if (raw.op === "not" && !raw.note && inner?.children && inner.op in relations) {
+      return {wrapper:raw, inner, relation:"n" + inner.op};
     }
-    if (n.children) {
-      if (panelRoot) {
-        const title = sideName === "include" ? "包含条件" : "排除条件";
-        box.setAttribute("aria-label", title);
-        box.dataset.rulePanel = sideName;
-        controls.append(element("h2", title));
-      }
-      const relation = select(panelRoot ? relations : groups,n.op,op => {
-        if (op === "not" && n.children.length > 1) {
-          if (depth + height(n) >= 8) {
-            render(); find("[data-status]").textContent = "已达到 8 层嵌套限制"; return;
-          }
-          n.children = [{op:n.op,children:n.children}];
-        }
-        if (panelRoot) panelRoot.implicit = false;
-        n.op=op; changed(); render();
-      },"组内关系");
-      controls.append(panelRoot ? relation : control("子组关系", relation));
-      if (n.op !== "not" && depth < 8) {
-        actions.append(button("＋ 条件",() => {n.children.push(leaf()); changed(); render();}));
-        if (depth < 7) actions.append(button("＋ 子组",() => {n.children.push(group()); changed(); render();}));
-      }
-      if (panelRoot && sideName === "include" && !n.children.length) {
-        actions.append(button("匹配全部", () => {
-          panelRoot.implicit = true;
-          n.children.push({op:"always"}); changed(); render();
-        }));
-      }
-      const children = element("div", undefined, "rule-children");
-      box.append(children);
-      n.children.forEach((child,i) => {
-        if (i > 0) children.append(element("span", n.op === "all" ? "且" : "或", "rule-join"));
-        children.append(node(child,v => {
-          if (v) n.children[i]=v; else n.children.splice(i,1);
-          if (!n.children.length && !panelRoot) replace(null);
-        },depth+1,sideName));
-      });
-      if (panelRoot && !n.children.length) {
-        const hasOtherSide = !!panelRule(rules[tab].exclude);
-        const hint = sideName === "exclude" ? "未设置排除条件"
-          : hasOtherSide ? "包含所有未命中排除条件的档案" : "两框都留空时，此路径不匹配档案";
-        children.append(element("span", hint, "rule-empty"));
-      }
-    } else if (n.op === "always") controls.append("匹配全部档案");
-    else {
-      controls.append(control("筛选字段", select(fields,n.field,f => {
-        const cache = drafts.get(n) || {};
-        cache[n.field] = structuredClone(n);
-        delete cache[n.field].note;
-        drafts.set(n,cache);
-        const op = n.op in ops(f) ? n.op : Object.keys(ops(f))[0];
-        const next = cache[f] || blank(f,op);
-        if (!cache[f] && next.values && n.values && f in fields &&
-            n.op in textOps && op in textOps) next.values = [...n.values];
-        updateNode(n,next);
-      },"筛选字段")),control("匹配方式", select(ops(n.field),n.op,op => {
-        const next = blank(n.field,op);
-        if (next.values && n.values) next.values = n.values;
-        if (next.values && n.case) next.case = true;
-        if (next.values && n.match && op !== "none") next.match = n.match;
-        updateNode(n,next);
-      },"匹配方式")));
-      if (n.values) editValues(box,controls,n);
-      if ("value" in n) editRange(controls,n);
-    }
-    if (!panelRoot) {
-      const note = element("div", undefined, "rule-note");
-      head.insertBefore(note, actions);
-      editNote(note, n, n.children ? "子组" : "条件");
-      if (n.children && depth + height(n) < 8) actions.append(button("整组取反",() => {replace({op:"not",children:[n]}); changed(); render();}));
-      const remove = button(n.children ? "删除组" : "删除条件",() => {replace(null); changed(); render();});
-      remove.classList.add("rule-remove");
-      actions.append(remove);
-    }
-    return box;
+    return {wrapper:null, inner:raw, relation:raw.op};
   }
-  function render() {
-    for (const el of root.querySelectorAll("[data-tab]")) el.setAttribute("aria-pressed", String(el.dataset.tab === tab));
-    const tree = find("[data-tree]");
-    const rule = rules[tab], combined = composeRule(rule);
-    tree.replaceChildren();
+  function chevron() {
+    const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg"), path = document.createElementNS(ns, "path");
+    svg.setAttribute("viewBox", "0 0 12 12");
+    svg.setAttribute("aria-hidden", "true");
+    path.setAttribute("d", "M3 4.5 6 7.5 9 4.5");
+    svg.append(path);
+    return svg;
+  }
+  function summarize(group) {
+    const groups = group.children.filter(child => child.children && !(exclusionShell(child) && !child.children[0].children)).length;
+    const leaves = group.children.length - groups;
+    return [leaves && leaves + " 个条件", groups && groups + " 个子组"].filter(Boolean).join("、");
+  }
+  function valueChips(n) {
+    const wrap = element("span", undefined, "rule-view-values");
+    const line = element("span", undefined, "rule-view-chips");
+    for (const value of n.values) line.append(element("span", value, "rule-view-chip" + (n.field === "tags" ? " mono" : "")));
+    const more = element("span", undefined, "rule-view-more");
+    more.hidden = true;
+    line.append(more);
+    wrap.append(line);
+    return wrap;
+  }
+  function leafSentence(n, negated) {
+    const sentence = element("span", undefined, "rule-sentence");
+    if (negated) sentence.append(element("span", "取反", "rule-neg-tag"));
+    if (n.op === "always") {
+      sentence.append(element("span", "匹配全部档案", "rule-field"));
+      return sentence;
+    }
+    let op = ops(n.field)[n.op] || n.op;
+    if (n.op === "recent") op = "最近 " + (n.value ?? "?") + " 天（含今天）";
+    else if (n.values && n.values.length > 1 && n.op !== "none") op += n.match === "all" ? "全部" : "任一";
+    sentence.append(element("span", fields[n.field] || n.field, "rule-field"), element("span", op, "rule-op"));
+    if (n.values) sentence.append(n.values.length ? valueChips(n) : element("span", "（未填写）", "rule-op"));
+    else if ("value" in n && n.op !== "recent") {
+      const value = Array.isArray(n.value) ? n.value.map(v => v ?? "?").join(" ～ ") : (n.value ?? "?");
+      sentence.append(element("span", String(value), "rule-number"));
+    }
+    if (n.case) sentence.append(element("span", "区分大小写", "rule-op"));
+    return sentence;
+  }
+  // 值只显示一行：放不下的隐藏，在最后一个可见值后面写“等 N 个”。
+  function fitValues() {
+    for (const line of treeBox.querySelectorAll(".rule-view-chips")) {
+      const chips = [...line.querySelectorAll(".rule-view-chip")], more = line.querySelector(".rule-view-more");
+      chips.forEach(chip => {chip.hidden = false;});
+      more.hidden = true;
+      if (!line.offsetParent || !chips.length) continue;
+      const top = chips[0].offsetTop, bottom = top + chips[0].offsetHeight;
+      if (!chips.some(chip => chip.offsetTop >= bottom)) continue;
+      more.hidden = false;
+      more.textContent = "等 " + chips.length + " 个";
+      for (let i = chips.length - 1; i >= 1; i--) {
+        chips[i].hidden = true;
+        if (more.offsetTop < bottom && !chips.slice(0, i).some(chip => chip.offsetTop >= bottom)) break;
+      }
+    }
+  }
+  new ResizeObserver(() => fitValues()).observe(treeBox);
+
+  function treeRow(ctx, cells) {
+    const row = element("div", undefined, "rule-row" + (ctx.kind === "group" ? " is-group" : ""));
+    row.style.setProperty("--indent", ctx.level * 22 + "px");
+    row.tabIndex = 0;
+    row.setAttribute("role", "treeitem");
+    row.setAttribute("aria-level", String(ctx.level + 1));
+    row.setAttribute("aria-selected", String(selected === ctx.inner));
+    if (selected === ctx.inner) row.classList.add("is-selected");
+    const toggleCell = element("span", undefined, "rule-row-toggle");
+    if (ctx.kind === "group") {
+      const open = !collapsed.has(ctx.inner);
+      row.setAttribute("aria-expanded", String(open));
+      const toggle = element("button", undefined, "rule-toggle");
+      toggle.type = "button";
+      toggle.tabIndex = -1;
+      toggle.setAttribute("aria-label", open ? "折叠" : "展开");
+      toggle.append(chevron());
+      toggle.onclick = ev => {
+        ev.stopPropagation();
+        if (open) collapsed.add(ctx.inner); else collapsed.delete(ctx.inner);
+        renderTree();
+        treeBox.querySelector(".rule-row.is-focus-target")?.focus();
+      };
+      toggleCell.append(toggle);
+    }
+    row.append(element("span", undefined, "rule-guides"), element("span", ctx.join, "rule-row-join"), toggleCell, cells);
+    row.onclick = () => choose(ctx.inner);
+    row.onkeydown = ev => {
+      if (ev.target !== row) return;
+      if (ev.key === "Enter" || ev.key === " ") {ev.preventDefault(); choose(ctx.inner);}
+      else if (ctx.kind === "group" && (ev.key === "ArrowLeft" || ev.key === "ArrowRight")) {
+        const close = ev.key === "ArrowLeft";
+        if (close === collapsed.has(ctx.inner)) return;
+        ev.preventDefault();
+        row.querySelector(".rule-toggle").click();
+      }
+    };
+    row.addEventListener("focus", () => {
+      treeBox.querySelectorAll(".is-focus-target").forEach(el => el.classList.remove("is-focus-target"));
+      row.classList.add("is-focus-target");
+    });
+    return row;
+  }
+  function groupRow(ctx) {
+    const cells = element("span", undefined, "rule-row-content");
+    if (!ctx.root && ctx.inner.note) cells.append(element("span", ctx.inner.note, "rule-group-name"));
+    const negated = ctx.relation === "nall" || ctx.relation === "nany" || ctx.relation === "not";
+    cells.append(element("span", relationNames[ctx.relation] || ctx.relation, "rule-relation" + (negated ? " is-negated" : "")));
+    if (collapsed.has(ctx.inner)) cells.append(element("span", "（" + summarize(ctx.inner) + "）", "rule-op"));
+    return treeRow(ctx, cells);
+  }
+  function leafRow(ctx) {
+    const cells = element("span", undefined, "rule-row-content rule-leaf-content");
+    cells.append(leafSentence(ctx.inner, !!ctx.wrapper));
+    if (ctx.inner.note) cells.append(element("span", ctx.inner.note, "rule-leaf-note"));
+    return treeRow(ctx, cells);
+  }
+  function walk(tree, ctx, hidden) {
+    const raw = ctx.raw;
+    if (raw.children && !(exclusionShell(raw) && !raw.children[0]?.children)) {
+      Object.assign(ctx, ctx.root ? {wrapper:null, inner:raw, relation:raw.op} : groupView(raw), {kind:"group"});
+      ctx.innerDepth = ctx.depth + (ctx.wrapper ? 1 : 0);
+      contexts.set(ctx.inner, ctx);
+      if (!hidden) tree.append(groupRow(ctx));
+      const list = ctx.inner.children;
+      list.forEach((child, i) => walk(tree, {
+        raw:child, list, index:i, parent:ctx, depth:ctx.innerDepth + 1, level:ctx.level + 1,
+        join:i ? (ctx.inner.op === "all" ? "且" : "或") : "", sideName:ctx.sideName,
+        replace:value => {
+          if (value) list[i] = value;
+          else {
+            list.splice(i, 1);
+            if (!list.length && !ctx.root) ctx.replace(null);
+          }
+        }
+      }, hidden || collapsed.has(ctx.inner)));
+    } else {
+      const negated = exclusionShell(raw);
+      Object.assign(ctx, {kind:"leaf", wrapper:negated ? raw : null, inner:negated ? raw.children[0] : raw});
+      contexts.set(ctx.inner, ctx);
+      if (!hidden) tree.append(leafRow(ctx));
+    }
+  }
+  function renderTree() {
+    const refocus = treeBox.contains(document.activeElement);
+    const rule = rules[tab], combined = composeRule(rule), parts = [];
+    contexts = new Map();
     for (const sideName of ["include", "exclude"]) {
       const side = rule[sideName], branch = panelRule(side);
-      if (sideName === "exclude") tree.append(element("div", "并且", "rule-panel-join"));
       let depth = sideName === "exclude" ? (panelRule(rule.include) ? 2 : 1)
         : (combined && branch !== combined ? 1 : 0);
       if (branch && branch !== side.group) depth--;
-      tree.append(node(side.group, null, depth, sideName, side));
+      const title = sideName === "include" ? "包含条件" : "排除条件";
+      if (sideName === "exclude") parts.push(element("div", "并且", "rule-panel-join"));
+      const tree = element("div", undefined, "rule-tree");
+      tree.setAttribute("role", "tree");
+      tree.setAttribute("aria-label", title);
+      tree.dataset.rulePanel = sideName;
+      walk(tree, {raw:side.group, root:true, panelRoot:side, sideName, depth, level:0, join:""}, false);
+      if (!side.group.children.length) {
+        const hasOtherSide = !!panelRule(rule[sideName === "include" ? "exclude" : "include"]);
+        const hint = sideName === "exclude" ? "未设置排除条件"
+          : hasOtherSide ? "包含所有未命中排除条件的档案" : "两框都留空时，此路径不匹配档案";
+        tree.append(element("div", hint, "rule-empty"));
+      }
+      parts.push(element("h2", title, "rule-panel-title"), tree);
     }
+    treeBox.replaceChildren(...parts);
+    fitValues();
+    if (refocus) treeBox.querySelector(".rule-row.is-selected")?.focus();
+  }
+
+  function choose(key) {
+    selected = key;
+    renderTree();
+    renderSide();
+  }
+  function noteField(n, kind) {
+    const input = element("input", undefined, "input");
+    input.value = n.note || "";
+    input.placeholder = kind === "group" ? "可选，填写后作为组名显示" : "可选，显示在条件下方";
+    input.oninput = () => {
+      if (input.value.trim()) n.note = input.value; else delete n.note;
+      changed();
+    };
+    return control("备注", input);
+  }
+  function groupFields(ctx, box) {
+    const options = ctx.root ? relations : Object.fromEntries(Object.entries(relationNames)
+      .filter(([key]) => key !== "not" || ctx.relation === "not"));
+    box.append(control("组内关系", select(options, ctx.relation, value => {
+      if (value === ctx.relation) return;
+      if (ctx.root) {
+        ctx.inner.op = value;
+        ctx.panelRoot.implicit = false;
+      } else if (value in relations) {
+        ctx.inner.op = value;
+        if (ctx.wrapper) ctx.replace(ctx.inner);
+      } else {
+        const base = value.slice(1);
+        if (!ctx.wrapper && ctx.depth + height(ctx.inner) >= 8) {
+          render();
+          find("[data-status]").textContent = "已达到 8 层嵌套限制";
+          return;
+        }
+        ctx.inner.op = base;
+        if (!ctx.wrapper) ctx.replace({op:"not", children:[ctx.inner]});
+      }
+      changed(); render();
+    }, "组内关系")));
+  }
+  function leafFields(ctx, box) {
+    const n = ctx.inner, excluded = !!ctx.wrapper;
+    const modes = element("div", undefined, "seg");
+    modes.setAttribute("role", "group");
+    modes.setAttribute("aria-label", "条件模式");
+    for (const [label, negate] of [["匹配", false], ["取反", true]]) {
+      const option = element("button", label);
+      option.type = "button";
+      option.setAttribute("aria-pressed", String(excluded === negate));
+      option.disabled = negate && !excluded && ctx.depth >= 8;
+      if (option.disabled) option.title = "已达到 8 层嵌套限制";
+      option.onclick = () => {
+        if (excluded === negate) return;
+        ctx.replace(negate ? {op:"not", children:[n]} : n);
+        changed(); render();
+      };
+      modes.append(option);
+    }
+    const mode = element("div", undefined, "rule-control");
+    mode.append(element("span", "模式"), modes);
+    box.append(mode);
+    if (n.op === "always") {
+      box.append(element("p", "匹配全部档案", "rule-empty"));
+      return;
+    }
+    box.append(control("筛选字段", select(fields, n.field, f => {
+      const cache = drafts.get(n) || {};
+      cache[n.field] = structuredClone(n);
+      delete cache[n.field].note;
+      drafts.set(n, cache);
+      const op = n.op in ops(f) ? n.op : Object.keys(ops(f))[0];
+      const next = cache[f] || blank(f, op);
+      if (!cache[f] && next.values && n.values && f in fields &&
+          n.op in textOps && op in textOps) next.values = [...n.values];
+      updateNode(n, next);
+    }, "筛选字段")), control("匹配方式", select(ops(n.field), n.op, op => {
+      const next = blank(n.field, op);
+      if (next.values && n.values) next.values = n.values;
+      if (next.values && n.case) next.case = true;
+      if (next.values && n.match && op !== "none") next.match = n.match;
+      updateNode(n, next);
+    }, "匹配方式")));
+    if (n.values) editValues(box, box, n);
+    if ("value" in n) editRange(box, n);
+  }
+  function sideActions(ctx) {
+    const bar = element("div", undefined, "rule-side-actions");
+    const add = (label, rule) => button(label, () => {
+      ctx.inner.children.push(rule);
+      if (ctx.root) ctx.panelRoot.implicit = false;
+      selected = exclusionShell(rule) ? rule.children[0] : rule;
+      changed(); render();
+    });
+    if (ctx.kind === "group" && ctx.inner.op !== "not" && ctx.innerDepth < 8) {
+      bar.append(add("＋ 条件", leaf()));
+      if (ctx.innerDepth < 7) bar.append(add("＋ 子组", group()));
+    }
+    if (ctx.root && ctx.sideName === "include" && !ctx.inner.children.length) {
+      bar.append(button("匹配全部", () => {
+        ctx.panelRoot.implicit = true;
+        ctx.inner.children.push({op:"always"});
+        changed(); render();
+      }));
+    }
+    if (!ctx.root) {
+      const move = (label, delta) => {
+        const target = ctx.index + delta, el = button(label, () => {
+          [ctx.list[ctx.index], ctx.list[target]] = [ctx.list[target], ctx.list[ctx.index]];
+          changed(); render();
+        });
+        el.classList.add("btn-ghost");
+        el.disabled = target < 0 || target >= ctx.list.length;
+        return el;
+      };
+      bar.append(move("上移", -1), move("下移", 1));
+      if (ctx.kind === "leaf") {
+        const copy = button("复制条件", () => {
+          const clone = structuredClone(ctx.raw);
+          ctx.list.splice(ctx.index + 1, 0, clone);
+          selected = exclusionShell(clone) ? clone.children[0] : clone;
+          changed(); render();
+        });
+        copy.classList.add("btn-ghost");
+        bar.append(copy);
+      }
+      const remove = button(ctx.kind === "group" ? "删除组" : "删除条件", () => {
+        selected = ctx.parent.inner;
+        ctx.replace(null);
+        changed(); render();
+      });
+      remove.classList.add("btn-ghost", "rule-remove");
+      bar.append(remove);
+    }
+    return bar;
+  }
+  function renderSide() {
+    const ctx = selected && contexts.get(selected);
+    sidePanel.replaceChildren();
+    if (!ctx) {
+      selected = null;
+      sidePanel.append(element("h3", "编辑"), element("p", "在左侧点选一个条件或组。", "rule-empty"));
+      return;
+    }
+    const title = ctx.kind === "leaf" ? "编辑条件"
+      : ctx.root ? (ctx.sideName === "include" ? "编辑包含条件" : "编辑排除条件") : "编辑组";
+    const box = element("div", undefined, "rule-side-fields");
+    sidePanel.append(element("h3", title), box);
+    if (!ctx.root) box.append(noteField(ctx.inner, ctx.kind));
+    if (ctx.kind === "group") groupFields(ctx, box); else leafFields(ctx, box);
+    sidePanel.append(sideActions(ctx));
+  }
+  function render() {
+    for (const el of root.querySelectorAll("[data-tab]")) el.setAttribute("aria-pressed", String(el.dataset.tab === tab));
+    renderTree();
+    renderSide();
     refreshRuleJson();
   }
   // Committing on blur can rewrap chips. Keep the button under the pointer until click.
@@ -608,7 +796,7 @@
     const target = ev.target.closest("button");
     if (target && document.activeElement.matches(".rule-values textarea")) target.focus({preventScroll:true});
   }, true);
-  root.querySelectorAll("[data-tab]").forEach(el => el.onclick = () => {tab=el.dataset.tab; render();});
+  root.querySelectorAll("[data-tab]").forEach(el => el.onclick = () => {tab=el.dataset.tab; selected=null; render();});
 
   function explainValues(rule, step) {
     const hit = rule.op === "none" ? !step.matched : step.matched;

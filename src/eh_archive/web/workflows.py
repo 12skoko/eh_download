@@ -183,17 +183,6 @@ def install(app, ctx: UIContext) -> None:
             from ..special.modules.full_collect.module import creation_defaults
 
             data.update(creation_defaults(config_dir))
-        if kind == "video_archive":
-            with database.session() as session:
-                data.update(
-                    page=max(1, page),
-                    total=session.scalar(
-                        select(func.count())
-                        .select_from(SpecialWorkflow)
-                        .where(SpecialWorkflow.kind == kind)
-                    )
-                    or 0,
-                )
         return ctx.page(
             request,
             pick(f"special/{kind}.html", "special/_dashboard_generic.html"),
